@@ -182,25 +182,29 @@ export async function listDataTransformNames(
 }
 
 /**
- * Every default-space data graph `GET /ssot/data-graphs/metadata` lists; the route has no paging.
+ * Every data graph of one data space `GET /ssot/data-graphs/metadata?dataspace=` lists (the route
+ * filters by it and has no paging); each entry's own `dataspaceName` must name it too.
  * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated connection.
  * @param {string[]} [warnings] Receives one warning per skipped entry.
+ * @param {string} [dataSpace] The run's data space.
  * @returns {Promise<string[]>} Sorted graph developer names.
  */
 export async function listDataGraphNames(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   warnings?: string[],
+  dataSpace = 'default',
 ): Promise<string[]> {
   return listNames(
     connection,
     '68.0',
     {
       family: 'data-graph',
-      url: () => '/services/data/v68.0/ssot/data-graphs/metadata?dataspace=default',
+      url: () =>
+        `/services/data/v68.0/ssot/data-graphs/metadata?dataspace=${encodeURIComponent(dataSpace)}`,
       key: 'dataGraphMetadata',
       nameKey: 'developerName',
       pattern: componentName,
-      dataSpace: 'default',
+      dataSpace,
       spaces: (entry) => named(entry.dataspaceName),
     },
     warnings,

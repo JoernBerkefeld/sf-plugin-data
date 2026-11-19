@@ -36,6 +36,8 @@ import { deleteIdentityResolution } from '../../services/delete-identity-resolut
 import {
   IdentityResolutionError,
   identityResolutionName,
+  identityResolutionSpace,
+  identityResolutionSpaceMismatch,
   projectNativeIdentityResolution,
   validateIdentityResolutionDocument,
 } from '../../artifacts/identity-resolution-document.js';
@@ -47,7 +49,11 @@ import {
 import { nativeDataGraphReadContext } from '../../services/native-data-graph-context.js';
 import { proveNativeDataGraphAbsent } from '../../services/native-data-graph-crd.js';
 import { createDataGraphClient } from '../../transport/data-graph-rest.js';
-import { nativeDataGraphDocumentFromResponse } from '../../artifacts/native-data-graph-document.js';
+import {
+  nativeDataGraphDocumentFromResponse,
+  nativeDataGraphSpace,
+  nativeDataGraphSpaceMismatch,
+} from '../../artifacts/native-data-graph-document.js';
 import type { NativeDataGraphDeployInput } from '../../artifacts/read-deploy-input.js';
 import { DeployInputError } from '../../artifacts/read-deploy-input.js';
 import type { CalculatedInsightDeployInput } from '../../artifacts/read-deploy-input.js';
@@ -372,8 +378,7 @@ const documentKind = (family: DeleteFamily): string =>
  * @param {Function} readers.transformClient Transform client factory.
  * @param {Function} readers.ciContext CI read context factory.
  * @param {Function} readers.graphContext Native graph read context factory.
- * @param {string} dataSpace The run's data space (a transform, segment or calculated insight of
- * another data space is refused).
+ * @param {string} dataSpace The run's data space (a component of another data space is refused).
  * @returns {Promise<AdmittedSource>} The definition, or absent.
  */
 async function readOrgSource(
@@ -455,12 +460,15 @@ async function readOrgSource(
     }
     case 'identity-resolution': {
       const raw = await exact(`/services/data/v68.0/ssot/identity-resolutions/${name}`);
-      return raw === undefined
-        ? { absent: true }
-        : project(
-            'identity-resolution',
-            () => projectNativeIdentityResolution(raw, name, 'retrieve').candidate,
-          );
+      if (raw === undefined) return { absent: true };
+      // The item route reads a ruleset of any data space by name: one of another data space is
+      // refused before anything is projected or any phase deletes anything.
+      const found = identityResolutionSpace(raw);
+      if (found !== dataSpace) throw identityResolutionSpaceMismatch(name, found, dataSpace, 'org');
+      return project(
+        'identity-resolution',
+        () => projectNativeIdentityResolution(raw, name, 'retrieve').candidate,
+      );
     }
     case 'calculated-insight': {
       // The API 68 GET in any status; the delete itself reads it again by name. The planning
@@ -476,12 +484,16 @@ async function readOrgSource(
         : { desired: calculatedInsightReference(acquired.document) };
     }
     default: {
-      const context = await readers.graphContext(connection, 'default');
+      const context = await readers.graphContext(connection, dataSpace);
       const read = await context.get(name);
       if (read.status === 200) {
         // A GET answering with another graph is never deleted, also not by name.
         const body = read.body as { name?: unknown } | null;
         if (body?.name !== name) throw new DataGraphError('DATA_GRAPH_IDENTITY_MISMATCH');
+        // Graph names are unique in the org: a graph of another data space is refused before
+        // anything is projected or any phase deletes anything.
+        const found = nativeDataGraphSpace(body);
+        if (found !== dataSpace) throw nativeDataGraphSpaceMismatch(name, found, dataSpace, 'org');
         // A draft is retrieved as-is, so it is deleted by name like its verbatim file.
         if ((body as { status?: unknown }).status === 'draft')
           return byName('native-data-graph', new DataGraphError('DATA_GRAPH_DRAFT'));
@@ -763,7 +775,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   public static readonly summary =
     'Delete exact Data360 Transforms, Segments, IR owners, streams, DLOs, DMOs, single custom DMO fields or mappings.';
   public static readonly description =
-    "One delete can carry any mix of families, each named exactly with -m. It runs them in reverse dependency order, one phase after the other: graphs, then identity resolution, calculated insights and Segments (a dependent before the component it needs, including a graph or CI/Segment on the unified DMO of a selected IR), then data transforms, then relationships, mappings, DMOs and DLOs, then data streams. A phase starts only after every item of the previous one settled; a blocked, failed or unconfirmed item stops the run, and an item Salesforce is still processing stops the later phases with DELETE_PHASE_NOT_SETTLED. A -m delete needs no confirmation flag: check the selection with --preview first. Before the first delete, the current definition of each selected transform, Segment, IR, CI and graph is read from the org by its name (read-only); one the org does not have reports unchanged. A transform name resolves to its target ID through the complete transform list: no match is unchanged, two or more matches (ignoring case) are refused with TRANSFORM_TARGET_NOT_RESOLVED. --changed-since <ref> selects the canonical plugin files deleted since the merge base with that reference (every family; changed files are ignored) and deletes their components in the same phase order. Identity and definition come from each file's base content; a path present again is not a delete, while a rename (also one split across commit, index and worktree), an unstaged deletion or a deleted file of no known family blocks before any org call (BLOCKED_GIT_LIFECYCLE). A --changed-since delete needs --confirm-delete (--preview runs without it; --confirm-delete is accepted only with --changed-since), takes no -m or --delete-dlo, and removes no local file. A deleted data transform is resolved by its name like a -m one; a relationship takes its source DMO from the base content; a stream file deleted together with its landing DLO file deletes the stream with its DLO. --preview runs every phase read-only and reports an item whose selected dependents an earlier phase deletes as planned-dependencies (DEPENDENCIES_PLANNED) without checking it further. A stream selected together with its landing DLO is deleted with --delete-dlo semantics and the DLO item reports removedWith the stream; the last mapping of a custom DMO selected together with that DMO is not sent on its own and reports removedWith the DMO; it reports deleted only once its own read answers 404 after the DMO deletion, otherwise deletion-unconfirmed (MAPPING_DELETION_UNCONFIRMED). data-transform:Name uses auto/API68 in the run data space (TRANSFORM_DATASPACE_MISMATCH for another). Preview is GET-only. A target of any owner or namespace is deleted with one native DELETE (Salesforce decides; a 4xx answer is reported as rejected); one whose status is PROCESSING is refused before it (TRANSFORM_DELETE_PROCESSING, in --preview too); settlement needs complete bounded inventory omission of both ID and name, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. segment:Name uses auto/API68 in the run data space (the stored name, <prefix>_<Name> outside default; SEGMENT_DATASPACE_MISMATCH for another). Fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. identity-resolution:ObjectApiName uses auto/API68/default space and deletes a present owner that is not PUBLISHING or DELETING. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. data-graph:Name uses auto/API68/default. Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. A draft graph (never built, retrieved as-is) is deleted by name with the same scope and dependency checks. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. A Graph delete never cascades. calculated-insight:Name__cio uses --api-version auto (68.0) or 68.0 in the run data space (the GET must name it, CI_IDENTITY_CHANGED otherwise). The insight is read by name with the API 68 GET (absent is unchanged; it must answer with that name and data space), deleted with one DELETE in any status, schedule or SQL (Salesforce decides; a 4xx answer is reported as rejected), then read until it answers 404. CI never cascades; no compute, storage or credits guarantee. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68 in the run data space (its DLO must belong to it). The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Native routes default to API68; explicit numeric pins are preserved. Relationship deletion (relationship:SourceDmo__dlm:Name; a bare relationship:Name is refused with INVALID_SELECTION) runs first in its phase, before mappings, DMOs and DLOs. The relationships of the named source DMO are listed and the name is looked up ignoring letter case: no match is unchanged, two matches are refused (AMBIGUOUS_RELATIONSHIP_TARGET), and a match whose source object is another DMO is refused (RELATIONSHIP_TARGET_BINDING_MISMATCH). In a --changed-since delete the source DMO and binding come from the deleted file, and when its name is absent but the binding exists under another name the delete is refused with RELATIONSHIP_NAME_MISMATCH. Otherwise one DELETE is sent and its absence confirmed by listing again; a 4xx answer is reported as rejected. --preview only lists. A mapping:Name with a valid local data360/mapping/Name.mapping-meta.json file (with --changed-since, the deleted file's base content) is found in the org the way deploy finds it: by the file's source DLO and target DMO, whatever Salesforce named it (the org name is reported as targetApiName). No org mapping with that binding is unchanged; two or more are refused with AMBIGUOUS_MAPPING_TARGET before any write. Otherwise the exact name is read, and a mapping that reads absent (404) reports unchanged. Mapping deletion runs at native API 61 and up (default 68) and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no retries or rollback. Whole-DMO deletion is sent for every DMO, a standard one (creationType Standard) and one read without a creationType included, and Salesforce decides: a 4xx answer is reported as rejected (for example, Salesforce refuses to delete a platform-generated DMO while the identity resolution or graph that owns it exists). Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c removes the named fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: every field must exist on the DMO. Any field but the primary key may be named, also the standard, system and generated fields of any DMO: Salesforce decides, and a refused destructive change is reported as rejected. This is the only command that removes such platform-owned fields; every mapping pair targeting a named field is collected, and a mapped field is refused only when the mapping list fails; one that no mapping lists a pair for has no pair to lose and is removed. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --changed-since or --delete-dlo. Local files: after a confirmed deletion (deleted, or a DLO, DMO, Segment or IR Salesforce accepted and is still deleting) the component's own local file is removed by default, one regular file at a time at its canonical path and never a folder: data360/dlo, data360/dmo, data360/relationship, data360/data-stream, data360/dataTransforms, data360/identityResolution and data360/dataGraphs files, both files of a CI (data360/calculatedInsights/Name__cio.calculatedInsight-meta.json and .calculatedInsight-meta.sql) and the Segment files (data360/segments/Name.segment.json and every Name.segment.*.sql beside it) under the current directory (with --delete-dlo also the linked DLO's file), and the mapping file of that name or the one whose binding matches. Links, hard-linked files and paths outside those folders are refused. Nothing is removed on --preview, which lists the files instead, nor for unchanged, blocked, failed, rejected or unconfirmed deletions. --keep-local-files keeps them. A failed removal keeps the confirmed org result and exits nonzero with LOCAL_FILE_REMOVAL_FAILED.";
+    "One delete can carry any mix of families, each named exactly with -m. It runs them in reverse dependency order, one phase after the other: graphs, then identity resolution, calculated insights and Segments (a dependent before the component it needs, including a graph or CI/Segment on the unified DMO of a selected IR), then data transforms, then relationships, mappings, DMOs and DLOs, then data streams. A phase starts only after every item of the previous one settled; a blocked, failed or unconfirmed item stops the run, and an item Salesforce is still processing stops the later phases with DELETE_PHASE_NOT_SETTLED. A -m delete needs no confirmation flag: check the selection with --preview first. Before the first delete, the current definition of each selected transform, Segment, IR, CI and graph is read from the org by its name (read-only); one the org does not have reports unchanged. A transform name resolves to its target ID through the complete transform list: no match is unchanged, two or more matches (ignoring case) are refused with TRANSFORM_TARGET_NOT_RESOLVED. --changed-since <ref> selects the canonical plugin files deleted since the merge base with that reference (every family; changed files are ignored) and deletes their components in the same phase order. Identity and definition come from each file's base content; a path present again is not a delete, while a rename (also one split across commit, index and worktree), an unstaged deletion or a deleted file of no known family blocks before any org call (BLOCKED_GIT_LIFECYCLE). A --changed-since delete needs --confirm-delete (--preview runs without it; --confirm-delete is accepted only with --changed-since), takes no -m or --delete-dlo, and removes no local file. A deleted data transform is resolved by its name like a -m one; a relationship takes its source DMO from the base content; a stream file deleted together with its landing DLO file deletes the stream with its DLO. --preview runs every phase read-only and reports an item whose selected dependents an earlier phase deletes as planned-dependencies (DEPENDENCIES_PLANNED) without checking it further. A stream selected together with its landing DLO is deleted with --delete-dlo semantics and the DLO item reports removedWith the stream; the last mapping of a custom DMO selected together with that DMO is not sent on its own and reports removedWith the DMO; it reports deleted only once its own read answers 404 after the DMO deletion, otherwise deletion-unconfirmed (MAPPING_DELETION_UNCONFIRMED). data-transform:Name uses auto/API68 in the run data space (TRANSFORM_DATASPACE_MISMATCH for another). Preview is GET-only. A target of any owner or namespace is deleted with one native DELETE (Salesforce decides; a 4xx answer is reported as rejected); one whose status is PROCESSING is refused before it (TRANSFORM_DELETE_PROCESSING, in --preview too); settlement needs complete bounded inventory omission of both ID and name, otherwise the result is deletion-unconfirmed (never replay). No DLO, run or data cleanup; exhaustive external-consumer exclusion is not established. segment:Name uses auto/API68 in the run data space (the stored name, <prefix>_<Name> outside default; SEGMENT_DATASPACE_MISMATCH for another). Fresh source bindings and exact runtime/private identity are checked before one native DELETE. Only independent absence or a preserved DELETING/PROCESSING read acknowledges the result; HTTP204 alone is insufficient. No replay, Segment XML, shared-DMO deletion or physical-output cleanup guarantee. identity-resolution:ObjectApiName uses auto/API68 in the run data space (the stored name, <prefix>_<type>_<rulesetId> outside default; IDENTITY_RESOLUTION_DATASPACE_MISMATCH for another) and deletes a present owner that is not PUBLISHING or DELETING. A fresh target-local ID is resolved before one native68 DELETE; bounded exact ID/name absence confirms owner-definition deletion only. Exhaustive external-consumer exclusion and physical profile/output cleanup remain unverified. IR never cascades, runs processing, replays writes or falls back to another API. data-graph:Name uses auto/API68 in the run data space (graph names are unique in the org; DATA_GRAPH_DATASPACE_MISMATCH for a graph of another). Fresh identity, created date, definition, root and ready checks plus explicit empty native dependency/related-segment arrays are mandatory. A draft graph (never built, retrieved as-is) is deleted by name with the same scope and dependency checks. Exhaustive external-consumer exclusion remains unverified; no generated-resource cleanup, storage or credit guarantee. A Graph delete never cascades. calculated-insight:Name__cio uses --api-version auto (68.0) or 68.0 in the run data space (the GET must name it, CI_IDENTITY_CHANGED otherwise). The insight is read by name with the API 68 GET (absent is unchanged; it must answer with that name and data space), deleted with one DELETE in any status, schedule or SQL (Salesforce decides; a 4xx answer is reported as rejected), then read until it answers 404. CI never cascades; no compute, storage or credits guarantee. Exact data-stream:ApiName selects guarded IngestApi stream deletion at auto/API68 in the run data space (its DLO must belong to it). The linked DLO is preserved by default; --delete-dlo explicitly acknowledges deleting that exclusively linked DLO. Selected stream and linked DLO checks only, not unrelated-org preservation. Native routes default to API68; explicit numeric pins are preserved. Relationship deletion (relationship:SourceDmo__dlm:Name; a bare relationship:Name is refused with INVALID_SELECTION) runs first in its phase, before mappings, DMOs and DLOs. The relationships of the named source DMO are listed and the name is looked up ignoring letter case: no match is unchanged, two matches are refused (AMBIGUOUS_RELATIONSHIP_TARGET), and a match whose source object is another DMO is refused (RELATIONSHIP_TARGET_BINDING_MISMATCH). In a --changed-since delete the source DMO and binding come from the deleted file, and when its name is absent but the binding exists under another name the delete is refused with RELATIONSHIP_NAME_MISMATCH. Otherwise one DELETE is sent and its absence confirmed by listing again; a 4xx answer is reported as rejected. --preview only lists. A mapping:Name with a valid local data360/mapping/Name.mapping-meta.json file (with --changed-since, the deleted file's base content) is found in the org the way deploy finds it: by the file's source DLO and target DMO, whatever Salesforce named it (the org name is reported as targetApiName). No org mapping with that binding is unchanged; two or more are refused with AMBIGUOUS_MAPPING_TARGET before any write. Otherwise the exact name is read, and a mapping that reads absent (404) reports unchanged. Mapping deletion runs at native API 61 and up (default 68) and deletes the whole mapping with one Metadata API destructive deployment (ObjectSourceTargetMap), whatever pairs it holds, also onto a standard DMO. Afterwards the mapping must read absent and the other mappings and the fields of the DMO must be unchanged. The last mapping of a custom DMO is refused before any write (MAPPING_LAST_MAPPING_DELETE_BLOCKED) because Salesforce does not delete it; delete the DMO instead, which removes its mapping. Qualification uses empty custom fixtures, not populated-data guarantees. --preview performs zero writes and reports the planned step. Any partial failure stops the batch; no retries or rollback. Whole-DMO deletion is sent for every DMO, a standard one (creationType Standard) and one read without a creationType included, and Salesforce decides: a 4xx answer is reported as rejected (for example, Salesforce refuses to delete a platform-generated DMO while the identity resolution or graph that owns it exists). Field-level delete: exactly one dmo:Name__dlm with one or more --field Name__c removes the named fields from that DMO. It is the one delete operation that changes mappings it was not given and writes project files. Reads first: every field must exist on the DMO. Any field but the primary key may be named, also the standard, system and generated fields of any DMO: Salesforce decides, and a refused destructive change is reported as rejected. This is the only command that removes such platform-owned fields; every mapping pair targeting a named field is collected, and a mapped field is refused only when the mapping list fails; one that no mapping lists a pair for has no pair to lose and is removed. Then one Metadata API destructive change for all fields, sent once and never retried; Salesforce drops the mapping pairs of the removed fields itself. Fresh reads right before it must still match the plan, and polled reads afterwards must show the fields absent, exactly the collected pairs gone and every other mapping, pair, DMO property and field unchanged; any other difference fails with DMO_FIELD_REMOVAL_SIDE_EFFECT. Nothing is rolled back. After success the existing data360/dmo and data360/mapping files under --output-dir (default: current directory) are overwritten with the current definitions; absent files are not created and no file is deleted. A failed file refresh keeps the confirmed org result and exits nonzero. --field --preview writes nothing and reports pairs, fields and files. --field cannot be combined with another selector, --changed-since or --delete-dlo. Local files: after a confirmed deletion (deleted, or a DLO, DMO, Segment or IR Salesforce accepted and is still deleting) the component's own local file is removed by default, one regular file at a time at its canonical path and never a folder: data360/dlo, data360/dmo, data360/relationship, data360/data-stream, data360/dataTransforms, data360/identityResolution and data360/dataGraphs files, both files of a CI (data360/calculatedInsights/Name__cio.calculatedInsight-meta.json and .calculatedInsight-meta.sql) and the Segment files (data360/segments/Name.segment.json and every Name.segment.*.sql beside it) under the current directory (with --delete-dlo also the linked DLO's file), and the mapping file of that name or the one whose binding matches. Links, hard-linked files and paths outside those folders are refused. Nothing is removed on --preview, which lists the files instead, nor for unchanged, blocked, failed, rejected or unconfirmed deletions. --keep-local-files keeps them. A failed removal keeps the confirmed org result and exits nonzero with LOCAL_FILE_REMOVAL_FAILED.";
   public static readonly flags = {
     'target-org': Flags.string({
       char: 'o',
@@ -783,7 +795,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     dataspace: Flags.string({
       aliases: ['data-space'],
       summary:
-        'The run data space; omitted means default, and the org must have it. --data-space is a compatibility alias. A DMO, mapping, relationship, calculated insight, segment or data transform of another data space is refused (identity resolutions and graphs require default), a stream is deleted when its DLO belongs to the run data space, and a DLO that also belongs to another data space is not deleted, also with --delete-dlo (DLO_DELETE_OTHER_DATASPACES).',
+        'The run data space; omitted means default, and the org must have it. --data-space is a compatibility alias. A component of another data space is refused, a stream is deleted when its DLO belongs to the run data space, and a DLO that also belongs to another data space is not deleted, also with --delete-dlo (DLO_DELETE_OTHER_DATASPACES).',
     }),
     preview: Flags.boolean({ default: false, summary: 'Look up and report only; never delete.' }),
     'changed-since': Flags.string({
@@ -1538,6 +1550,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           error instanceof DataTransformError ||
           error instanceof SegmentError ||
           error instanceof IdentityResolutionError ||
+          error instanceof DataGraphError ||
           error instanceof CalculatedInsightError
             ? error.code
             : 'DELETE_FAILED',
@@ -1601,23 +1614,18 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         throw new DataStreamError('STREAM_DELETE_DLO_REQUIRES_STREAM_SELECTION');
       if (new Set(sourceSelectors).size !== sourceSelectors.length)
         throw new DloError('INVALID_SELECTION');
-      // Identity resolutions are default-space only; a segment or calculated insight is deleted in
-      // the run's data space.
+      // Every family is deleted in the run's data space.
       if (
         (has('segment') || has('identity-resolution') || has('calculated-insight')) &&
         !['auto', '68.0'].includes(flags['api-version'] ?? 'auto')
       )
         throw new DloError('INVALID_SCOPE');
-      if (has('identity-resolution') && effectiveScope !== 'default')
-        throw new DloError('INVALID_SCOPE');
-      if (has('data-graph')) {
+      if (has('data-graph'))
         try {
           operationApiVersion(flags['api-version'] ?? 'auto', 'data-graph');
         } catch {
           throw new DloError('INVALID_SCOPE');
         }
-        if (effectiveScope !== 'default') throw new DloError('INVALID_SCOPE');
-      }
       const streamSelectors = Object.freeze(
         // eslint-disable-next-line unicorn/no-array-sort -- Sort a fresh selection within the ES2022 library target.
         [...new Set(selectors.filter((selector) => familyOf(selector) === 'data-stream'))].sort(),
@@ -1653,6 +1661,20 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             throw segmentSpaceMismatch(candidate.identity.apiName, named, effectiveScope);
           if (candidate.family === 'data-transform')
             throw dataTransformSpaceMismatch(candidate.identity.apiName, named, effectiveScope);
+          if (candidate.family === 'data-graph')
+            throw nativeDataGraphSpaceMismatch(
+              candidate.identity.apiName,
+              named,
+              effectiveScope,
+              'file',
+            );
+          if (candidate.family === 'identity-resolution')
+            throw identityResolutionSpaceMismatch(
+              candidate.identity.apiName,
+              named,
+              effectiveScope,
+              'file',
+            );
           throw new DloError('INVALID_SCOPE');
         }
       }
@@ -1853,7 +1875,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       const reportAbsent = (entry: DeletePlanInput): StageStatus => {
         const item: DeleteItem = {
           family: familyOf(entry.selector),
-          identity: { dataSpace: 'default', apiName: selectorName(entry.selector) },
+          identity: { dataSpace: effectiveScope, apiName: selectorName(entry.selector) },
           operation: flags.preview ? 'preview' : 'delete',
           outcome: 'unchanged',
           mutation: 'not-attempted',
@@ -1872,13 +1894,13 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         };
         await verifyInput();
         const target = await connect();
-        const context = await this.nativeGraphContext(target, 'default');
+        const context = await this.nativeGraphContext(target, effectiveScope);
         envelope.metadata.apiVersion = '68.0';
         warn(nativeGraphLimitations);
         const result = await this.operateNativeGraph(
           desired,
           context,
-          this.nativeGraphClient(target, '68.0', 'default'),
+          this.nativeGraphClient(target, '68.0', effectiveScope),
           {
             operation: 'delete',
             preview: flags.preview,
@@ -1888,7 +1910,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         );
         const item: DeleteItem = {
           family: 'data-graph',
-          identity: { dataSpace: 'default', apiName: name },
+          identity: { dataSpace: effectiveScope, apiName: name },
           operation: flags.preview ? 'preview' : 'delete',
           outcome:
             result.outcome === 'delete'
@@ -2100,7 +2122,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           desired,
           target,
           { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
-          'default',
+          effectiveScope,
           {
             preview: flags.preview,
             confirmDelete: true,
@@ -2110,7 +2132,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         const item = {
           ...result,
           family: 'identity-resolution' as const,
-          identity: desired.identity,
+          identity: { dataSpace: effectiveScope, apiName: desired.identity.apiName },
           operation: flags.preview ? ('preview' as const) : ('delete' as const),
           routes: [
             {

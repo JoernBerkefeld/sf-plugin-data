@@ -12,6 +12,8 @@ import {
 import {
   nativeGraphFingerprint,
   nativeDataGraphDocumentFromResponse,
+  nativeDataGraphSpace,
+  nativeDataGraphSpaceMismatch,
   buildNativeDataGraphUpdateRequest,
   observeNativeDataGraph,
   validateNativeDataGraphDocument,
@@ -22,12 +24,16 @@ import type {
 } from '../artifacts/native-data-graph-document.js';
 import type { DataGraphClient } from '../transport/data-graph-rest.js';
 import type { DocumentMode } from '../artifacts/verbatim-document.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
+import { explainInput } from './operation-diagnostic.js';
 
 export type NativeGraphRead = { status: number; body: unknown };
-/** Internal trusted readers must bind every response to the supplied exact name/default scope. */
+/** Internal trusted readers must bind every response to the supplied exact name and data space. */
 export type NativeGraphContext = {
   check: () => void;
   orgId: string;
+  /** The run's data space: every space-scoped read names it, and every answer must name it. */
+  space: string;
   get: (name: string) => Promise<NativeGraphRead>;
   metadata: (name: string) => Promise<NativeGraphRead>;
   inventory: () => Promise<NativeGraphRead>;
@@ -62,8 +68,9 @@ function orderedRootFields(
 }
 
 /**
- * Independently bind the graph's enabled primary object in the default data space. The root is
- * the document's `primaryObjectName` (standard or unified); its fields are not restricted.
+ * Independently bind the graph's enabled primary object in the run's data space. The root is
+ * the document's `primaryObjectName` (standard or unified); its fields are not restricted. A root
+ * the read names in another data space is DATA_GRAPH_DEPENDENCY_OTHER_DATASPACE.
  * @param {NativeGraphContext} context Scope-checked readers.
  * @param {string} rootName The document's primary object.
  * @returns {Promise<{id: string; creationType: string; fingerprint: string}>} Detached root binding.
@@ -79,8 +86,14 @@ export async function bindNativeGraphRoot(
   const detail = graphRecord(acquired.detail);
   graphText(detail.creationType);
   graphRequire(
-    detail.name === rootName && detail.dataSpaceName === 'default' && detail.isEnabled === true,
+    detail.name === rootName && detail.isEnabled === true && isDataSpaceName(context.space),
   );
+  // The root read names the run's data space; a root of another one is not this graph's.
+  if (detail.dataSpaceName !== context.space)
+    throw explainInput(
+      new DataGraphError('DATA_GRAPH_DEPENDENCY_OTHER_DATASPACE'),
+      `The graph root ${rootName} is in the data space ${isDataSpaceName(detail.dataSpaceName) ? detail.dataSpaceName : '(none named)'}, not in the graph's data space ${context.space}. Name the DMO of the graph's data space (a standard DMO copy outside default is <prefix>_<Name>); nothing was written.`,
+    );
   graphText(detail.id);
   graphRequire(Array.isArray(detail.fields));
   const index = (values: unknown[], key: string): Map<string, Record<string, unknown>> => {
@@ -145,7 +158,7 @@ async function nativeGraphMetadataStatus(
     .filter((entry) => entry.developerName === name);
   // During the build the entry was recorded live to vanish briefly; that is still building.
   if (matches.length === 0) return 'Missing';
-  graphRequire(matches.length === 1 && matches[0].dataspaceName === 'default');
+  graphRequire(matches.length === 1 && matches[0].dataspaceName === context.space);
   graphText(matches[0].status);
   return matches[0].status;
 }
@@ -287,7 +300,7 @@ export async function proveNativeDataGraphAbsent(
     for (const value of entries) {
       const entry = graphRecord(value);
       graphText(entry.developerName);
-      graphRequire(entry.dataspaceName === 'default' && !names.has(entry.developerName));
+      graphRequire(entry.dataspaceName === context.space && !names.has(entry.developerName));
       names.add(entry.developerName);
     }
     const query = await context.query(name);
@@ -331,6 +344,9 @@ export async function acquireNativeDataGraph(
     diagnostic = getConnectDiagnostic(item);
     context.check();
     if (item.status === 200) {
+      const found = nativeDataGraphSpace(item.body);
+      if (found !== expected.c__dataSpace)
+        throw nativeDataGraphSpaceMismatch(name, found, expected.c__dataSpace, 'org');
       // A just-created graph can read ready ~30s before its generated DMO, mapping and
       // transform names exist (recorded live at API68); it is still being built, not unknown.
       // Retrieve takes the graph as it is, generated names or not.
@@ -341,6 +357,9 @@ export async function acquireNativeDataGraph(
     }
     return await proveNativeDataGraphAbsent(context, name, item);
   } catch (error) {
+    // A graph of another data space is refused, never an unknown state.
+    if (error instanceof DataGraphError && error.code === 'DATA_GRAPH_DATASPACE_MISMATCH')
+      throw error;
     return retainConnectDiagnostic({ state: 'unknown' }, getConnectDiagnostic(error) ?? diagnostic);
   }
 }
@@ -531,7 +550,7 @@ export async function sendNativeGraphWrite<T>(
 }
 
 /**
- * Resolve the authoritative default dataspace once per invocation.
+ * Resolve the authoritative record of the run's data space once per invocation.
  * @param {NativeGraphContext} context Bound target readers.
  * @returns {Promise<string>} Exact active default record identity.
  */
@@ -552,7 +571,7 @@ export async function bindNativeGraphDataSpace(context: NativeGraphContext): Pro
     const row = graphRecord(body.records[0]);
     graphText(row.Id);
     graphRequire(
-      row.DataSpaceApiName === 'default' && row.Status === 'ACTIVE' && row.IsDeleted === false,
+      row.DataSpaceApiName === context.space && row.Status === 'ACTIVE' && row.IsDeleted === false,
     );
     return row.Id;
   } catch (error) {
@@ -572,7 +591,7 @@ export type NativeGraphReadiness = {
  * Read one fresh item/metadata/SOQL tuple without unrelated reads or write replay.
  * @param {NativeGraphContext} context Bound target readers.
  * @param {NativeDataGraphDocument} document Exact API name.
- * @param {string} dataSpaceId Invocation-resolved default identity.
+ * @param {string} dataSpaceId Invocation-resolved data space record identity.
  * @returns {Promise<NativeGraphReadiness>} Detached independent tuple.
  */
 export async function readNativeGraphReadiness(
@@ -604,7 +623,7 @@ export async function readNativeGraphReadiness(
   const entry = graphRecord(entries[0]);
   graphRequire(
     entry.developerName === name &&
-      entry.dataspaceName === 'default' &&
+      entry.dataspaceName === context.space &&
       entry.primaryObjectName === actual.definition.primaryObjectName,
   );
   graphText(entry.status);
@@ -842,7 +861,7 @@ export async function updateNativeDataGraph(
 
 export type NativeGraphReceipt = {
   orgId: string;
-  dataSpace: 'default';
+  dataSpace: string;
   apiName: string;
   id: string;
   createdDate: string;
@@ -867,7 +886,7 @@ export type NativeGraphCreateCheck =
  * Each operation is single-use, mutually exclusive, deadline-bound and journaled before dispatch.
  * The coordinator supplies trusted scoped readers and an exclusive durable ledger guard.
  * @param {unknown} value Distinct native authored document.
- * @param {NativeGraphContext} context Exact API68/default/org read context.
+ * @param {NativeGraphContext} context Exact API68/data space/org read context.
  * @param {DataGraphClient} client Single-attempt native transport.
  * @param {object} guards Explicit intent, ledger and independent dependency safety.
  * @param {Function} guards.record Persist predispatch intent/receipt; reject duplicate run ownership.
@@ -1028,7 +1047,7 @@ export function nativeDataGraphLifecycle(
         const observation = settled.observation;
         const owned: NativeGraphReceipt = {
           orgId,
-          dataSpace: 'default',
+          dataSpace: context.space,
           apiName: name,
           id: observation.id,
           createdDate: observation.createdDate,

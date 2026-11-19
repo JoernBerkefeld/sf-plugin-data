@@ -156,7 +156,7 @@ test('native binding reuses only completed raw pairs within one invocation, pres
   const first = await bind();
   assert.equal(
     first.fingerprint,
-    '59c6ee5a4eb1726eb2c5f088b8e4b960fb822336b6c473a2ed5a0a45e8f997c7',
+    '47de105bfc3f4a57bdc76283b8d5b4e0897d3ccfc63679592c42d135b1d58c2e',
   );
   const names = [
     expanded.spec.reconciliationRules[0].entity.apiName,
@@ -178,7 +178,7 @@ test('native binding reuses only completed raw pairs within one invocation, pres
   const reversed = await bind(reordered);
   assert.equal(
     reversed.fingerprint,
-    'fcc2178760b74f952fe7fce12ba564a5601c67fff0438801d5602f55bdde14c7',
+    'bff2094efae2788abe8480466d23f2fca55d259357550881f4d1b6813aa88667',
   );
   drift = true;
   const changed = await bind();
@@ -804,7 +804,9 @@ for (const [ownerVersion, dependencyVersion, versionSelection, expanded] of [
         assert.equal(options.retry.maxRetries, 0);
         assert.throws(() => options.followRedirect(), /failed/u);
         assert.equal(request.method, 'GET');
-        const name = request.url.split('/').at(-1);
+        const [name, query] = request.url.split('/').at(-1).split('?');
+        // A DMO is read in the ruleset's data space; a DLO by name.
+        assert.equal(query, name.endsWith('__dll') ? undefined : 'dataspace=default');
         assert.ok(
           request.url.includes(
             `/services/data/v${dependencyVersion}/ssot/${name.endsWith('__dll') ? 'data-lake-objects' : 'data-model-objects'}/`,
@@ -842,7 +844,7 @@ for (const [ownerVersion, dependencyVersion, versionSelection, expanded] of [
       names.push('SyntheticLead__dll', 'SyntheticContact__dll');
       assert.equal(
         proof.fingerprint,
-        '59c6ee5a4eb1726eb2c5f088b8e4b960fb822336b6c473a2ed5a0a45e8f997c7',
+        '47de105bfc3f4a57bdc76283b8d5b4e0897d3ccfc63679592c42d135b1d58c2e',
       );
     }
     for (const acquired of Object.values(acquisitions)) {

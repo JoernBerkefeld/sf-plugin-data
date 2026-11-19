@@ -254,15 +254,19 @@ export class ConnectClient {
   /**
    * Create exactly one native68 IR owner without refresh, replay or redirect.
    * @param {unknown} value Complete independently admitted portable definition.
+   * @param {string} [dataSpacePrefix] Prefix of the ruleset's data space; required outside default.
    * @returns {Promise<unknown>} Untrusted response, never settlement evidence.
    */
-  public async createIdentityResolution(value: unknown): Promise<unknown> {
+  public async createIdentityResolution(
+    value: unknown,
+    dataSpacePrefix?: string,
+  ): Promise<unknown> {
     if (this.selection.requested !== '68.0') throw new ConnectError('INVALID_REQUEST');
     return this.send(
       {
         method: 'POST',
         url: this.safeUrl(`${this.prefix}identity-resolutions`),
-        body: JSON.stringify(buildNativeIdentityResolutionCreate(value)),
+        body: JSON.stringify(buildNativeIdentityResolutionCreate(value, dataSpacePrefix)),
         headers: { 'content-type': 'application/json' },
       },
       this.noRefreshReceiver(),

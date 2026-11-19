@@ -116,6 +116,7 @@ const graph = (status = 'ready') => ({
  */
 const context = (body) => ({
   orgId: '00D000000000001AAA',
+  space: 'default',
   check() {},
   get: async () => ({ status: 200, body: structuredClone(body) }),
   root: async () => assert.fail('retrieve reads no root DMO'),

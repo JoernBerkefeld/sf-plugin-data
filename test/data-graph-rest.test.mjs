@@ -206,8 +206,10 @@ test('native Graph rejects other versions, spaces and route injection without re
   const connection = { instanceUrl: origin, request: () => assert.fail('unexpected request') };
   for (const version of ['64.0', '65.0', '66.0', '67.0', '69.0', 'latest', 'auto', undefined, 68])
     assert.throws(() => createDataGraphClient(connection, version, 'default'));
-  for (const space of ['', 'other', undefined, 'default?x=1'])
+  // Any data space name of the org works; an unusable name is refused before any request.
+  for (const space of ['', ' default', undefined, 'de\u0000fault'])
     assert.throws(() => createDataGraphClient(connection, '68.0', space));
+  assert.doesNotThrow(() => createDataGraphClient(connection, '68.0', 'other'));
   const client = createDataGraphClient(connection, '68.0', 'default');
   for (const unsafe of [
     '',

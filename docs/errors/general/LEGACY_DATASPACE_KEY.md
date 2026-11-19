@@ -1,6 +1,6 @@
 # `LEGACY_DATASPACE_KEY`
 
-> The file still has an old data space key (identity.dataSpace, spec.segmentOn.dataSpace in a segment file, or dataSpace in a calculated insight file). Move the value to the top-level c__dataSpace key, or retrieve again.
+> The file still has an old data space key (identity.dataSpace, spec.segmentOn.dataSpace, or dataSpace in a calculated insight or an identity resolution reference). Move it to the top-level c__dataSpace key, or retrieve again.
 
 |              |                                          |
 | ------------ | ---------------------------------------- |
@@ -28,7 +28,7 @@ Reading the old key silently would leave the file in two shapes. Refusing it nam
 Deploy preview: blocked (DEPLOY_PREVIEW_BLOCKED). No deployment executed.
 Planned blocked: dlo:Orders__dll.
 LEGACY_DATASPACE_KEY: Plugin verification or request completion failed; no Salesforce rejection was confirmed. The DLO file cannot be deployed: identity.dataSpace is the old place of the data space; move it to the top-level key c__dataSpace, or retrieve the component again.
-Hint: The file still has an old data space key (identity.dataSpace, spec.segmentOn.dataSpace in a segment file, or dataSpace in a calculated insight file). Move the value to the top-level c__dataSpace key, or retrieve again.
+Hint: The file still has an old data space key (identity.dataSpace, spec.segmentOn.dataSpace, or dataSpace in a calculated insight or an identity resolution reference). Move it to the top-level c__dataSpace key, or retrieve again.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/LEGACY_DATASPACE_KEY.md
 ```
 

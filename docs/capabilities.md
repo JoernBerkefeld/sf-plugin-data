@@ -116,8 +116,9 @@ Default/`auto` or `68.0` retrieval exports `.native-dataGraph.json`
 (`kind: native-data-graph`, `apiVersion: 68.0`); other versions are `INVALID_SCOPE`. The
 API67 graph route and its `.dataGraph.json` file are gone. Every graph shape the API returns is admitted: any root (standard or
 unified), related objects with joins, all field types, any refresh schedule. Checks are
-structural only (closed keys, names, tree and join shape, default data space, root equals
-`primaryObjectName`); the root is bound by the document's own `primaryObjectName`.
+structural only (closed keys, names, tree and join shape, `c__dataSpace` agreeing with
+`definition.dataspaceName`, root equals `primaryObjectName`); the root is bound by the
+document's own `primaryObjectName`, read with `?dataspace=` of the run's data space.
 Lowercase API values are stored as `NONE`, `KEY_QUALIFIER`, `DESC`, `Day`; node `type`
 stays lowercase. All six graphs in `isolated-source` retrieve at `auto` and preview
 `unchanged` on route 68.0. Deploy runs graphs as the last phase of any selection,
@@ -173,13 +174,14 @@ offline routing only, not live installed cross-org acceptance.
 ## Public native identity resolution
 
 Retrieve, deploy (POST create, full-settings PATCH) and delete use native API68 in the
-default data space for every ruleset the API returns or accepts: any configuration type
+run's data space for every ruleset the API returns or accepts: any configuration type
 and name, automatic run on or off, case sensitivity, secondary DMO, filters, trusted
 sources, any match and reconciliation rules, unpublished rulesets. Kept refusals:
 structural checks; one reconciliation entry per entity (outputs are keyed by entity);
 the `1ir…` ID check before DELETE; configuration type or secondary DMO changes
 (`blocked-changes`, PATCH cannot carry them); a create name other than `<type>` or
-`<type>_<rulesetId>` (`IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH`); PATCH or
+`<type>_<rulesetId>`, outside `default` `<prefix>_<type>` or `<prefix>_<type>_<rulesetId>`
+(`IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH`); PATCH or
 DELETE while `PUBLISHING`/`DELETING` (`IDENTITY_RESOLUTION_NOT_SETTLED`). Run statistics
 are not part of the file. The API 67 IR routes are gone.
 
@@ -227,7 +229,8 @@ the GET-shaped file; only Salesforce CRM is tested live. The file format is in
 ## Public native calculated insight lifecycle
 
 Calculated insights use API 68 for retrieve, deploy (including `--draft`), publish and
-delete; every other version is refused with `INVALID_SCOPE`. Default space only. No
+delete; every other version is refused with `INVALID_SCOPE`. In the run's data space
+(`c__dataSpace`; another is `CI_DATASPACE_MISMATCH`). No
 Metadata API or dependency reads; no command needs `--allow-processing`.
 
 Retrieve writes `data360/calculatedInsights/<Name>__cio.calculatedInsight-meta.json`
@@ -435,6 +438,29 @@ any data space there is handled in `default` only. Retrieve, deploy and delete r
 any projection, verbatim file, write or DELETE and refuse another
 (`TRANSFORM_DATASPACE_MISMATCH`); a create outside `default` needs `dataSpaceName`. Neither family has
 run live outside `default` through the plugin yet.
+
+Data spaces of data graphs and identity resolution (2026-11-19, D4): with them every family works
+in any data space, and every default-only refusal is gone. A graph file names its data space in
+`c__dataSpace`, equal to `definition.dataspaceName` when the definition names it (deploy fills
+it otherwise; the create body sends it). Graph names are unique in the org, so retrieve, deploy
+and delete read the graph by name and check its `dataspaceName` before anything is projected
+(`DATA_GRAPH_DATASPACE_MISMATCH`, `DATA_GRAPH_DATASPACE_UNREADABLE`); the metadata and inventory
+reads send `?dataspace=<run>`, the `DataSpace` SOQL names the run's data space, and the root DMO
+read names it too (a root of another data space is `DATA_GRAPH_DEPENDENCY_OTHER_DATASPACE`;
+related objects are sent as written). An identity resolution file names its data space in
+`c__dataSpace`; its references carry none (`LEGACY_DATASPACE_KEY` for the old keys) and use the
+stored spelling (`ds2_Individual_<id>`, `ds2_Individual__dlm`, `FirstName__c`; DB
+`data360:dataspace-identity-resolution-api68`). Deploy refuses a non-default file without the
+org's prefix before any write (`IDENTITY_RESOLUTION_NAME_NOT_STORED`) and creates with the ruleset
+ID after `<prefix>_<type>_` and `dataSpaceName`; the prefix is the one the org's data space list
+names, also in the create itself. A ruleset named `<prefix>_<type>` (no ruleset ID) outside
+`default` is untested. The item GET reads a ruleset of any data space,
+so each read checks `dataSpaceName` first (`IDENTITY_RESOLUTION_DATASPACE_MISMATCH`); the list
+ignores `?dataspace=` and is kept by each entry's `dataSpaceName`. Entity and output DMOs are
+read with `?dataspace=`; one of another data space, or a DLO source outside it, is
+`IDENTITY_RESOLUTION_DEPENDENCY_OTHER_DATASPACE`. The mixed retrieve and the deploy batch take
+every family in any one data space. Neither family has run live outside `default` through the
+plugin yet.
 
 Native DLO retrieve and delete read one exact `__dll` detail at API 68 (or an explicit
 numeric pin of 61 and up) through the guarded GET transport without refresh, retry or

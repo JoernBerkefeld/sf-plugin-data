@@ -146,6 +146,28 @@ test('concrete Graph context independently verifies org then uses exact API68/de
   assert.deepEqual(Object.getOwnPropertyDescriptors(f.connection), descriptors);
 });
 
+test('Graph context names the run data space in every space-scoped read', async () => {
+  const f = fixture();
+  const context = await nativeDataGraphReadContext(f.connection, "Team's");
+  assert.equal(context.space, "Team's");
+  await context.get('SyntheticGraph');
+  await context.metadata('SyntheticGraph');
+  await context.inventory();
+  await context.dataSpace();
+  await context.root('ds2_Individual__dlm');
+  assert.deepEqual(
+    f.calls.slice(1).map((r) => r.url),
+    [
+      // Graph item reads are by name: graph names are unique in the org.
+      `${origin}/services/data/v68.0/ssot/data-graphs/SyntheticGraph`,
+      `${origin}/services/data/v68.0/ssot/data-graphs/metadata?dataspace=Team's&dataGraphEntityName=SyntheticGraph`,
+      `${origin}/services/data/v68.0/ssot/data-graphs/metadata?dataspace=Team's`,
+      `${origin}/services/data/v68.0/query?q=${encodeURIComponent(String.raw`SELECT Id, DataSpaceApiName, Status, IsDeleted FROM DataSpace WHERE DataSpaceApiName = 'Team\'s' LIMIT 2`)}`,
+      `${origin}/services/data/v68.0/ssot/data-model-objects/ds2_Individual__dlm?dataspace=Team's`,
+    ],
+  );
+});
+
 test('Graph context reads the requested root object and refuses unsafe names', async () => {
   const f = fixture();
   const context = await nativeDataGraphReadContext(f.connection, 'default');
@@ -274,7 +296,8 @@ test('concrete Graph refuses incorrect scope/auth identity and unavailable wire 
     assert.equal(f.calls.length, 0);
   }
   const f = fixture();
-  await assert.rejects(nativeDataGraphReadContext(f.connection, 'other'));
+  // Any data space name works; an unusable one is refused before any request.
+  await assert.rejects(nativeDataGraphReadContext(f.connection, ''));
   assert.equal(f.calls.length, 0);
   f.connection.request = async () => ({ done: true, totalSize: 1, records: [{ Id: orgId }] });
   await assert.rejects(nativeDataGraphReadContext(f.connection, 'default'));

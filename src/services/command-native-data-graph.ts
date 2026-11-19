@@ -5,6 +5,8 @@ import { DataGraphError, graphRequire } from '../artifacts/data-graph-document.j
 import {
   observeNativeDataGraph,
   nativeDataGraphDocumentFromResponse,
+  nativeDataGraphSpace,
+  nativeDataGraphSpaceMismatch,
   nativeDataGraphUnreferenced,
 } from '../artifacts/native-data-graph-document.js';
 import { graphRecord, graphText } from '../artifacts/data-graph-document.js';
@@ -23,7 +25,7 @@ import {
 } from './native-data-graph-crd.js';
 import type { NativeGraphContext, NativeGraphCreateCheck } from './native-data-graph-crd.js';
 import type { DataGraphClient } from '../transport/data-graph-rest.js';
-import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
+import { isVerbatimDocument, verbatimDataSpace } from '../artifacts/verbatim-document.js';
 import { explanationOf, operationDiagnostic } from './operation-diagnostic.js';
 import { rejectedNextAction } from './deploy-result.js';
 import { proveNativeDataGraphAbsent } from './native-data-graph-crd.js';
@@ -52,6 +54,11 @@ export async function retrieveNativeDataGraph(
   const raw = graphRecord(read.body);
   // A GET answering with another graph is an item failure, never a verbatim file.
   if (raw.name !== name) throw new DataGraphError('DATA_GRAPH_IDENTITY_MISMATCH');
+  // Graph names are unique in the org: a graph of another data space is an item failure, read
+  // before anything is projected or kept as read.
+  const found = nativeDataGraphSpace(raw);
+  if (found !== context.space)
+    throw nativeDataGraphSpaceMismatch(name, found, context.space, 'org');
   // A draft (created with creationMode DRAFT, never built) reads without its draft status in
   // the file, and a draft cannot be edited by PUT (live, API68, 2026-11-16): keep it as read.
   if (raw.status === 'draft') throw new DataGraphError('DATA_GRAPH_DRAFT');
@@ -121,7 +128,9 @@ async function readNativeGraphRootOwner(
   const owners = new Map<string, unknown>();
   for (const value of list) {
     const ruleset = graphRecord(value);
-    if (typeof ruleset.dataSpaceName === 'string' && ruleset.dataSpaceName !== 'default') continue;
+    // The list answers every data space whatever ?dataspace= says: keep the run's only.
+    if (typeof ruleset.dataSpaceName === 'string' && ruleset.dataSpaceName !== context.space)
+      continue;
     const rules = ruleset.reconciliationRules ?? [];
     graphRequire(Array.isArray(rules));
     if (
@@ -143,7 +152,7 @@ async function readNativeGraphRootOwner(
 
 /**
  * Read a graph named by a verbatim file for its delete, from the raw GET only: it must carry the
- * selected name in the default data space, be ready with an ID, created date and all generated
+ * selected name in the run's data space (another one is DATA_GRAPH_DATASPACE_MISMATCH), be ready with an ID, created date and all generated
  * names, and no node or field may report dependencies or segments. Its definition is not
  * projected.
  * @param {NativeGraphContext} context Scope-checked readers.
@@ -167,17 +176,19 @@ async function readVerbatimGraphForDelete(
   }
   const raw = graphRecord(read.body);
   if (raw.name !== name) throw new DataGraphError('DATA_GRAPH_IDENTITY_MISMATCH');
+  const found = nativeDataGraphSpace(raw);
+  if (found !== context.space)
+    throw nativeDataGraphSpaceMismatch(name, found, context.space, 'org');
   graphRequire(
-    raw.dataspaceName === 'default' &&
-      // A draft (creationMode DRAFT, never built) reads without ID and created date; the
-      // DELETE removes it (live, API68, 2026-11-16).
-      (raw.status === 'draft' ||
-        (raw.status === 'ready' &&
-          typeof raw.id === 'string' &&
-          raw.id.trim() !== '' &&
-          typeof raw.createdDate === 'string' &&
-          Number.isFinite(Date.parse(raw.createdDate)) &&
-          !nativeGraphStillGenerating(raw))) &&
+    // A draft (creationMode DRAFT, never built) reads without ID and created date; the
+    // DELETE removes it (live, API68, 2026-11-16).
+    (raw.status === 'draft' ||
+      (raw.status === 'ready' &&
+        typeof raw.id === 'string' &&
+        raw.id.trim() !== '' &&
+        typeof raw.createdDate === 'string' &&
+        Number.isFinite(Date.parse(raw.createdDate)) &&
+        !nativeGraphStillGenerating(raw))) &&
       // Delete stays refused while any node or field reports dependencies or segments.
       nativeDataGraphUnreferenced(raw.sourceObject),
   );
@@ -324,10 +335,27 @@ export async function operateNativeDataGraph(
     return { outcome: 'deleted', mutation: 'confirmed-deleted' };
   };
   const work = async (): Promise<NativeGraphOperationResult> => {
-    if (options.operation === 'delete' && isVerbatimDocument(value, 'native-data-graph'))
+    if (options.operation === 'delete' && isVerbatimDocument(value, 'native-data-graph')) {
+      const fileSpace = verbatimDataSpace(value);
+      if (fileSpace !== context.space)
+        throw nativeDataGraphSpaceMismatch(
+          value.identity.apiName,
+          fileSpace,
+          context.space,
+          'file',
+        );
       return verbatimDelete(value.identity.apiName);
+    }
     context.check();
     const document = validateNativeDataGraphDocument(value, mode);
+    // The file's data space is the run's; the org graph's is checked on its first read.
+    if (document.c__dataSpace !== context.space)
+      throw nativeDataGraphSpaceMismatch(
+        document.definition.name as string,
+        document.c__dataSpace,
+        context.space,
+        'file',
+      );
     const orgId = context.orgId;
     await options.verifyInput();
     const rootName = document.definition.primaryObjectName as string;
@@ -346,7 +374,7 @@ export async function operateNativeDataGraph(
       if (checkOwner && getConnectDiagnostic(error)?.statusCode === 404)
         return blocked(
           'DATA_GRAPH_ROOT_NOT_FOUND',
-          `The graph root ${rootName} does not exist in the target (data space default).`,
+          `The graph root ${rootName} does not exist in the target (data space ${context.space}).`,
         );
       throw error;
     }
@@ -569,6 +597,18 @@ export async function operateNativeDataGraph(
       }),
     ]);
   } catch (error) {
+    // A file or graph of another data space, or a root of another one: refused before any write.
+    if (
+      !attempted &&
+      error instanceof DataGraphError &&
+      (error.code === 'DATA_GRAPH_DATASPACE_MISMATCH' ||
+        error.code === 'DATA_GRAPH_DEPENDENCY_OTHER_DATASPACE')
+    )
+      return {
+        outcome: 'blocked',
+        mutation: 'not-attempted',
+        diagnostics: [{ code: error.code, message: explanationOf(error) ?? error.message }],
+      };
     return retainConnectDiagnostic(
       {
         outcome: attempted ? 'failed' : 'blocked',

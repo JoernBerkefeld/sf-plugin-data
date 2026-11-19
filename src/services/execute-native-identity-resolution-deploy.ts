@@ -34,6 +34,8 @@ export type NativeIdentityResolutionExecutionOptions = {
    * deploy is the status check: NOT_SETTLED while in flight, unchanged once settled.
    */
   async?: boolean;
+  /** The prefix of the run's data space as the org's list names it; required outside default. */
+  dataSpacePrefix?: string;
   verifyInput: () => Promise<void>;
   verifyDependencies?: typeof bindIdentityResolutionDependencies;
   verifyOutputs?: typeof verifyIdentityResolutionOutputs;
@@ -69,7 +71,7 @@ export type NativeIdentityResolutionDeployExecution = {
  * @param {unknown} value Complete portable native68 desired definition.
  * @param {IdentityResolutionTargetConnection} connection Fixed authenticated native68 receiver.
  * @param {ApiVersionSelection} apiVersion Explicit native68 selection.
- * @param {string} dataSpace Explicit default data space.
+ * @param {string} dataSpace The run's data space; the ruleset's c__dataSpace must name it.
  * @param {NativeIdentityResolutionExecutionOptions} options Input/effect guards and synthetic read seams.
  * @returns {Promise<NativeIdentityResolutionDeployExecution>} Payload-free mutation evidence.
  */
@@ -124,7 +126,7 @@ export async function executeNativeIdentityResolutionDeploy(
         selection.restSelector !== 'v68.0' ||
         selection.soapNumeric !== '68.0' ||
         connection.getApiVersion() !== '68.0' ||
-        dataSpace !== 'default' ||
+        dataSpace !== desired.c__dataSpace ||
         !isDeepStrictEqual(selection, apiVersion)
       )
         throw new Error('Scope drift');
@@ -199,7 +201,7 @@ export async function executeNativeIdentityResolutionDeploy(
       }));
       const ownerId = projection.expectations.native.id as string;
       const proof = await verifyOutputs(
-        { targetApiName: desired.identity.apiName, targetId: ownerId, dataSpace: 'default' },
+        { targetApiName: desired.identity.apiName, targetId: ownerId, dataSpace },
         structuredClone(expected),
         verificationConnection,
         { ...selection },
@@ -232,6 +234,9 @@ export async function executeNativeIdentityResolutionDeploy(
           await verify();
         },
         verifyPrecreateInputs: verify,
+        ...(options.dataSpacePrefix === undefined
+          ? {}
+          : { dataSpacePrefix: options.dataSpacePrefix }),
       },
     );
     if (!['create', 'update', 'unchanged'].includes(preview.outcome))
@@ -274,6 +279,9 @@ export async function executeNativeIdentityResolutionDeploy(
             await verify();
           },
           verifyPrecreateInputs: verify,
+          ...(options.dataSpacePrefix === undefined
+            ? {}
+            : { dataSpacePrefix: options.dataSpacePrefix }),
         },
       );
       if (
@@ -371,7 +379,7 @@ export async function executeNativeIdentityResolutionDeploy(
     attempted = true;
     const echo = await bounded(async () => {
       const response = creating
-        ? await client.createIdentityResolution(desired)
+        ? await client.createIdentityResolution(desired, options.dataSpacePrefix)
         : await client.patchIdentityResolution(desired, baseline?.candidate);
       acknowledged = true;
       return response;

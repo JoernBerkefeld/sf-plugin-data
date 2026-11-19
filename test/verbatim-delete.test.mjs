@@ -29,6 +29,8 @@ const verbatim = (kind, apiName) => ({
     'calculated-insight',
     'segment',
     'data-transform',
+    'native-data-graph',
+    'identity-resolution',
   ].includes(kind)
     ? { c__dataSpace: 'default', identity: { apiName } }
     : { identity: { dataSpace: 'default', apiName } }),
@@ -292,6 +294,7 @@ const rawGraph = (change = {}, node = {}) => ({
 });
 const graphContext = (body) => ({
   orgId: '00D000000000001AAA',
+  space: 'default',
   check() {},
   get: async () => ({ status: 200, body: structuredClone(body) }),
 });
@@ -657,7 +660,8 @@ test('-m delete of a GET the plugin cannot model goes by name; a graph of anothe
   command.nativeGraphContext = async () => graphContext(unprojectable);
   const admitted = await command.readDeleteSource('data-graph', 'SyntheticGraph', {});
   assert.equal(admitted.desired.kind, 'native-data-graph');
-  assert.deepEqual(admitted.desired.identity, { dataSpace: 'default', apiName: 'SyntheticGraph' });
+  assert.equal(admitted.desired.c__dataSpace, 'default');
+  assert.deepEqual(admitted.desired.identity, { apiName: 'SyntheticGraph' });
   for (const body of [
     rawGraph({ name: 'OtherGraph' }),
     rawGraph({ sourceObject: 'x', name: 'Other' }),
@@ -737,6 +741,7 @@ test('a draft graph (no ID or created date) is deleted by name, from its file or
   command.nativeGraphContext = async () => graphContext(draft);
   const admitted = await command.readDeleteSource('data-graph', 'SyntheticGraph', {});
   assert.equal(admitted.desired.kind, 'native-data-graph');
-  assert.deepEqual(admitted.desired.identity, { dataSpace: 'default', apiName: 'SyntheticGraph' });
+  assert.equal(admitted.desired.c__dataSpace, 'default');
+  assert.deepEqual(admitted.desired.identity, { apiName: 'SyntheticGraph' });
   assert.equal(admitted.desired.verbatim.reason, 'DATA_GRAPH_DRAFT');
 });

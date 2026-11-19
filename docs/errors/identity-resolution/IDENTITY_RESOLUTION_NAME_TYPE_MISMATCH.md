@@ -1,6 +1,6 @@
 # `IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH`
 
-> A new ruleset must be named after its configuration type, as <type> or <type>_<rulesetId>. Rename the file and its apiName to match, then rerun.
+> A new ruleset must be named after its configuration type, as <type> or <type>_<rulesetId> (with the data space prefix, <prefix>_<type>_<rulesetId>, outside default). Rename the file and its apiName to match, then rerun.
 
 |              |                                 |
 | ------------ | ------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-The ruleset does not exist in the target yet, so the deploy would create it. Salesforce names a new ruleset after its configuration type: `<type>` for the default ruleset, or `<type>_<rulesetId>` otherwise (for example `Individual_Main` for type `Individual`). The API name in your file follows neither form.
+The ruleset does not exist in the target yet, so the deploy would create it. Salesforce names a new ruleset after its configuration type: `<type>` for the default ruleset, or `<type>_<rulesetId>` otherwise (for example `Individual_Main` for type `Individual`). Outside the default data space the name starts with the prefix of the data space (`ds2_Individual_Main`), which the check leaves out. The API name in your file follows neither form.
 
 ## Why the plugin stops
 

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
+import { dataSpaceKey, isDataSpaceName, readSingleDataSpace } from './data-space-field.js';
 import {
   DataGraphError,
   dataGraphName,
@@ -11,10 +12,17 @@ import {
   graphText,
 } from './data-graph-document.js';
 
+/**
+ * A data graph file: Salesforce's graph definition in `definition`, its data space in the
+ * top-level `c__dataSpace`. The definition may name Salesforce's own `dataspaceName` (retrieve
+ * writes it as read); the two must agree, and a definition without it takes it from
+ * `c__dataSpace` (the create body sends it).
+ */
 export type NativeDataGraphDocument = {
   schemaVersion: 1;
   kind: 'native-data-graph';
   apiVersion: '68.0';
+  c__dataSpace: string;
   definition: Record<string, unknown>;
 };
 export type NativeDataGraphObservation = {
@@ -404,6 +412,8 @@ function admitNode(
  * Admit saved native68 definitions by structure; the API decides what it accepts. Retrieve mode
  * keeps unknown keys and unset (`null`) values, and checks only the name, data space, root
  * object, schedule shape and node tree; a deploy of such a file refuses and names the key.
+ * `c__dataSpace` names the data space; `definition.dataspaceName`, when present, must equal it,
+ * and the returned definition always names it.
  * @param {unknown} value Native document.
  * @param {DocumentMode} mode Strictness (deploy by default).
  * @returns {NativeDataGraphDocument} Detached admitted input with normalised enum spellings.
@@ -415,10 +425,12 @@ export function validateNativeDataGraphDocument(
   const strict = mode === 'deploy';
   // Retrieve mode takes any nesting depth the org returns.
   inert(value, new Set<object>(), strict ? 24 : Number.POSITIVE_INFINITY);
+  const dataSpace = readSingleDataSpace(graphRecord(value), refuseFile);
   const raw = graphRecord(structuredClone(value), [
     'schemaVersion',
     'kind',
     'apiVersion',
+    dataSpaceKey,
     'definition',
   ]);
   graphRequire(
@@ -426,8 +438,15 @@ export function validateNativeDataGraphDocument(
   );
   const d = closed(raw.definition, topKeys, mode);
   graphRequire(typeof d.name === 'string' && dataGraphName.test(d.name));
-  // Native graph reads and writes are bound to the default data space only.
-  graphRequire(d.dataspaceName === 'default');
+  // Salesforce's own key, when the definition names it, must agree with c__dataSpace; without
+  // it the definition takes c__dataSpace (the create body sends dataspaceName).
+  if (Object.hasOwn(d, 'dataspaceName') && d.dataspaceName !== dataSpace)
+    throw refuseFile(
+      'INVALID_DATASPACE_FIELD',
+      dataSpaceKey,
+      'must name the data space of definition.dataspaceName',
+    );
+  d.dataspaceName = dataSpace;
   graphText(d.primaryObjectName);
   if (strict) {
     need(isText(d.label), 'definition.label', 'must be text');
@@ -468,7 +487,79 @@ export function validateNativeDataGraphDocument(
   graphRequire(root.name === d.primaryObjectName);
   if (typeof d.type === 'string') d.type = d.type.toUpperCase();
   normaliseNode(root);
-  return raw as NativeDataGraphDocument;
+  // Keys in file order: the definition keeps the order it was read or written in.
+  return {
+    schemaVersion: 1,
+    kind: 'native-data-graph',
+    apiVersion: '68.0',
+    c__dataSpace: dataSpace,
+    definition: d,
+  };
+}
+
+/**
+ * Refuse a data graph file problem, naming the key.
+ * @param {string} code Refusal code.
+ * @param {string} keyPath Key path.
+ * @param {string} problem What is wrong with it.
+ * @returns {DataGraphError} Refusal with an explanation.
+ */
+function refuseFile(code: string, keyPath: string, problem: string): DataGraphError {
+  return explainInput(
+    new DataGraphError(code),
+    `The data graph file cannot be deployed: ${keyPath} ${problem}. Correct the file, or retrieve the graph again.`,
+  );
+}
+
+/**
+ * The data graph document of a definition that names its data space (`dataspaceName`).
+ * @param {Record<string, unknown>} definition Graph definition (checked by the validator).
+ * @returns {unknown} Document candidate for validateNativeDataGraphDocument.
+ */
+export function nativeDataGraphDocumentOf(definition: Record<string, unknown>): unknown {
+  return {
+    schemaVersion: 1,
+    kind: 'native-data-graph',
+    apiVersion: '68.0',
+    [dataSpaceKey]: definition.dataspaceName,
+    definition,
+  };
+}
+
+/**
+ * The data space a graph GET names (`dataspaceName`): the graph's real data space, read before
+ * anything is projected. A GET without a usable one is DATA_GRAPH_DATASPACE_UNREADABLE.
+ * @param {unknown} value Graph GET body.
+ * @returns {string} Data space.
+ */
+export function nativeDataGraphSpace(value: unknown): string {
+  const found =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>).dataspaceName
+      : undefined;
+  if (!isDataSpaceName(found)) throw new DataGraphError('DATA_GRAPH_DATASPACE_UNREADABLE');
+  return found;
+}
+
+/**
+ * The refusal of a data graph whose file, or whose graph in the org, is in another data space
+ * than the run's.
+ * @param {string} name Graph name.
+ * @param {string} found The data space of the file or the org graph.
+ * @param {string} dataSpace The run's data space.
+ * @param {'file' | 'org'} where Whether the file or the org graph names `found`.
+ * @returns {DataGraphError} DATA_GRAPH_DATASPACE_MISMATCH with an explanation.
+ */
+export function nativeDataGraphSpaceMismatch(
+  name: string,
+  found: string,
+  dataSpace: string,
+  where: 'file' | 'org',
+): DataGraphError {
+  return explainInput(
+    new DataGraphError('DATA_GRAPH_DATASPACE_MISMATCH'),
+    `${where === 'file' ? `The file of data graph ${name} names the data space ${printableKey(found)} in ${dataSpaceKey}` : `Data graph ${name} is in the data space ${printableKey(found)} in the org`}, but the run's data space is ${printableKey(dataSpace)} (--dataspace, default "default"). Graph names are unique in the org, so run the command with --dataspace ${printableKey(found)}${where === 'file' ? ', or correct the file' : ''}. Nothing was written.`,
+  );
 }
 
 /**
@@ -594,16 +685,10 @@ export function nativeDataGraphDocumentFromResponse(
     for (const key of generatedKeys)
       if (strict ? definition[key] === '' : unset(definition[key])) delete definition[key];
   definition.sourceObject = observedNode(raw.sourceObject, mode);
+  // The graph's own data space becomes c__dataSpace; a GET without one cannot be placed.
+  nativeDataGraphSpace(raw);
   // Lowercase enum spellings (type, usageTag, sortOrder, timeGranularity) are normalised there.
-  return validateNativeDataGraphDocument(
-    {
-      schemaVersion: 1,
-      kind: 'native-data-graph',
-      apiVersion: '68.0',
-      definition,
-    },
-    mode,
-  );
+  return validateNativeDataGraphDocument(nativeDataGraphDocumentOf(definition), mode);
 }
 
 /**
@@ -770,15 +855,7 @@ export function buildNativeDataGraphUpdateRequest(
   const wantedRoot = graphRecord(wanted.sourceObject);
   // A root change sends the whole authored tree without the old root's generated names.
   target.sourceObject = root.name === wantedRoot.name ? merge(root, wantedRoot) : added(wantedRoot);
-  return validateNativeDataGraphDocument(
-    {
-      schemaVersion: 1,
-      kind: 'native-data-graph',
-      apiVersion: '68.0',
-      definition: target,
-    },
-    mode,
-  ).definition;
+  return validateNativeDataGraphDocument(nativeDataGraphDocumentOf(target), mode).definition;
 }
 
 /**

@@ -31,7 +31,7 @@ Every write and delete is bound to the exact DLO you selected. Acting on an answ
 Delete: blocked.
 Blocked: dlo:Orders__dll; mutation: not-attempted.
 DLO_TARGET_IDENTITY_MISMATCH: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deletion stopped. Inspect unknown outcomes before another attempt; no automatic retry or rollback.
-Hint: The org returned a DLO whose name or ID does not match the one requested. Check the exact API name in the org and rerun; inspect the target first if a write was sent.
+Hint: The org returned a DLO whose name does not match the one requested. Check the exact API name in the org and rerun; inspect the target first if a write was sent.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dlo/DLO_TARGET_IDENTITY_MISMATCH.md
 ```
 

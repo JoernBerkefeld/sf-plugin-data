@@ -522,6 +522,8 @@ const verbatimFile = (kind, apiName, reason, native) => ({
     'calculated-insight',
     'segment',
     'data-transform',
+    'native-data-graph',
+    'identity-resolution',
   ].includes(kind)
     ? { c__dataSpace: 'default', identity: { apiName } }
     : { identity: { dataSpace: 'default', apiName } }),

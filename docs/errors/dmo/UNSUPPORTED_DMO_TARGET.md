@@ -46,7 +46,7 @@ For a standard DMO copy:
 ```text
 Blocked: dmo:ds2_ContactPointPhone__dlm; mutation: not-attempted.
 UNSUPPORTED_DMO_TARGET: ds2_ContactPointPhone__dlm is the copy of the standard DMO ssot__ContactPointPhone__dlm in the data space dataspace2, and it does not exist there yet. A standard DMO's copy is created by its first mapping: deploy a mapping onto ds2_ContactPointPhone__dlm instead of the DMO file. No write attempted; correct the reported check before another attempt.
-Hint: A standard DMO's copy in another data space is created by its first mapping, not by a DMO file. Deploy a mapping onto the copy instead of the DMO file.
+Hint: The plugin does not send this DMO write: a new DMO with a namespaced name, or a write to a DMO whose read has no name.
 ```
 
 ## Related codes

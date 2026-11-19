@@ -225,12 +225,8 @@ test('IR projects both observed reconciliation variants losslessly and detaches 
       method === 'lastupdated' ? 'LastUpdated' : 'MostFrequent',
     );
     assert.deepEqual(document.spec.reconciliationRules[5].outputs[1], {
-      owner: {
-        kind: 'identity-resolution',
-        dataSpace: 'default',
-        apiName: 'Individual_A1b2',
-      },
-      entity: { kind: 'dmo', dataSpace: 'default', apiName: 'ssot__PartyIdentification__dlm' },
+      owner: { kind: 'identity-resolution', apiName: 'Individual_A1b2' },
+      entity: { kind: 'dmo', apiName: 'ssot__PartyIdentification__dlm' },
       role: 'link',
     });
     const bytes = serializeIdentityResolutionDocument(document);

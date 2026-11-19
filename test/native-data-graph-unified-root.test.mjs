@@ -89,6 +89,7 @@ function fixture(change = () => {}) {
   };
   const context = {
     orgId: '00D000000000001AAA',
+    space: 'default',
     check() {},
     root: async () => root(),
     get: async () => (graph ? { status: 200, body: structuredClone(graph) } : missing),

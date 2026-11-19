@@ -1,6 +1,6 @@
 # `INVALID_SCOPE`
 
-> This family does not support the requested --api-version or --dataspace. Use --api-version auto (or a version the family allows) and the default data space, then rerun.
+> This family does not support the requested --api-version, or the run could not use the data space. Use --api-version auto (or a version the family allows), then rerun.
 
 |              |                                                                                                                            |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
@@ -10,16 +10,16 @@
 
 ## What it means
 
-Each family supports a fixed set of API versions and data spaces. Native DLO, DMO, mapping and relationship routes accept `auto` (API 68) or a numeric version from `61.0`. Data graphs, data streams, data transforms, Segments, calculated insights and identity resolutions accept only `auto` or their own fixed version; data graphs and identity resolutions accept only the `default` data space. `INVALID_SCOPE` means the requested `--api-version` or `--dataspace` is outside that set.
+Each family supports a fixed set of API versions and data spaces. Native DLO, DMO, mapping and relationship routes accept `auto` (API 68) or a numeric version from `61.0`. Data graphs, data streams, data transforms, Segments, calculated insights and identity resolutions accept only `auto` or their own fixed version. Every family works in any data space of the org. `INVALID_SCOPE` means the requested `--api-version` is outside that set, or a component could not be used in the run's data space.
 
 ## Why the plugin stops
 
-The plugin has verified each family only on specific routes. Using an unverified version or data space could read or write differently from what the plugin checks.
+The plugin has verified each family only on specific routes. Using an unverified version could read or write differently from what the plugin checks.
 
 ## How to fix
 
 1. Drop `--api-version`, or set it to `auto`.
-2. Drop `--dataspace` unless the family supports other data spaces, or set it to `default`.
+2. Check that `--dataspace` names the data space of the selected files.
 3. If you mix families, split them into separate runs when their supported versions differ.
 
 ## Example output
@@ -28,7 +28,7 @@ The plugin has verified each family only on specific routes. Using an unverified
 Deploy execution: blocked (INVALID_SCOPE). No automatic retry or rollback performed.
 Deployed: 0 (0 created / 0 updated / 0 failed)
 INVALID_SCOPE: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Deployment did not complete. Check item outcomes, explicit inputs, target authentication and supported scope. Mutation may have occurred for unknown mutations; inspect target before any further attempt. No automatic retry or rollback was performed.
-Hint: This family does not support the requested --api-version or --dataspace. Use --api-version auto (or a version the family allows) and the default data space, then rerun.
+Hint: This family does not support the requested --api-version, or the run could not use the data space. Use --api-version auto (or a version the family allows), then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/INVALID_SCOPE.md
 ```
 

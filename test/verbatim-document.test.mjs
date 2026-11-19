@@ -138,7 +138,8 @@ test('the verbatim document keeps the raw response with sorted keys and an exact
       {
         schemaVersion: 1,
         kind: 'native-data-graph',
-        identity: { dataSpace: 'default', apiName: 'Graph' },
+        c__dataSpace: 'default',
+        identity: { apiName: 'Graph' },
         verbatim: {
           reason: 'UNSUPPORTED_DATA_GRAPH_CONFIGURATION',
           native: { a: { b: 3, y: 2 }, z: 1 },

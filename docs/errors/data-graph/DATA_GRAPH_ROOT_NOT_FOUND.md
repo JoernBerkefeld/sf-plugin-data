@@ -10,7 +10,7 @@
 
 ## What it means
 
-The preview read the root object named in `primaryObjectName` of the graph file and the target answered that it does not exist in the default data space.
+The preview read the root object named in `primaryObjectName` of the graph file and the target answered that it does not exist in the run's data space (`--dataspace`, `default` when omitted).
 
 ## Why the plugin stops
 

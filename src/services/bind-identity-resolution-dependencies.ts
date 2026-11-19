@@ -9,7 +9,9 @@ import type { IdentityResolutionOutputIdentity } from '../artifacts/identity-res
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { ConnectClient } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
-import { normalizeDlo, unwrapDlo } from '../artifacts/dlo-document.js';
+import { projectDlo, unwrapDlo } from '../artifacts/dlo-document.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
+import { explainInput } from './operation-diagnostic.js';
 import type { IdentityResolutionTargetConnection } from './preflight-identity-resolution-deploy.js';
 import type { DocumentMode } from '../artifacts/verbatim-document.js';
 import { retrieveIdentityResolution } from './retrieve-identity-resolution.js';
@@ -59,16 +61,33 @@ function scope(
 }
 
 /**
- * Read the native API 68 DMO or DLO detail.
+ * Read the native API 68 DMO (in the ruleset's data space) or DLO detail.
  * @param {IdentityResolutionTargetConnection} connection Existing family connection.
+ * @param {string} dataSpace The ruleset's data space.
  * @returns {Acquire} Native68 reader.
  */
-function reader(connection: IdentityResolutionTargetConnection): Acquire {
+function reader(connection: IdentityResolutionTargetConnection, dataSpace: string): Acquire {
   return async (name, kind) => ({
     detail: await new ConnectClient(connection, '68.0').get(
-      `/services/data/v68.0/ssot/${kind === 'dlo' ? 'data-lake-objects' : 'data-model-objects'}/${name}`,
+      kind === 'dlo'
+        ? `/services/data/v68.0/ssot/data-lake-objects/${name}`
+        : `/services/data/v68.0/ssot/data-model-objects/${name}?dataspace=${encodeURIComponent(dataSpace)}`,
     ),
   });
+}
+
+/**
+ * The refusal of a ruleset that names a component of another data space than its own.
+ * @param {string} what What the ruleset names (`the DMO X`, `the DLO X`).
+ * @param {unknown} found The data space the org names for it (or the DLO's list).
+ * @param {string} dataSpace The ruleset's data space.
+ * @returns {IdentityResolutionError} IDENTITY_RESOLUTION_DEPENDENCY_OTHER_DATASPACE.
+ */
+function otherSpace(what: string, found: unknown, dataSpace: string): IdentityResolutionError {
+  return explainInput(
+    new IdentityResolutionError('IDENTITY_RESOLUTION_DEPENDENCY_OTHER_DATASPACE'),
+    `The ruleset names ${what}, which is in the data space ${typeof found === 'string' && found ? found : '(none named)'}, not in the ruleset's data space ${dataSpace}. Name the component of the ruleset's data space (outside default a standard DMO copy is <prefix>_<Name> with fields without ssot__); nothing was written.`,
+  );
 }
 
 /**
@@ -97,12 +116,15 @@ function fields(value: unknown, key: string): Map<string, Record<string, unknown
  * @param {Acquisition} acquired Native DMO detail.
  * @param {string} name Exact expected DMO name.
  * @param {string[]} required Fields the definition references.
+ * @param {string} dataSpace The ruleset's data space; a DMO the read names in another one is
+ * IDENTITY_RESOLUTION_DEPENDENCY_OTHER_DATASPACE.
  * @returns {object} Private target identity, referenced fields and observed keys.
  */
 function compatible(
   acquired: Acquisition,
   name: string,
   required: string[],
+  dataSpace: string,
 ): {
   id: string;
   creationType: unknown;
@@ -110,11 +132,10 @@ function compatible(
   keys: string[];
 } {
   const detail = record(acquired.detail);
+  if (detail.name === name && detail.dataSpaceName !== dataSpace)
+    throw otherSpace(`the DMO ${name}`, detail.dataSpaceName, dataSpace);
   requireProof(
-    detail.name === name &&
-      detail.dataSpaceName === 'default' &&
-      typeof detail.id === 'string' &&
-      detail.id.trim().length > 0,
+    detail.name === name && typeof detail.id === 'string' && detail.id.trim().length > 0,
   );
   const rawFields = fields(detail.fields, 'name');
   const verified = required.map((apiName) => {
@@ -132,7 +153,7 @@ function compatible(
  * @param {unknown} value Complete portable IR document.
  * @param {IdentityResolutionTargetConnection} connection Command-owned API68 connection.
  * @param {ApiVersionSelection} selection Explicit API68 family route.
- * @param {string} dataSpace Explicit normalized default space; omissions never default.
+ * @param {string} dataSpace The run's data space; the ruleset's c__dataSpace must name it.
  * @param {Function} acquire Native API 68 detail acquisition seam.
  * @param {DocumentMode} [mode] How the IR is checked: `retrieve` admits a retrieved file (delete).
  * @returns {Promise<{fingerprint: string}>} Stable ordered target-local identity/required-field/key digest.
@@ -142,13 +163,13 @@ export async function bindIdentityResolutionDependencies(
   connection: IdentityResolutionTargetConnection,
   selection: ApiVersionSelection,
   dataSpace: string,
-  acquire: Acquire = reader(connection),
+  acquire: Acquire = reader(connection, dataSpace),
   mode: DocumentMode = 'deploy',
 ): Promise<{ fingerprint: string }> {
   const document = validateIdentityResolutionDocument(value, mode);
   selection = { ...selection };
   scope(connection, selection);
-  requireProof(dataSpace === 'default');
+  requireProof(document.c__dataSpace === dataSpace);
   const acquisitions = new Map<string, Acquisition>();
   const acquireOnce: Acquire = async (name, kind) => {
     const cacheKey = `${kind ?? 'dmo'}:${name}`;
@@ -171,7 +192,7 @@ export async function bindIdentityResolutionDependencies(
         ...rule.fields.map((override) => override.field.apiName),
       ]),
     ];
-    const proof = compatible(await acquireOnce(name), name, required);
+    const proof = compatible(await acquireOnce(name), name, required, dataSpace);
     requireProof(!ids.has(proof.id));
     ids.add(proof.id);
     const priorities = [];
@@ -180,7 +201,14 @@ export async function bindIdentityResolutionDependencies(
       for (const source of settings.sources) {
         const acquired = await acquireOnce(source.apiName, 'dlo');
         const raw = unwrapDlo(acquired.detail);
-        const portable = normalizeDlo(raw, 'default');
+        // A DLO source must belong to the ruleset's data space (it may belong to others too).
+        const portable = projectDlo(raw);
+        if (raw.name === source.apiName && !portable.c__dataSpace.includes(dataSpace))
+          throw otherSpace(
+            `the DLO ${source.apiName}`,
+            portable.c__dataSpace.join(', '),
+            dataSpace,
+          );
         requireProof(
           portable.identity.apiName === source.apiName &&
             raw.status === 'ACTIVE' &&
@@ -216,7 +244,7 @@ export async function bindIdentityResolutionDependencies(
  * @param {object} owner Explicit target owner binding, never a source identity.
  * @param {string} owner.targetApiName Exact target owner API name.
  * @param {string} owner.targetId Independently acquired target owner ID.
- * @param {string} owner.dataSpace Explicit default data space.
+ * @param {string} owner.dataSpace The ruleset's data space (the run's).
  * @param {object[]} outputs Ordered target-owner-returned names and logical owner/entity/role identities.
  * @param {IdentityResolutionTargetConnection} connection Command-owned connection.
  * @param {ApiVersionSelection} selection Explicit family route.
@@ -227,18 +255,18 @@ export async function bindIdentityResolutionDependencies(
  * @returns {Promise<IdentityResolutionOutputBinding[]>} Independently verified private target bindings.
  */
 export async function verifyIdentityResolutionOutputs(
-  owner: { targetApiName: string; targetId: string; dataSpace: 'default' },
+  owner: { targetApiName: string; targetId: string; dataSpace: string },
   outputs: Array<{ identity: IdentityResolutionOutputIdentity; targetApiName: string }>,
   connection: IdentityResolutionTargetConnection,
   selection: ApiVersionSelection,
-  acquire: Acquire = reader(connection),
+  acquire: Acquire = reader(connection, owner?.dataSpace),
   acquireOwner = retrieveIdentityResolution,
   mode: DocumentMode = 'deploy',
 ): Promise<IdentityResolutionOutputBinding[]> {
   selection = { ...selection };
   scope(connection, selection);
   requireProof(
-    owner?.dataSpace === 'default' &&
+    isDataSpaceName(owner?.dataSpace) &&
       typeof owner.targetId === 'string' &&
       owner.targetId.trim() &&
       typeof owner.targetApiName === 'string' &&
@@ -253,7 +281,7 @@ export async function verifyIdentityResolutionOutputs(
     connection,
     target.targetApiName,
     { ...selection },
-    'default',
+    target.dataSpace,
     mode,
   );
   if (!acquired.expectations || !acquired.candidate || acquired.blockers.length > 0)
@@ -276,7 +304,12 @@ export async function verifyIdentityResolutionOutputs(
   const bindings: IdentityResolutionOutputBinding[] = [];
   const ids = new Set<string>([target.targetId]);
   for (const output of requested) {
-    const proof = compatible(await acquire(output.targetApiName), output.targetApiName, []);
+    const proof = compatible(
+      await acquire(output.targetApiName),
+      output.targetApiName,
+      [],
+      target.dataSpace,
+    );
     requireProof(!ids.has(proof.id));
     ids.add(proof.id);
     bindings.push({
@@ -290,7 +323,7 @@ export async function verifyIdentityResolutionOutputs(
     connection,
     target.targetApiName,
     { ...selection },
-    'default',
+    target.dataSpace,
     mode,
   );
   if (!final.expectations || !final.candidate || final.blockers.length > 0)

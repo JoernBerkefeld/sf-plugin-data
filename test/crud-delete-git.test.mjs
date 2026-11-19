@@ -41,6 +41,7 @@ const graphDocument = {
   schemaVersion: 1,
   kind: 'native-data-graph',
   apiVersion: '68.0',
+  c__dataSpace: 'default',
   definition: {
     name: 'SyntheticGraph',
     label: 'Synthetic graph',
@@ -548,7 +549,7 @@ test('a relationship deleted in the range takes its source DMO from the base con
 const verbatim = (kind, apiName, native) => ({
   schemaVersion: 1,
   kind,
-  // A DMO, mapping, relationship or calculated insight keeps its data space in c__dataSpace.
+  // Every kind but the DLO and the stream keeps its data space in c__dataSpace.
   ...([
     'dmo',
     'mapping',
@@ -556,6 +557,8 @@ const verbatim = (kind, apiName, native) => ({
     'calculated-insight',
     'segment',
     'data-transform',
+    'native-data-graph',
+    'identity-resolution',
   ].includes(kind)
     ? { c__dataSpace: 'default', identity: { apiName } }
     : { identity: { dataSpace: 'default', apiName } }),

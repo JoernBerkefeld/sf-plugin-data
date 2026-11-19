@@ -17,7 +17,7 @@ import { nativeIrFixture, nativeSelection } from './identity-resolution-fixtures
  * @param {string} apiName Target DLO API name.
  * @returns {object} Logical reference.
  */
-const source = (apiName) => ({ kind: 'dlo', dataSpace: 'default', apiName });
+const source = (apiName) => ({ kind: 'dlo', apiName });
 
 /**
  * Build a native-only independent target harness with no mutation route.

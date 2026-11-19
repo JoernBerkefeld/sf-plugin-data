@@ -10,7 +10,7 @@
 
 ## What it means
 
-Before writing a ruleset, the plugin checks the file, the API version and data space (API 68, default space), the DMOs the ruleset uses, and the current ruleset in the org. It repeats these checks right before the write. This code means one of them failed and no more specific code applies: for example the org returned a ruleset the plugin cannot read, a referenced DMO changed between two checks, or the ruleset changed in the org during the run.
+Before writing a ruleset, the plugin checks the file, the API version and data space (API 68, the run's data space), the DMOs the ruleset uses, and the current ruleset in the org. It repeats these checks right before the write. This code means one of them failed and no more specific code applies: for example the org returned a ruleset the plugin cannot read, a referenced DMO changed between two checks, or the ruleset changed in the org during the run.
 
 When Salesforce sent an error, its detail is part of the message.
 

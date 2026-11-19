@@ -1,16 +1,20 @@
 import { isDeepStrictEqual } from 'node:util';
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
+import { dataSpaceKey, isDataSpaceName, readSingleDataSpace } from './data-space-field.js';
 
+/**
+ * The references of a ruleset (its DMOs, fields, DLO sources and generated outputs) carry no data
+ * space: they are all in the ruleset's own data space, the file's `c__dataSpace`, and named as
+ * Salesforce stores them there (`ds2_Individual__dlm`, `FirstName__c` in a non-default space).
+ */
 export type IdentityResolutionIdentity = {
   kind: 'identity-resolution';
-  dataSpace: 'default';
   apiName: string;
 };
-export type IdentityResolutionDmoReference = { kind: 'dmo'; dataSpace: 'default'; apiName: string };
+export type IdentityResolutionDmoReference = { kind: 'dmo'; apiName: string };
 export type IdentityResolutionFieldReference = {
   kind: 'dmo-field';
-  dataSpace: 'default';
   parentApiName: string;
   apiName: string;
 };
@@ -21,7 +25,6 @@ export type IdentityResolutionOutputIdentity = {
 };
 export type IdentityResolutionSourceReference = {
   kind: 'dlo';
-  dataSpace: 'default';
   apiName: string;
 };
 export type IdentityResolutionReconciliationSettings = {
@@ -32,7 +35,8 @@ export type IdentityResolutionReconciliationSettings = {
 export type IdentityResolutionDocument = {
   schemaVersion: 1;
   kind: 'identity-resolution';
-  identity: { dataSpace: 'default'; apiName: string };
+  c__dataSpace: string;
+  identity: { apiName: string };
   spec: {
     configurationType: string;
     label: string;
@@ -242,16 +246,27 @@ export function validateIdentityResolutionDocument(
 ): IdentityResolutionDocument {
   const lenient = mode === 'retrieve';
   if (!lenient) json(value);
-  const root = record(value, ['schemaVersion', 'kind', 'identity', 'spec'], false, '[document]');
-  const identity = record(root.identity, ['dataSpace', 'apiName'], false, 'identity');
+  requireValid(
+    value && typeof value === 'object' && !Array.isArray(value),
+    '[document]',
+    'is not an object',
+  );
+  legacySpace((value as Record<string, unknown>).identity, 'identity');
+  readSingleDataSpace(value as Record<string, unknown>, refuseFile);
+  const root = record(
+    value,
+    ['schemaVersion', 'kind', dataSpaceKey, 'identity', 'spec'],
+    false,
+    '[document]',
+  );
+  const identity = record(root.identity, ['apiName'], false, 'identity');
   requireValid(
     root.schemaVersion === 1 &&
       root.kind === 'identity-resolution' &&
-      identity.dataSpace === 'default' &&
       typeof identity.apiName === 'string' &&
       identityResolutionName.test(identity.apiName),
     'identity',
-    'is not an identity resolution API name in the default data space',
+    'is not an identity resolution API name',
   );
   requireValid(root.spec && typeof root.spec === 'object', 'spec', 'is not an object');
   const hasTrustedSources = Object.hasOwn(root.spec, 'trustedSources');
@@ -327,9 +342,10 @@ export function validateIdentityResolutionDocument(
         lenient,
         criterionPath,
       );
+      legacySpace(criterion.field, `${criterionPath}.field`);
       const reference = record(
         criterion.field,
-        ['kind', 'dataSpace', 'parentApiName', 'apiName'],
+        ['kind', 'parentApiName', 'apiName'],
         false,
         `${criterionPath}.field`,
       );
@@ -390,9 +406,10 @@ export function validateIdentityResolutionDocument(
         lenient,
         overridePath,
       );
+      legacySpace(override.field, `${overridePath}.field`);
       const reference = record(
         override.field,
-        ['kind', 'dataSpace', 'parentApiName', 'apiName'],
+        ['kind', 'parentApiName', 'apiName'],
         false,
         `${overridePath}.field`,
       );
@@ -406,6 +423,13 @@ export function validateIdentityResolutionDocument(
       seen.add(reference.apiName);
       validateSettings(override, overridePath, lenient);
     }
+    if (Array.isArray(reconciliation.outputs))
+      for (const [position, output] of reconciliation.outputs.entries())
+        if (output && typeof output === 'object') {
+          const item = output as Record<string, unknown>;
+          legacySpace(item.owner, `${rulePath}.outputs[${position}].owner`);
+          legacySpace(item.entity, `${rulePath}.outputs[${position}].entity`);
+        }
     requireValid(
       isDeepStrictEqual(reconciliation.outputs, outputs(identity.apiName, entity)),
       `${rulePath}.outputs`,
@@ -416,19 +440,53 @@ export function validateIdentityResolutionDocument(
 }
 
 /**
+ * Refuse an identity resolution file problem, naming the key.
+ * @param {string} code Refusal code.
+ * @param {string} keyPath Key path.
+ * @param {string} problem What is wrong with it.
+ * @returns {IdentityResolutionError} Refusal with an explanation.
+ */
+function refuseFile(code: string, keyPath: string, problem: string): IdentityResolutionError {
+  return explainInput(
+    new IdentityResolutionError(code),
+    `The identity resolution file cannot be deployed: ${keyPath} ${problem}. Correct the file, or retrieve the ruleset again.`,
+  );
+}
+
+/**
+ * Refuse a `dataSpace` key in the identity or a reference: the old place of the data space.
+ * Every reference is in the ruleset's own data space (`c__dataSpace`); files are not migrated.
+ * @param {unknown} value Identity or reference.
+ * @param {string} keyPath Printable key path.
+ */
+function legacySpace(value: unknown, keyPath: string): void {
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.hasOwn(value, 'dataSpace')
+  )
+    throw refuseFile(
+      'LEGACY_DATASPACE_KEY',
+      `${keyPath}.dataSpace`,
+      `is the old place of a data space; a ruleset and everything it names are in the ruleset's data space, the top-level key ${dataSpaceKey}, or retrieve the ruleset again`,
+    );
+}
+
+/**
  * Check a logical DMO reference; deploy also checks its name.
  * @param {unknown} value Candidate reference.
  * @param {string} keyPath Printable key path.
  * @param {boolean} lenient Retrieve mode: any name, `null` included.
  */
 function validateDmo(value: unknown, keyPath: string, lenient: boolean): void {
-  const reference = record(value, ['kind', 'dataSpace', 'apiName'], false, keyPath);
+  legacySpace(value, keyPath);
+  const reference = record(value, ['kind', 'apiName'], false, keyPath);
   requireValid(
     reference.kind === 'dmo' &&
-      reference.dataSpace === 'default' &&
       (lenient || (typeof reference.apiName === 'string' && dmoName.test(reference.apiName))),
     keyPath,
-    'is not a DMO (__dlm) in the default data space',
+    'is not a DMO (__dlm)',
   );
 }
 
@@ -447,7 +505,6 @@ function validateField(
 ): void {
   requireValid(
     reference.kind === 'dmo-field' &&
-      reference.dataSpace === 'default' &&
       reference.parentApiName === parent &&
       (lenient ||
         (typeof parent === 'string' &&
@@ -455,7 +512,7 @@ function validateField(
           typeof reference.apiName === 'string' &&
           /^[A-Za-z][A-Za-z0-9_]*__c$/u.test(reference.apiName))),
     keyPath,
-    'is not a custom field (__c) of its DMO in the default data space',
+    'is not a custom field (__c) of its DMO',
   );
 }
 
@@ -481,16 +538,16 @@ function validateSettings(
   const seen = new Set<unknown>();
   for (const [index, value] of list(settings.sources, `${keyPath}.sources`, lenient).entries()) {
     const sourcePath = `${keyPath}.sources[${index}]`;
-    const source = record(value, ['kind', 'dataSpace', 'apiName'], lenient, sourcePath);
+    legacySpace(value, sourcePath);
+    const source = record(value, ['kind', 'apiName'], lenient, sourcePath);
     requireValid(
       source.kind === 'dlo' &&
-        source.dataSpace === 'default' &&
         (lenient ||
           (typeof source.apiName === 'string' &&
             objectName.test(source.apiName) &&
             !seen.has(source.apiName))),
       sourcePath,
-      'is not a unique DLO in the default data space',
+      'is not a unique DLO',
     );
     seen.add(source.apiName);
   }
@@ -502,7 +559,7 @@ function validateSettings(
  * @returns {IdentityResolutionDmoReference} Logical reference.
  */
 function dmo(apiName: string): IdentityResolutionDmoReference {
-  return { kind: 'dmo', dataSpace: 'default', apiName };
+  return { kind: 'dmo', apiName };
 }
 
 /**
@@ -512,7 +569,7 @@ function dmo(apiName: string): IdentityResolutionDmoReference {
  * @returns {IdentityResolutionFieldReference} Logical reference.
  */
 function field(parentApiName: string, apiName: string): IdentityResolutionFieldReference {
-  return { kind: 'dmo-field', dataSpace: 'default', parentApiName, apiName };
+  return { kind: 'dmo-field', parentApiName, apiName };
 }
 
 /**
@@ -523,10 +580,47 @@ function field(parentApiName: string, apiName: string): IdentityResolutionFieldR
  */
 function outputs(apiName: string, entity: string): IdentityResolutionOutputIdentity[] {
   return (['unified', 'link'] as const).map((role) => ({
-    owner: { kind: 'identity-resolution', dataSpace: 'default', apiName },
+    owner: { kind: 'identity-resolution', apiName },
     entity: dmo(entity),
     role,
   }));
+}
+
+/**
+ * The data space a ruleset GET names (`dataSpaceName`): the ruleset's real data space, read
+ * before anything is projected. One without a usable one is IDENTITY_RESOLUTION_DATASPACE_UNREADABLE.
+ * @param {unknown} native Native response.
+ * @returns {string} Data space.
+ */
+export function identityResolutionSpace(native: unknown): string {
+  const found =
+    native && typeof native === 'object' && !Array.isArray(native)
+      ? (native as Record<string, unknown>).dataSpaceName
+      : undefined;
+  if (!isDataSpaceName(found))
+    throw new IdentityResolutionError('IDENTITY_RESOLUTION_DATASPACE_UNREADABLE');
+  return found;
+}
+
+/**
+ * The refusal of a ruleset whose file, or whose ruleset in the org, is in another data space than
+ * the run's.
+ * @param {string} apiName Ruleset name.
+ * @param {string} found The data space of the file or the org ruleset.
+ * @param {string} dataSpace The run's data space.
+ * @param {'file' | 'org'} where Whether the file or the org ruleset names `found`.
+ * @returns {IdentityResolutionError} IDENTITY_RESOLUTION_DATASPACE_MISMATCH with an explanation.
+ */
+export function identityResolutionSpaceMismatch(
+  apiName: string,
+  found: string,
+  dataSpace: string,
+  where: 'file' | 'org',
+): IdentityResolutionError {
+  return explainInput(
+    new IdentityResolutionError('IDENTITY_RESOLUTION_DATASPACE_MISMATCH'),
+    `${where === 'file' ? `The file of identity resolution ruleset ${apiName} names the data space ${printableKey(found)} in ${dataSpaceKey}` : `Identity resolution ruleset ${apiName} is in the data space ${printableKey(found)} in the org`}, but the run's data space is ${printableKey(dataSpace)} (--dataspace, default "default"). Run the command with --dataspace ${printableKey(found)}${where === 'file' ? ', or correct the file' : ''}. Nothing was written.`,
+  );
 }
 
 /**
@@ -630,6 +724,8 @@ function projectOwner(
   if (!lenient) json(native);
   requireValid(typeof apiName === 'string' && identityResolutionName.test(apiName));
   requireValid(native && typeof native === 'object' && !Array.isArray(native));
+  // The ruleset's own data space is read before anything else is projected.
+  const dataSpace = identityResolutionSpace(native);
   const has = (key: string): boolean => Object.hasOwn(native, key);
   // Native68 may omit filters, trustedSources, description and (default owner) rulesetId.
   const optional = new Set(['filters', 'rulesetId', 'description', 'trustedSources']);
@@ -656,7 +752,7 @@ function projectOwner(
     requireValid(typeof raw.id === 'string' && raw.id.trim().length > 0);
     requireValid(typeof raw.rulesetStatus === 'string' && raw.rulesetStatus.trim().length > 0);
   }
-  requireValid(raw.objectApiName === apiName && raw.dataSpaceName === 'default');
+  requireValid(raw.objectApiName === apiName);
   const matchRules = rows(raw.matchRules)?.map((value) => {
     const match = record(value, ['criteria', 'label'], lenient);
     const criteria = rows(match.criteria)?.map((value) => {
@@ -747,7 +843,8 @@ function projectOwner(
     {
       schemaVersion: 1,
       kind: 'identity-resolution',
-      identity: { dataSpace: 'default', apiName: raw.objectApiName },
+      [dataSpaceKey]: dataSpace,
+      identity: { apiName: raw.objectApiName },
       spec: { ...spec, ...extras(raw, ownerKeys, Object.keys(spec)) },
     },
     mode,
@@ -777,9 +874,8 @@ function projectSettings(item: Record<string, unknown>, lenient: boolean): objec
           const source = record(value, ['name'], lenient);
           return {
             kind: 'dlo',
-            dataSpace: 'default',
             apiName: source.name,
-            ...extras(source, ['name'], ['kind', 'dataSpace', 'apiName']),
+            ...extras(source, ['name'], ['kind', 'apiName']),
           };
         })
       : item.sources,

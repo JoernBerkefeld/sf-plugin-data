@@ -163,8 +163,20 @@ for (const pin of ['65.0', '67.0', '69.0', 'latest'])
     assert.equal(result.status, 'blocked');
     assert.equal(h.calls.auth, 0);
   });
+test('public IR delete refuses a ruleset of another data space than the run, zero-write', async () => {
+  const h = await harness({ dataspace: 'other' });
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(h.calls.writes, 0);
+  assert.equal(
+    [...result.diagnostics.errors, ...result.result.items.flatMap((item) => item.diagnostics ?? [])]
+      .map((diagnostic) => diagnostic.code)
+      .includes('IDENTITY_RESOLUTION_DATASPACE_MISMATCH'),
+    true,
+    JSON.stringify(result.diagnostics),
+  );
+});
 for (const overrides of [
-  { dataspace: 'other' },
   { metadata: ['identity-resolution'] },
   { metadata: ['identity-resolution:*'] },
   { metadata: ['identity-resolution:Individual_A1b2', 'identity-resolution:Individual_A1b2'] },

@@ -258,7 +258,7 @@ test('retrieve help keeps the other inventory statements', () => {
     'Bare -m data-transform retrieves every transform of the run data space the API lists',
     'Bare -m data-stream retrieves every stream the API lists',
     'bare -m relationship does so for every DMO the API lists',
-    'Bare -m data-graph retrieves every default-space graph the API lists.',
+    'Bare -m data-graph retrieves every graph of the run data space the API lists.',
     'bare -m calculated-insight every insight the API lists',
     'bare -m segment every segment of the run data space the API lists',
     'a UI segment (built in the segment canvas) is written as a normal <Name>.segment.json',

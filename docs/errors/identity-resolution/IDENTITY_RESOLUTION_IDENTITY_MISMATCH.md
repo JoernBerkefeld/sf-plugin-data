@@ -1,6 +1,6 @@
 # `IDENTITY_RESOLUTION_IDENTITY_MISMATCH`
 
-> The org returned a ruleset whose name or data space differs from the one requested, so no file was written. Check the exact ruleset API name, then rerun.
+> The org returned a ruleset whose name differs from the one requested, so no file was written. Check the exact ruleset API name, then rerun.
 
 |              |                                 |
 | ------------ | ------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-The retrieve read the ruleset you named, but the definition it got back carries a different API name or data space than the one you asked for (for example a different spelling).
+The retrieve read the ruleset you named, but the definition it got back carries a different API name than the one you asked for (for example a different spelling). A ruleset of another data space is [`IDENTITY_RESOLUTION_DATASPACE_MISMATCH`](../identity-resolution/IDENTITY_RESOLUTION_DATASPACE_MISMATCH.md).
 
 ## Why the plugin stops
 
@@ -26,7 +26,7 @@ The file name and its contents must name the same ruleset. A file written under 
 ```text
 Retrieve: blocked.
 IDENTITY_RESOLUTION_IDENTITY_MISMATCH: The selection could not be retrieved completely; no files were written.
-Hint: The org returned a ruleset whose name or data space differs from the one requested, so no file was written. Check the exact ruleset API name, then rerun.
+Hint: The org returned a ruleset whose name differs from the one requested, so no file was written. Check the exact ruleset API name, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/identity-resolution/IDENTITY_RESOLUTION_IDENTITY_MISMATCH.md
 ```
 

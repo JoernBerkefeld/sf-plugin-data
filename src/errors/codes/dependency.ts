@@ -11,7 +11,7 @@ export const hints: Readonly<Record<string, string>> = {
   DEPENDENCY_DUPLICATE_IDENTITY:
     'Two selected files define the same component (same type and API name). Keep one file per component in the selection, then rerun.',
   DEPENDENCY_IDENTITY_UNSUPPORTED:
-    'A selected component, or one it refers to, has an unsupported type, a data space other than default, or an invalid API name. Fix the reference, then rerun.',
+    'A selected component, or one it refers to, has an unsupported type, another data space than the component naming it, or an invalid API name. Fix the reference, then rerun.',
   DEPENDENCY_INPUT_CHANGED:
     'A selected file changed on disk while the command was running. Finish editing, then rerun the deploy.',
   DEPENDENCY_LIMIT_EXCEEDED:

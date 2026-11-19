@@ -93,7 +93,7 @@ test('IR logicalName identity is refused by writer and file/Git admission withou
   const cwd = await fixture();
   const value = document();
   const legacy = structuredClone(value);
-  legacy.identity = { dataSpace: 'default', logicalName: 'Individual_A1b2' };
+  legacy.identity = { logicalName: 'Individual_A1b2' };
   await assert.rejects(
     writeIdentityResolutionDocument(legacy, cwd, false),
     rejects('UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION'),

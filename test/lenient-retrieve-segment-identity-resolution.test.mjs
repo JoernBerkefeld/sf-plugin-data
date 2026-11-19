@@ -246,7 +246,7 @@ test('retrieve keeps unknown identity resolution keys and nulls; deploy refuses,
   assert.equal(spec.matchRules.length, 2);
   assert.deepEqual(spec.reconciliationRules[0].futureReconciliationKey, []);
   assert.deepEqual(spec.reconciliationRules[0].sources, [
-    { kind: 'dlo', dataSpace: 'default', apiName: 'Lead__dll', priority: 1 },
+    { kind: 'dlo', apiName: 'Lead__dll', priority: 1 },
   ]);
   assert.ok(spec.reconciliationRules[1].sources === null);
   assert.ok(spec.reconciliationRules[2].ruleType === null);

@@ -1333,7 +1333,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       if (file.endsWith('.native-dataGraph.json')) {
         const input = await readNativeDataGraphInput(file);
         const name = input.document.definition.name as string;
-        const key = `data-graph:default:${name}`.toLowerCase();
+        // A graph name is unique in the org, whatever data space it is in.
+        const key = `data-graph:${name}`.toLowerCase();
         if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
         if (
           selectors &&
@@ -1347,7 +1348,7 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       if (file.endsWith('.identityResolution.json')) {
         const input = await readIdentityResolutionInput(file);
         const key =
-          `identity-resolution:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+          `identity-resolution:${input.document.c__dataSpace}:${input.document.identity.apiName}`.toLowerCase();
         if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
         if (
           selectors &&
@@ -1519,12 +1520,13 @@ export function admitDeletedArtifact(
       case 'data-graph': {
         const graph = validateNativeDataGraphDocument(value, 'retrieve');
         document = graph;
-        identity = { dataSpace: 'default', apiName: graph.definition.name as string };
+        identity = { dataSpace: graph.c__dataSpace, apiName: graph.definition.name as string };
         break;
       }
       case 'identity-resolution': {
-        document = validateIdentityResolutionDocument(value, 'retrieve');
-        ({ identity } = document);
+        const ruleset = validateIdentityResolutionDocument(value, 'retrieve');
+        document = ruleset;
+        identity = { dataSpace: ruleset.c__dataSpace, apiName: ruleset.identity.apiName };
         break;
       }
       case 'calculated-insight': {

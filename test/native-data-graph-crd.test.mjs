@@ -48,6 +48,7 @@ const document = () => ({
   schemaVersion: 1,
   kind: 'native-data-graph',
   apiVersion: '68.0',
+  c__dataSpace: 'default',
   definition: {
     name,
     label: 'Synthetic graph',
@@ -171,6 +172,7 @@ function fixture() {
   const calls = [];
   const context = {
     orgId: '00D000000000001AAA',
+    space: 'default',
     check() {},
     root: async () => root(),
     get: async () => (graph ? { status: 200, body: structuredClone(graph) } : missing()),

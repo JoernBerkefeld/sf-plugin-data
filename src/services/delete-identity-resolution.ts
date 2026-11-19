@@ -1,15 +1,19 @@
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
+  IdentityResolutionError,
+  identityResolutionSpace,
+  identityResolutionSpaceMismatch,
   observeIdentityResolutionOwner,
   projectNativeIdentityResolution,
   validateIdentityResolutionDocument,
 } from '../artifacts/identity-resolution-document.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
 import type {
   IdentityResolutionDocument,
   IdentityResolutionProjection,
 } from '../artifacts/identity-resolution-document.js';
-import { isVerbatimDocument } from '../artifacts/verbatim-document.js';
+import { isVerbatimDocument, verbatimDataSpace } from '../artifacts/verbatim-document.js';
 import { ConnectClient, ConnectError } from '../transport/connect-client.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
@@ -19,7 +23,7 @@ import {
   bindIdentityResolutionDependencies,
   verifyIdentityResolutionOutputs,
 } from './bind-identity-resolution-dependencies.js';
-import { operationDiagnostic } from './operation-diagnostic.js';
+import { explanationOf, operationDiagnostic } from './operation-diagnostic.js';
 
 export const identityResolutionDeleteBudget = Object.freeze({
   timeoutMs: 180_000,
@@ -49,16 +53,15 @@ type Projection = Omit<IdentityResolutionProjection, 'candidate'> & {
 };
 
 /**
- * The owner of a raw GET, checked only for what names and places it (the same name in the
- * default data space); used for a verbatim file, whose ruleset the plugin cannot model.
+ * The owner of a raw GET, checked only for what names it (the same name; its data space is
+ * checked before); used for a verbatim file, whose ruleset the plugin cannot model.
  * @param {unknown} raw Raw GET response.
  * @param {string} apiName Selected name.
  * @returns {Projection} The owner as read, without run statistics, and no outputs.
  */
 function rawOwner(raw: unknown, apiName: string): Projection {
   const native = observeIdentityResolutionOwner(raw);
-  if (native.objectApiName !== apiName || native.dataSpaceName !== 'default')
-    throw new Error('Owner identity');
+  if (native.objectApiName !== apiName) throw new Error('Owner identity');
   return { expectations: { native, outputs: [] } };
 }
 
@@ -69,7 +72,7 @@ function rawOwner(raw: unknown, apiName: string): Projection {
  * @param {unknown} value Immutable local configuration expectation, not ownership authority.
  * @param {IdentityResolutionTargetConnection} connection Authenticated fixed receiver.
  * @param {ApiVersionSelection} selection Explicit native68 route.
- * @param {string} dataSpace Exact default space.
+ * @param {string} dataSpace The run's data space; the file and the org ruleset must be in it.
  * @param {IdentityResolutionDeleteOptions} options Confirmation, input guard and private test seams.
  * @returns {Promise<IdentityResolutionDeleteResult>} Payload-free independently observed outcome.
  */
@@ -123,9 +126,19 @@ export async function deleteIdentityResolution(
     const verbatim = isVerbatimDocument(value, 'identity-resolution');
     const admit = (): IdentityResolutionDocument =>
       verbatim
-        ? ({ identity: { ...value.identity } } as IdentityResolutionDocument)
+        ? ({
+            c__dataSpace: verbatimDataSpace(value),
+            identity: { apiName: value.identity.apiName },
+          } as IdentityResolutionDocument)
         : validateIdentityResolutionDocument(value, 'retrieve');
     const desired = admit();
+    if (desired.c__dataSpace !== dataSpace)
+      throw identityResolutionSpaceMismatch(
+        desired.identity.apiName,
+        desired.c__dataSpace,
+        dataSpace,
+        'file',
+      );
     const frozen = { ...selection };
     const origin = connection.instanceUrl;
     const request = connection.request;
@@ -148,7 +161,7 @@ export async function deleteIdentityResolution(
         connection.getApiVersion() !== '68.0' ||
         connection.instanceUrl !== origin ||
         connection.request !== request ||
-        dataSpace !== 'default'
+        !isDataSpaceName(dataSpace)
       )
         throw new Error('Scope or deadline');
       previous = current;
@@ -228,10 +241,15 @@ export async function deleteIdentityResolution(
         throw error;
       }
     };
-    const project = (raw: unknown): Projection =>
-      verbatim
+    const project = (raw: unknown): Projection => {
+      // The ruleset's real data space, read before anything is projected.
+      const found = identityResolutionSpace(raw);
+      if (found !== dataSpace)
+        throw identityResolutionSpaceMismatch(desired.identity.apiName, found, dataSpace, 'org');
+      return verbatim
         ? rawOwner(raw, desired.identity.apiName)
         : projectNativeIdentityResolution(raw, desired.identity.apiName, 'retrieve');
+    };
     const work = async (): Promise<IdentityResolutionDeleteResult> => {
       await input();
       const raw = await read(desired.identity.apiName);
@@ -278,7 +296,7 @@ export async function deleteIdentityResolution(
       const outputs = verbatim
         ? []
         : await (options.verifyOutputs ?? verifyIdentityResolutionOutputs)(
-            { targetApiName: desired.identity.apiName, targetId: id, dataSpace: 'default' },
+            { targetApiName: desired.identity.apiName, targetId: id, dataSpace },
             expected,
             receiver,
             { ...frozen },
@@ -353,6 +371,12 @@ export async function deleteIdentityResolution(
       }),
     ]);
   } catch (error) {
+    // A file or ruleset of another data space, or a component it names there: its own code.
+    if (!attempted && error instanceof IdentityResolutionError && /DATASPACE/u.test(error.code))
+      return {
+        ...result('blocked'),
+        diagnostics: [{ code: error.code, message: explanationOf(error) ?? error.message }],
+      };
     return result(
       attempted ? 'failed' : 'blocked',
       attempted

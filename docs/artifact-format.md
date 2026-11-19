@@ -23,11 +23,19 @@ with all prior configuration preserved; no XML companion or request file is need
 ## Public Graph document
 
 Retrieve writes each data graph as `data360/dataGraphs/Name.native-dataGraph.json` at the
-project root: `schemaVersion: 1`, `kind: native-data-graph`, `apiVersion: 68.0` and the
-`definition` as the API 68 GET returns it (name, label, description, data space, root
-object, type, schedules, real-time settings, and the root node with its fields, joins
-(`path`) and related objects), without server facts such as IDs, status and dates. The file
-name must equal `definition.name`.
+project root: `schemaVersion: 1`, `kind: native-data-graph`, `apiVersion: 68.0`, the
+graph's data space in `c__dataSpace` and the `definition` as the API 68 GET returns it
+(name, label, description, data space, root object, type, schedules, real-time settings, and
+the root node with its fields, joins (`path`) and related objects), without server facts such
+as IDs, status and dates. The file name must equal `definition.name`.
+
+`c__dataSpace` must equal `definition.dataspaceName` when the definition names it
+(`INVALID_DATASPACE_FIELD` otherwise); a definition without `dataspaceName` takes it from
+`c__dataSpace`, and the create sends it. The file's data space must be the run's
+(`--dataspace`, `default` when omitted; `DATA_GRAPH_DATASPACE_MISMATCH` otherwise, also for an
+org graph of that name in another data space: graph names are unique in the org). Object
+names are the names Salesforce stores in that data space (`ds2_Individual__dlm` for a
+standard DMO copy outside `default`).
 
 Deploy treats the file as the desired state of an existing graph. Fields and related objects
 are sent as the file lists them, so a field or related object the file leaves out is not
@@ -43,6 +51,22 @@ different type, reference or projected name of an existing node (assigned by Sal
 A node's `type` may be left out: a create then sends none and Salesforce assigns it, and an
 update keeps the org value. The name and the data space identify the graph; a file with
 another name addresses another graph.
+
+## Public identity resolution file
+
+Retrieve writes each ruleset as
+`data360/identityResolution/<Name>.identityResolution.json` at the project root:
+`schemaVersion: 1`, `kind: identity-resolution`, the ruleset's data space in `c__dataSpace`,
+`identity: {apiName}` and `spec` with the configuration. Its references (the secondary DMO,
+the match and reconciliation entities and fields, the DLO sources and the unified and link
+outputs) carry no data space: they are all in the ruleset's data space and named as
+Salesforce stores them there. Outside `default` that is `<prefix>_<type>_<rulesetId>` for the
+ruleset (`ds2_Individual_cx2a`), `ds2_Individual__dlm` with `FirstName__c` for a standard DMO
+copy and its fields. The old `identity.dataSpace` and a `dataSpace` key in a reference are
+refused (`LEGACY_DATASPACE_KEY`). The file's data space must be the run's
+(`IDENTITY_RESOLUTION_DATASPACE_MISMATCH` otherwise, also for an org ruleset of that name in
+another data space), and a non-default file whose name lacks the prefix of the org's data
+space list is refused before any write (`IDENTITY_RESOLUTION_NAME_NOT_STORED`).
 
 ## Public calculated insight files
 

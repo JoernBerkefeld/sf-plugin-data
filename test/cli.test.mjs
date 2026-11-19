@@ -241,15 +241,6 @@ test('README and current docs do not mention removed mapping and stream refusal 
   }
 });
 
-/**
- * The Data space cell of a README support-table row.
- * @param {string} line Table row.
- * @returns {string} `yes` or `no`.
- */
-function space(line) {
-  return line.split('|')[6].trim();
-}
-
 test('README describes optional scope without promoting nondefault qualification or changing CRUD ratings', () => {
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   for (const text of [
@@ -302,29 +293,13 @@ test('README describes optional scope without promoting nondefault qualification
   for (const text of ['DATA_GRAPH_JOIN_CHANGE', 'DATA_GRAPH_CHANGE_NOT_APPLIED'])
     assert.ok(readme.includes(text), text);
   assert.ok(!readme.includes('Omitted fields and related objects are kept, not removed'));
-  // The Data space column: yes only where --dataspace reaches the native requests.
-  const rows = table
-    .split('\n')
-    .filter((line) => line.startsWith('| ') && !line.startsWith('| ---'));
+  // Every type works in any data space: the Data space column is gone (user decision).
   assert.match(
     readme,
-    /\| Resource +\| Retrieve +\| Create +\| Update +\| Delete +\| Data space \|/u,
+    /\| Resource +\| Retrieve +\| Create +\| Update +\| Delete +\| Scope \/ limits +\|/u,
   );
-  assert.deepEqual(
-    rows.filter((line) => space(line) === 'yes').map((line) => line.split('|')[1].trim()),
-    [
-      'Data Model Objects (DMOs), `dmo`',
-      'Data Lake Objects (DLOs), `dlo`',
-      'DLO-to-DMO mappings, `mapping`',
-      'DMO field relationships, `relationship`',
-      'Data Transforms, `data-transform`',
-      'Data Streams, `data-stream`',
-      'Calculated insights, `calculated-insight`',
-      'Segments, `segment`',
-      'Segment members',
-    ],
-  );
-  assert.ok(rows.every((line) => ['yes', 'no'].includes(space(line))));
+  assert.doesNotMatch(table, /\| Data space \|/u);
+  assert.ok(readme.includes('Every type works in any data space of the org'));
 });
 
 test('README documents the transform file as native input that Salesforce decides on', () => {

@@ -8,6 +8,7 @@ import {
 import type { ConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { ConnectError } from '../transport/connect-client.js';
 import { dataGraphName, graphRequire } from '../artifacts/data-graph-document.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
 import type { NativeGraphContext, NativeGraphRead } from './native-data-graph-crd.js';
 
 type TransportResponse = { statusCode?: unknown; body?: unknown; headers?: unknown };
@@ -23,13 +24,18 @@ type Transport = {
  * Raw wire status/body is retained privately because core otherwise discards Graph error envelopes.
  * No caller-supplied URL, SOQL, org identity, auth refresh or pagination replay is accepted.
  * @param {Connection} connection Existing API68 core connection.
- * @param {string} dataSpace Exact qualified default scope.
+ * @param {string} dataSpace The run's data space: the metadata, inventory, root DMO and DataSpace
+ * reads name it (graph item reads are by name, unique in the org).
  * @returns {Promise<NativeGraphContext>} Scope-checked concrete readers, never write authority.
  */
 export async function nativeDataGraphReadContext(
   connection: Connection,
   dataSpace: string,
 ): Promise<NativeGraphContext> {
+  graphRequire(isDataSpaceName(dataSpace));
+  const space = encodeURIComponent(dataSpace);
+  // A SOQL string literal: quotes and backslashes escaped.
+  const literal = dataSpace.replaceAll(/['\\]/gu, (character) => `\\${character}`);
   const origin = connection.instanceUrl;
   const parsed = new URL(origin);
   graphRequire(
@@ -47,8 +53,7 @@ export async function nativeDataGraphReadContext(
   const requestMethod = connection.request;
   const check = (): void => {
     graphRequire(
-      dataSpace === 'default' &&
-        connection.getApiVersion() === '68.0' &&
+      connection.getApiVersion() === '68.0' &&
         connection.instanceUrl === origin &&
         connection.getAuthInfoFields().orgId === orgId &&
         connection.request === requestMethod &&
@@ -148,14 +153,15 @@ export async function nativeDataGraphReadContext(
   };
   return {
     orgId,
+    space: dataSpace,
     check,
     get: (value) => read(`${graphs}/${name(value)}`),
     metadata: (value) =>
-      read(`${graphs}/metadata?dataspace=default&dataGraphEntityName=${name(value)}`),
-    inventory: () => read(`${graphs}/metadata?dataspace=default`),
+      read(`${graphs}/metadata?dataspace=${space}&dataGraphEntityName=${name(value)}`),
+    inventory: () => read(`${graphs}/metadata?dataspace=${space}`),
     dataSpace: () =>
       query(
-        "SELECT Id, DataSpaceApiName, Status, IsDeleted FROM DataSpace WHERE DataSpaceApiName = 'default' LIMIT 2",
+        `SELECT Id, DataSpaceApiName, Status, IsDeleted FROM DataSpace WHERE DataSpaceApiName = '${literal}' LIMIT 2`,
       ),
     query: (value) =>
       query(
@@ -163,7 +169,7 @@ export async function nativeDataGraphReadContext(
       ),
     root: async (value) => {
       const rootName = name(value);
-      const detail = await read(`${base}/ssot/data-model-objects/${rootName}?dataspace=default`);
+      const detail = await read(`${base}/ssot/data-model-objects/${rootName}?dataspace=${space}`);
       if (detail.status !== 200)
         throw retainConnectDiagnostic(
           new Error('Native Graph root unavailable'),

@@ -26,6 +26,7 @@ const graph = (root = unified) => ({
     schemaVersion: 1,
     kind: 'native-data-graph',
     apiVersion: '68.0',
+    c__dataSpace: 'default',
     definition: { name: 'Graph', primaryObjectName: root, relatedObjects: [] },
   },
 });

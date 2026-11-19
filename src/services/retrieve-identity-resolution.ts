@@ -3,8 +3,11 @@ import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/conn
 import {
   IdentityResolutionError,
   identityResolutionName,
+  identityResolutionSpace,
+  identityResolutionSpaceMismatch,
   projectNativeIdentityResolution,
 } from '../artifacts/identity-resolution-document.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
 import type {
   IdentityResolutionDocument,
   IdentityResolutionProjection,
@@ -15,7 +18,8 @@ import { carryNativeResponse } from '../artifacts/verbatim-document.js';
 import type { DocumentMode } from '../artifacts/verbatim-document.js';
 
 export type IdentityResolutionAcquisition = {
-  identity: IdentityResolutionDocument['identity'];
+  /** The ruleset's name and the run's data space (the ruleset's, once it was read). */
+  identity: { dataSpace: string; apiName: string };
   candidate?: IdentityResolutionDocument;
   blockers: string[];
   expectations?: IdentityResolutionProjection['expectations'];
@@ -26,7 +30,8 @@ export type IdentityResolutionAcquisition = {
  * @param {Connection} connection Authenticated command-owned numeric API68 connection.
  * @param {string} apiName Exact exposed owner objectApiName, including its actual suffix.
  * @param {ApiVersionSelection} apiVersion Explicit frozen native version selection.
- * @param {string} dataSpace Requested default data space.
+ * @param {string} dataSpace The run's data space: a ruleset of another one is the blocker
+ * IDENTITY_RESOLUTION_DATASPACE_MISMATCH, found before anything is projected.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps what the plugin does not model).
  * @returns {Promise<IdentityResolutionAcquisition>} Candidate and private correlation expectations.
  */
@@ -43,12 +48,12 @@ export async function retrieveIdentityResolution(
     apiVersion.restSelector !== `v${version}` ||
     apiVersion.soapNumeric !== version ||
     connection.getApiVersion() !== version ||
-    dataSpace !== 'default' ||
+    !isDataSpaceName(dataSpace) ||
     typeof apiName !== 'string' ||
     !identityResolutionName.test(apiName)
   )
     throw new IdentityResolutionError('INVALID_SCOPE');
-  const identity = { dataSpace: 'default', apiName } as const;
+  const identity = { dataSpace, apiName };
   // The raw GET response travels with the result and the candidate, for a verbatim file when
   // the owner cannot be represented.
   let read: { native: unknown } | undefined;
@@ -57,6 +62,11 @@ export async function retrieveIdentityResolution(
       `/services/data/v68.0/ssot/identity-resolutions/${apiName}`,
     );
     read = { native };
+    // The item route reads a ruleset of any data space by name: check its space first. A ruleset
+    // of another space is an item failure, never a verbatim file.
+    const found = identityResolutionSpace(native);
+    if (found !== dataSpace)
+      throw identityResolutionSpaceMismatch(apiName, found, dataSpace, 'org');
     const projection = projectNativeIdentityResolution(native, apiName, mode);
     carryNativeResponse(projection.candidate, native);
     return carryNativeResponse({ identity, ...projection, blockers: [] }, native);
@@ -77,18 +87,22 @@ export async function retrieveIdentityResolution(
 }
 
 /**
- * Every default-space identity resolution ruleset the API 68 list returns, by owner
+ * Every identity resolution ruleset of one data space the API 68 list returns, by owner
  * `objectApiName`. The list has no paging (it answers every ruleset at once and ignores
  * `batchSize`, `limit` and `offset`); extra envelope keys are ignored and a malformed answer is
  * IDENTITY_RESOLUTION_ACQUISITION_FAILED. An entry without a usable name or data space is skipped
- * with a warning, a ruleset of another data space is left out and a repeated name is listed once.
+ * with a warning, a ruleset of another data space is left out (the list answers every data space
+ * whatever `?dataspace=` says, so each entry's `dataSpaceName` decides) and a repeated name is
+ * listed once.
  * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated API 68 connection.
  * @param {string[]} [warnings] Receives one warning per skipped entry.
+ * @param {string} [dataSpace] The run's data space.
  * @returns {Promise<string[]>} Sorted owner names.
  */
 export async function listIdentityResolutionNames(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   warnings?: string[],
+  dataSpace = 'default',
 ): Promise<string[]> {
   const response = await new ConnectClient(connection, '68.0').get<unknown>(
     '/services/data/v68.0/ssot/identity-resolutions',
@@ -107,7 +121,7 @@ export async function listIdentityResolutionNames(
       );
       continue;
     }
-    if (item.dataSpaceName === 'default') names.add(apiName);
+    if (item.dataSpaceName === dataSpace) names.add(apiName);
   }
   // eslint-disable-next-line unicorn/no-array-sort -- Sorting a new array.
   return [...names].sort();

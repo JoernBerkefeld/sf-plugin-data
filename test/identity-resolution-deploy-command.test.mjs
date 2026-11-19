@@ -85,7 +85,7 @@ test('native IR binding preserves acquired owner diagnostics after successful in
       ],
     },
     request: async (request) => {
-      const name = request.url.split('/').at(-1);
+      const name = request.url.split('/').at(-1).split('?')[0];
       if (request.url.includes('/identity-resolutions/')) {
         ownerReads++;
         throw {
@@ -289,7 +289,8 @@ test('IR numeric65/latest/unsupported mixed numeric67 block all writes before ta
     [{ 'api-version': 'latest' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': '67.0' }, [ir()], 'INVALID_SCOPE'],
     [{ 'api-version': '69.0' }, [ir()], 'INVALID_SCOPE'],
-    [{ dataspace: 'other' }, [ir()], 'INVALID_SCOPE'],
+    // A file of another data space than the run: refused before any read.
+    [{ dataspace: 'other' }, [ir()], 'IDENTITY_RESOLUTION_DATASPACE_MISMATCH'],
   ]) {
     const { command, calls } = setup(flags, selected);
     const result = await run(command);

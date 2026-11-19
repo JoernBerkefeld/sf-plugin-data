@@ -2,11 +2,15 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
-import { operationDiagnostic } from './operation-diagnostic.js';
+import { explanationOf, operationDiagnostic } from './operation-diagnostic.js';
 import {
+  IdentityResolutionError,
+  identityResolutionSpace,
+  identityResolutionSpaceMismatch,
   projectNativeIdentityResolution,
   validateIdentityResolutionDocument,
 } from '../artifacts/identity-resolution-document.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
 import type {
   IdentityResolutionDocument,
   IdentityResolutionReconciliationSettings,
@@ -27,15 +31,22 @@ export function nativeIdentityResolutionDocument(value: unknown): IdentityResolu
 
 /**
  * Build the CREATE input from the document, never replaying source IDs or generated names.
- * The API names a ruleset `<type>_<rulesetId>`, so the ruleset ID is everything after the
- * type and its underscore; a name equal to the type creates the default ruleset (no ID).
- * Preflight refuses names that are neither (IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH).
+ * The API names a ruleset `<type>_<rulesetId>` (`<prefix>_<type>_<rulesetId>` outside the
+ * default data space, live API 68), so the ruleset ID is everything after the type and its
+ * underscore; a name equal to the type creates the default ruleset (no ID). Preflight refuses
+ * names that are neither (IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH); outside default a name
+ * without the org's prefix, or no prefix at all, is IDENTITY_RESOLUTION_NAME_NOT_STORED.
  * @param {unknown} value Complete native68 portable definition.
+ * @param {string} [dataSpacePrefix] The prefix the org's data space list names for the
+ * ruleset's data space; required outside default.
  * @returns {Record<string, unknown>} Detached native request, not execution authorization.
  */
-export function buildNativeIdentityResolutionCreate(value: unknown): Record<string, unknown> {
+export function buildNativeIdentityResolutionCreate(
+  value: unknown,
+  dataSpacePrefix?: string,
+): Record<string, unknown> {
   const document = nativeIdentityResolutionDocument(value);
-  const name = document.identity.apiName;
+  const name = typeName(document, dataSpacePrefix);
   const prefix = `${document.spec.configurationType}_`;
   const rulesetId = name.toLowerCase().startsWith(prefix.toLowerCase())
     ? name.slice(prefix.length)
@@ -43,10 +54,25 @@ export function buildNativeIdentityResolutionCreate(value: unknown): Record<stri
   return {
     configurationType: document.spec.configurationType,
     ...(rulesetId ? { rulesetId } : {}),
-    dataSpaceName: document.identity.dataSpace,
+    dataSpaceName: document.c__dataSpace,
     secondaryDmo: document.spec.secondaryDmo.apiName,
     ...buildNativeIdentityResolutionUpdate(document),
   };
+}
+
+/**
+ * The ruleset name without the data space prefix Salesforce puts before `<type>` outside the
+ * default data space. The prefix is the one the org's data space list names, never guessed.
+ * @param {IdentityResolutionDocument} document Admitted ruleset.
+ * @param {string} [dataSpacePrefix] The prefix of the ruleset's data space; required outside default.
+ * @returns {string} `<type>` or `<type>_<rulesetId>` as the file names it.
+ */
+function typeName(document: IdentityResolutionDocument, dataSpacePrefix?: string): string {
+  const name = document.identity.apiName;
+  if (document.c__dataSpace === 'default') return name;
+  if (dataSpacePrefix === undefined || !name.startsWith(`${dataSpacePrefix}_`))
+    throw new Error('IDENTITY_RESOLUTION_NAME_NOT_STORED');
+  return name.slice(dataSpacePrefix.length + 1);
 }
 
 /**
@@ -150,7 +176,7 @@ export type NativeIdentityResolutionPrecreateBinding = {
  * @param {unknown} value Complete qualified native68 source.
  * @param {IdentityResolutionTargetConnection} connection Native68 receiver.
  * @param {ApiVersionSelection} selection Explicit native68 selection.
- * @param {string} dataSpace Exact default space.
+ * @param {string} dataSpace The run's data space (the ruleset's).
  * @param {Function} verifyDependencies Fresh input identity/field/key verifier.
  * @returns {Promise<NativeIdentityResolutionPrecreateBinding>} Private non-authorizing binding.
  */
@@ -169,7 +195,7 @@ export async function bindNativeIdentityResolutionPrecreate(
       frozen.restSelector !== 'v68.0' ||
       frozen.soapNumeric !== '68.0' ||
       connection.getApiVersion() !== '68.0' ||
-      dataSpace !== 'default' ||
+      dataSpace !== desired.c__dataSpace ||
       !isDeepStrictEqual(selection, frozen)
     )
       throw new Error('INVALID_SCOPE');
@@ -220,7 +246,8 @@ export type NativeIdentityResolutionPreview =
  * @param {unknown} value Complete authored document.
  * @param {IdentityResolutionTargetConnection} connection Explicit native68 receiver.
  * @param {ApiVersionSelection} selection Explicit native68 route.
- * @param {string} dataSpace Exact default space.
+ * @param {string} dataSpace The run's data space; the file's c__dataSpace and the org
+ * ruleset's must be it (IDENTITY_RESOLUTION_DATASPACE_MISMATCH).
  * @param {object} options Private independent dependency reader seam.
  * @param {Function} [options.verifyDependencies] Input-only dependency verification.
  * @returns {Promise<NativeIdentityResolutionPreview>} Payload-free non-authorizing preview.
@@ -232,6 +259,8 @@ export async function preflightNativeIdentityResolutionDeploy(
   dataSpace: string,
   options: Pick<IdentityResolutionPreflightOptions, 'verifyDependencies'> & {
     verifyPrecreateInputs?: typeof bindIdentityResolutionDependencies;
+    /** The prefix of the run's data space as the org's list names it; required outside default. */
+    dataSpacePrefix?: string;
   } = {},
 ): Promise<NativeIdentityResolutionPreview> {
   const result: NativeIdentityResolutionPreview = {
@@ -251,9 +280,16 @@ export async function preflightNativeIdentityResolutionDeploy(
       frozen.restSelector !== 'v68.0' ||
       frozen.soapNumeric !== '68.0' ||
       connection.getApiVersion() !== '68.0' ||
-      dataSpace !== 'default'
+      !isDataSpaceName(dataSpace)
     )
       throw new Error('INVALID_SCOPE');
+    if (desired.c__dataSpace !== dataSpace)
+      throw identityResolutionSpaceMismatch(
+        desired.identity.apiName,
+        desired.c__dataSpace,
+        dataSpace,
+        'file',
+      );
     const verify = options.verifyDependencies ?? bindIdentityResolutionDependencies;
     await verify(structuredClone(desired), connection, { ...frozen }, dataSpace);
     const client = new ConnectClient(connection, frozen);
@@ -272,7 +308,7 @@ export async function preflightNativeIdentityResolutionDeploy(
         result.absenceProof = 'exact-item-not-found';
         // The API names a new ruleset `<type>_<rulesetId>` (or `<type>`); a file name that
         // does not follow it would create a ruleset under another name than the file's.
-        const name = desired.identity.apiName.toLowerCase();
+        const name = typeName(desired, options.dataSpacePrefix).toLowerCase();
         const type = desired.spec.configurationType.toLowerCase();
         if (name !== type && !(name.startsWith(`${type}_`) && name.length > type.length + 1))
           throw new Error('IDENTITY_RESOLUTION_NAME_TYPE_MISMATCH');
@@ -301,6 +337,10 @@ export async function preflightNativeIdentityResolutionDeploy(
         getConnectDiagnostic(error),
       );
     }
+    // The org ruleset's real data space, read before it is projected.
+    const found = identityResolutionSpace(raw);
+    if (found !== dataSpace)
+      throw identityResolutionSpaceMismatch(desired.identity.apiName, found, dataSpace, 'org');
     const projection = projectNativeIdentityResolution(raw, desired.identity.apiName);
     const current = projection.candidate;
     if (!isDeepStrictEqual(selection, frozen) || connection.getApiVersion() !== '68.0')
@@ -322,12 +362,16 @@ export async function preflightNativeIdentityResolutionDeploy(
     if (result.outcome === 'blocked-changes')
       throw new Error('IDENTITY_RESOLUTION_UPDATE_UNQUALIFIED');
   } catch (error) {
-    const code =
-      error instanceof Error &&
-      /^(?:IDENTITY_RESOLUTION_[A-Z0-9_]+|INVALID_SCOPE)$/u.test(error.message)
+    // A data space refusal keeps its own code and explanation.
+    const spaced = error instanceof IdentityResolutionError && /DATASPACE/u.test(error.code);
+    const code = spaced
+      ? error.code
+      : error instanceof Error &&
+          /^(?:IDENTITY_RESOLUTION_[A-Z0-9_]+|INVALID_SCOPE)$/u.test(error.message)
         ? error.message
         : 'IDENTITY_RESOLUTION_NATIVE68_ADMISSION_FAILED';
     const fallback =
+      (spaced ? explanationOf(error) : undefined) ??
       errorCodeInfo(code)?.hint ??
       'The identity resolution deployment did not pass the plugin checks.';
     retainConnectDiagnostic(result, getConnectDiagnostic(error));

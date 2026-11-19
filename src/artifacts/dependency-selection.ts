@@ -90,9 +90,19 @@ export function documentDependencyNode(
   }
   if (value.kind === 'identity-resolution') {
     const document = validateIdentityResolutionDocument(value, mode);
+    // Every entity DMO is in the ruleset's own data space.
+    const space = document.c__dataSpace;
     return {
-      identity: { kind: 'identity-resolution', ...document.identity },
-      dependencies: document.spec.reconciliationRules.map(({ entity }) => ({ ...entity })),
+      identity: {
+        kind: 'identity-resolution',
+        dataSpace: space,
+        apiName: document.identity.apiName,
+      },
+      dependencies: document.spec.reconciliationRules.map(({ entity }) => ({
+        kind: entity.kind,
+        dataSpace: space,
+        apiName: entity.apiName,
+      })),
     };
   }
   if (value.kind === 'segment') {

@@ -149,7 +149,7 @@ test('IR native68 requires exact route, connection, name and explicit space befo
     ['65.0', 'default', 'Individual_A1b2', '68.0'],
     ['67.0', 'default', 'Individual_A1b2', '67.0'],
     ['latest', 'default', 'Individual_A1b2', '68.0'],
-    ['68.0', 'other', 'Individual_A1b2', '68.0'],
+    ['68.0', '', 'Individual_A1b2', '68.0'],
     ['68.0', 'default', '../escape', '68.0'],
     ['68.0', 'default', '', '68.0'],
     ['68.0', 'default', undefined, '68.0'],

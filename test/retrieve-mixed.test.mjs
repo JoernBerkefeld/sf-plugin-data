@@ -347,7 +347,6 @@ for (const [metadata, overrides, code, family] of [
     'data-graph',
   ],
   [['data-graph:Alpha', 'segment:Audience'], { 'api-version': '65.0' }, 'INVALID_SCOPE', 'segment'],
-  [['dmo:Sample__dlm', 'data-graph:Alpha'], { dataspace: 'other' }, 'INVALID_SCOPE', 'data-graph'],
   [['data-graph:1bad', 'dmo:Sample__dlm'], {}, 'INVALID_SELECTION', 'data-graph'],
   [['data-stream:Alpha', 'segment:1bad'], {}, 'INVALID_SELECTION', 'segment'],
   [['data-graph:Alpha', 'dlo:bad name'], {}, 'INVALID_SELECTION', 'dlo'],
@@ -370,23 +369,19 @@ for (const [metadata, overrides, code, family] of [
     assert.equal(lines[0], `Retrieve: blocked (${code}).`);
   });
 
-test('outside default, DLOs, DMOs and mappings beside a family not converted yet refuse the group', async () => {
-  // DLOs, DMOs, mappings, streams, calculated insights, segments and transforms follow the run's
-  // data space; the families not converted to c__dataSpace yet (identity resolution, graph)
-  // refuse it before org access.
+test('outside default, every family is read in the run data space, none refuses the group', async () => {
+  // Every family follows the run's data space, identity resolution and graphs included.
   for (const metadata of [
     ['dlo:Source__dll', 'calculated-insight:Insight__cio', 'identity-resolution:Individual'],
     ['dmo:Sample__dlm', 'segment:Audience', 'identity-resolution:Individual'],
     ['mapping:Some_map', 'identity-resolution:Individual'],
+    ['dmo:Sample__dlm', 'data-graph:Alpha'],
   ]) {
-    const { command, calls } = invocation(metadata, { dataspace: 'other' });
+    const { command } = invocation(metadata, { dataspace: 'other' });
     const { result } = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.deepEqual(calls, []);
-    assert.deepEqual(result.result.items, []);
-    assert.deepEqual(
-      result.diagnostics.errors.map(({ code }) => code),
-      ['INVALID_SCOPE'],
+    assert.ok(
+      !result.diagnostics.errors.some(({ code }) => code === 'INVALID_SCOPE'),
+      JSON.stringify(result.diagnostics.errors),
     );
   }
 });

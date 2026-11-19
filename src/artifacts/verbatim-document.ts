@@ -19,7 +19,14 @@ export type VerbatimKind =
 
 /** Kinds whose files carry their data space in the top-level `c__dataSpace` key. */
 export type SpaceFieldVerbatimKind =
-  'dmo' | 'mapping' | 'relationship' | 'calculated-insight' | 'segment' | 'data-transform';
+  | 'dmo'
+  | 'mapping'
+  | 'relationship'
+  | 'calculated-insight'
+  | 'segment'
+  | 'data-transform'
+  | 'native-data-graph'
+  | 'identity-resolution';
 const spaceFieldKinds = new Set<string>([
   'dmo',
   'mapping',
@@ -27,11 +34,14 @@ const spaceFieldKinds = new Set<string>([
   'calculated-insight',
   'segment',
   'data-transform',
+  'native-data-graph',
+  'identity-resolution',
 ]);
 
 /**
- * Whether a kind's file carries its data space in `c__dataSpace` (instead of
- * `identity.dataSpace`, which the other kinds keep until they are converted).
+ * Whether a kind's file carries its data space in a single `c__dataSpace` (every kind but the
+ * DLO and the data stream, whose files list several and whose verbatim files keep
+ * `identity.dataSpace`).
  * @param {string} kind Document kind.
  * @returns {boolean} The kind uses `c__dataSpace`.
  */
@@ -42,8 +52,8 @@ export function usesDataSpaceField(kind: string): kind is SpaceFieldVerbatimKind
 /**
  * An org object written as Salesforce returned it, because the plugin cannot represent it.
  * `native` is the raw GET response with its keys sorted recursively. Deploy never sends it.
- * A DMO, mapping, relationship, calculated insight, segment or data transform carries its data
- * space in `c__dataSpace` like its normal file.
+ * Every kind but the DLO and the data stream carries its data space in `c__dataSpace`, like its
+ * normal file.
  */
 export type VerbatimDocument =
   | {

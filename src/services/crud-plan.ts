@@ -53,17 +53,27 @@ export function crudPhase(input: PlanInput): CrudPhase | undefined {
  * Salesforce names a ruleset `<type>` or `<type>_<rulesetId>` and its outputs
  * `Unified<entity><rulesetId>__dlm` / `UnifiedLink<entity><rulesetId>__dlm`, where `<entity>` is
  * the reconciliation DMO name without `__dlm` and underscores (`ssot__Individual__dlm` with
- * ruleset `Individual_5810` gives `UnifiedssotIndividual5810__dlm`). A name that does not follow
- * the type pattern derives nothing.
+ * ruleset `Individual_5810` gives `UnifiedssotIndividual5810__dlm`). Outside the default data
+ * space the ruleset is `<prefix>_<type>_<rulesetId>` and the prefix replaces the `ssot` infix
+ * (`ds2_Individual__dlm` with ruleset `ds2_Individual_cx2a` gives `ds2_UnifiedIndividualCx2a__dlm`,
+ * live API 68; names are compared ignoring case). A name that does not follow the type pattern
+ * derives nothing. The names only order the deploy; nothing is sent under them.
  * @param {IdentityResolutionDocument} document Authored ruleset.
  * @returns {string[]} Derived output DMO names.
  */
 export function unifiedDmoNames(document: IdentityResolutionDocument): string[] {
   // Edges are derived before the family validates the file; a malformed file derives nothing.
-  const name: unknown = document.identity?.apiName;
+  const stored: unknown = document.identity?.apiName;
   const type: unknown = document.spec?.configurationType;
   const rules: unknown = document.spec?.reconciliationRules;
-  if (typeof name !== 'string' || typeof type !== 'string' || !Array.isArray(rules)) return [];
+  if (typeof stored !== 'string' || typeof type !== 'string' || !Array.isArray(rules)) return [];
+  const spaced =
+    typeof document.c__dataSpace === 'string' && document.c__dataSpace !== 'default'
+      ? /^([A-Za-z][A-Za-z0-9]*)_(.+)$/u.exec(stored)
+      : undefined;
+  if (spaced === null) return [];
+  const prefix = spaced ? `${spaced[1]}_` : '';
+  const name = spaced ? spaced[2] : stored;
   const rulesetId =
     name.toLowerCase() === type.toLowerCase()
       ? ''
@@ -74,8 +84,13 @@ export function unifiedDmoNames(document: IdentityResolutionDocument): string[] 
   return (rules as Array<{ entity?: { apiName?: unknown } }>).flatMap((rule) => {
     const apiName = rule?.entity?.apiName;
     if (typeof apiName !== 'string') return [];
-    const entity = apiName.replace(/__dlm$/u, '').replaceAll('_', '');
-    return [`Unified${entity}${rulesetId}__dlm`, `UnifiedLink${entity}${rulesetId}__dlm`];
+    const entity = (prefix && apiName.startsWith(prefix) ? apiName.slice(prefix.length) : apiName)
+      .replace(/__dlm$/u, '')
+      .replaceAll('_', '');
+    return [
+      `${prefix}Unified${entity}${rulesetId}__dlm`,
+      `${prefix}UnifiedLink${entity}${rulesetId}__dlm`,
+    ];
   });
 }
 

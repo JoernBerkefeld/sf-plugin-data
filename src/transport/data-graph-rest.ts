@@ -1,7 +1,14 @@
-import { dataGraphName, DataGraphError, graphRequire } from '../artifacts/data-graph-document.js';
+import {
+  dataGraphName,
+  DataGraphError,
+  graphRecord,
+  graphRequire,
+} from '../artifacts/data-graph-document.js';
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
 import { ConnectClient } from './connect-client.js';
 import {
   nativeDataGraphCreateDefinition,
+  nativeDataGraphDocumentOf,
   validateNativeDataGraphDocument,
 } from '../artifacts/native-data-graph-document.js';
 
@@ -20,12 +27,7 @@ export type DataGraphClient = {
  * @returns {Record<string, unknown>} Detached native request.
  */
 export function buildDataGraphCreateRequest(value: unknown): Record<string, unknown> {
-  return nativeDataGraphCreateDefinition({
-    schemaVersion: 1,
-    kind: 'native-data-graph',
-    apiVersion: '68.0',
-    definition: value,
-  });
+  return nativeDataGraphCreateDefinition(nativeDataGraphDocumentOf(graphRecord(value)));
 }
 
 /** Shared core authentication and single-attempt transport, without a generic public writer. */
@@ -56,12 +58,14 @@ class DataGraphTransport extends ConnectClient {
 }
 
 /**
- * Bind native API68/default Graph CRD transport only, not lifecycle authorization.
+ * Bind native API68 Graph CRD transport in one data space, not lifecycle authorization. Graph
+ * routes are by name (names are unique in the org); the create and update bodies name the data
+ * space (`dataspaceName`) and must name the client's.
  * The caller must independently qualify dependencies, absence, ownership and settlement.
  * A DELETE acknowledgement does not prove absence or generated-resource cleanup.
  * @param {ConstructorParameters<typeof ConnectClient>[0]} connection Authenticated core receiver.
  * @param {string} apiVersion Explicit qualified numeric version.
- * @param {string} dataSpace Explicit qualified space.
+ * @param {string} dataSpace The run's data space.
  * @returns {DataGraphClient} Exact operations without automatic retries.
  */
 export function createDataGraphClient(
@@ -69,8 +73,8 @@ export function createDataGraphClient(
   apiVersion: string,
   dataSpace: string,
 ): DataGraphClient & Required<Pick<DataGraphClient, 'update'>> {
-  if (apiVersion !== '68.0' || dataSpace !== 'default')
-    throw new DataGraphError('INVALID_NATIVE_DATA_GRAPH_SCOPE');
+  if (apiVersion !== '68.0') throw new DataGraphError('INVALID_NATIVE_DATA_GRAPH_SCOPE');
+  graphRequire(isDataSpaceName(dataSpace));
   const transport = new DataGraphTransport(connection, apiVersion);
   const endpoint = '/services/data/v68.0/ssot/data-graphs';
   /**
@@ -85,17 +89,17 @@ export function createDataGraphClient(
   }
   return {
     get: async (apiName) => transport.request(item(apiName), 'GET'),
-    create: async (value) =>
-      transport.request(endpoint, 'POST', buildDataGraphCreateRequest(value)),
+    create: async (value) => {
+      const body = buildDataGraphCreateRequest(value);
+      graphRequire(body.dataspaceName === dataSpace);
+      return transport.request(endpoint, 'POST', body);
+    },
     update: async (apiName, value) => {
       const route = item(apiName);
-      const { definition } = validateNativeDataGraphDocument({
-        schemaVersion: 1,
-        kind: 'native-data-graph',
-        apiVersion: '68.0',
-        definition: value,
-      });
-      graphRequire(definition.name === apiName);
+      const { definition } = validateNativeDataGraphDocument(
+        nativeDataGraphDocumentOf(graphRecord(value)),
+      );
+      graphRequire(definition.name === apiName && definition.dataspaceName === dataSpace);
       return transport.request(route, 'PUT', definition);
     },
     delete: async (apiName) => transport.request(item(apiName), 'DELETE'),
