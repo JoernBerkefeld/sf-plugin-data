@@ -9,7 +9,8 @@ import { writeDataStreamDocument } from '../lib/artifacts/write-data-stream.js';
 const document = () => ({
   schemaVersion: 1,
   kind: 'data-stream',
-  identity: { apiName: 'ExampleStream', dataSpace: 'default' },
+  c__dataSpace: ['default'],
+  identity: { apiName: 'ExampleStream' },
   spec: {
     connectorType: 'IngestApi',
     connectionName: 'ExampleConnection',
@@ -49,9 +50,16 @@ test('stream publication emits LF, round trips, handles unchanged and explicit o
   assert.equal(overwritten.outcome, 'retrieved');
   assert.deepEqual(JSON.parse(await readFile(saved.path, 'utf8')), input);
   assert.deepEqual(await readdir(directory(root)), [filename]);
-  input.identity.dataSpace = 'other';
-  for (const overwrite of [false, true])
-    await assert.rejects(writeDataStreamDocument(input, root, overwrite), /DATASPACE_COLLISION/);
+  // A stream name is unique in the org: the file at the path is the same stream whatever data
+  // spaces its DLO belongs to, so another list is an ordinary overwrite.
+  input.c__dataSpace = ['dataspace2', 'default'];
+  await assert.rejects(writeDataStreamDocument(input, root, false), /OVERWRITE_REQUIRED/);
+  const replaced = await writeDataStreamDocument(input, root, true);
+  assert.equal(replaced.outcome, 'retrieved');
+  assert.deepEqual(JSON.parse(await readFile(saved.path, 'utf8')).c__dataSpace, [
+    'dataspace2',
+    'default',
+  ]);
 });
 
 test('stream publication refuses unsafe roots, malformed filenames and oversized evidence', async () => {

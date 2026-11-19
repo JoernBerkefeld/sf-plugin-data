@@ -6,7 +6,10 @@ import path from 'node:path';
 import test from 'node:test';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import { writeDataStreamDocument } from '../lib/artifacts/write-data-stream.js';
-import { crmDataStreamWriteBody } from '../lib/artifacts/data-stream-document.js';
+import {
+  crmDataStreamWriteBody,
+  validateCrmDataStreamDocument,
+} from '../lib/artifacts/data-stream-document.js';
 import { readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import { streamLandingDlo } from '../lib/services/crud-plan.js';
 import {
@@ -200,7 +203,7 @@ function org(getStream, answer = () => 200) {
 }
 const notFound = () => new DataStreamHttpError('STREAM_HTTP_ERROR', 404);
 const options = { allowProcessing: true, verifyInput: async () => {}, wait: async () => {} };
-const crmDocument = () => projectCrmDataStream(crmGet(), 'CliCrmPb2', 'retrieve');
+const crmDocument = () => projectCrmDataStream(crmGet(), 'CliCrmPb2', 'retrieve', ['default']);
 
 test('retrieve writes a CRM stream as its GET without server-owned keys and system fields', async () => {
   const stream = crmGet();
@@ -485,7 +488,7 @@ test('a stream of another connector uses the same file and is created as written
     connectorInfo: { connectorType: 'S3', connectorDetails: { name: 'AmazonS3_Home', type: 'S3' } },
     refreshConfig: { ...crmGet().refreshConfig, refreshMode: 'FULL_REFRESH' },
   };
-  const document = projectCrmDataStream(s3, 'Orders_S3', 'retrieve');
+  const document = projectCrmDataStream(s3, 'Orders_S3', 'retrieve', ['default']);
   assert.deepEqual(document.spec.connectorInfo, {
     connectorType: 'S3',
     connectorDetails: { name: 'AmazonS3_Home' },
@@ -512,7 +515,7 @@ test('a file of one connector never updates an org stream of another connector',
     dataStreamType: 'S3',
     connectorInfo: { connectorType: 'S3', connectorDetails: { name: 'AmazonS3_Home' } },
   };
-  const document = projectCrmDataStream(s3, 'CliCrmPb2', 'retrieve');
+  const document = projectCrmDataStream(s3, 'CliCrmPb2', 'retrieve', ['default']);
   const { clients, requests } = org(() => crmGet());
   await assert.rejects(preflightDataStream(document, clients), { code: 'STREAM_TARGET_MISMATCH' });
   const result = await executeDataStream(document, clients, options);
@@ -539,13 +542,14 @@ test('file-import refresh keys are user settings of non-CRM connectors and are s
     connectorInfo: { connectorType: 'S3', connectorDetails: { name: 'AmazonS3_Home' } },
     refreshConfig: refresh,
   };
-  const document = projectCrmDataStream(s3, 'CliCrmPb2', 'retrieve');
+  const document = projectCrmDataStream(s3, 'CliCrmPb2', 'retrieve', ['default']);
   assert.deepEqual(document.spec.refreshConfig, refresh);
   assert.deepEqual(crmDataStreamWriteBody(document.spec).refreshConfig, refresh);
   const crm = projectCrmDataStream(
     { ...crmGet(), refreshConfig: refresh },
     'CliCrmPb2',
     'retrieve',
+    ['default'],
   );
   assert.deepEqual(crm.spec.refreshConfig, { refreshMode: 'FULL_REFRESH' });
 });
@@ -797,4 +801,129 @@ test('the stream label transport refuses a missing record and leaves other failu
     request: async () => ({}),
   });
   assert.equal(plain.relabel, undefined);
+});
+
+// Data spaces (D2): the GET-shaped file keeps Salesforce's dataSpaceInfo beside c__dataSpace.
+const inSpaces = (...names) => {
+  const stream = crmGet();
+  stream.dataLakeObjectInfo.dataSpaceInfo = names.map((name) => ({ label: name, name }));
+  return stream;
+};
+
+test('a CRM stream file lists the data spaces of its DLO, and both lists must agree', () => {
+  const document = projectCrmDataStream(
+    inSpaces('default', 'dataspace2'),
+    'CliCrmPb2',
+    'retrieve',
+    ['default', 'dataspace2'],
+  );
+  assert.deepEqual(document.c__dataSpace, ['dataspace2', 'default']);
+  assert.deepEqual(document.identity, { apiName: 'CliCrmPb2' });
+  const differing = structuredClone(document);
+  differing.c__dataSpace = ['default'];
+  assert.throws(() => validateCrmDataStreamDocument(differing), {
+    code: 'STREAM_DATASPACE_MISMATCH',
+  });
+  const legacy = structuredClone(document);
+  legacy.identity.dataSpace = 'default';
+  assert.throws(() => validateCrmDataStreamDocument(legacy), { code: 'LEGACY_DATASPACE_KEY' });
+});
+
+test('a CRM stream outside the run data space stays an item failure on retrieve', async () => {
+  const clients = { streams: { get: async () => inSpaces('dataspace2') } };
+  await assert.rejects(
+    retrieveDataStreamDocument('CliCrmPb2', clients, 'default', false, 'retrieve'),
+    { code: 'UNSUPPORTED_STREAM_DATASPACE' },
+  );
+  const document = await retrieveDataStreamDocument(
+    'CliCrmPb2',
+    clients,
+    'dataspace2',
+    false,
+    'retrieve',
+  );
+  assert.deepEqual(document.c__dataSpace, ['dataspace2']);
+});
+
+test('a new CRM stream is created in the run data space, filled from c__dataSpace', async () => {
+  const document = structuredClone(
+    projectCrmDataStream(inSpaces('dataspace2'), 'CliCrmPb2', 'retrieve', ['dataspace2']),
+  );
+  delete document.spec.dataLakeObjectInfo.dataSpaceInfo;
+  const { clients: live, requests: sent } = org((done) =>
+    done.length > 0 ? inSpaces('dataspace2') : undefined,
+  );
+  const result = await executeDataStream(document, live, { ...options, dataSpace: 'dataspace2' });
+  assert.equal(result.outcome, 'created', JSON.stringify(result.diagnostics));
+  assert.deepEqual(sent[0].body.dataLakeObjectInfo.dataspaceInfo, [{ name: 'dataspace2' }]);
+  // Another run data space, or several spaces for a new stream, are refused before any write.
+  for (const [listed, run] of [
+    [['dataspace2'], 'default'],
+    [['dataspace2', 'default'], 'dataspace2'],
+  ]) {
+    const { clients, requests } = org(() => {});
+    const blocked = await executeDataStream({ ...document, c__dataSpace: listed }, clients, {
+      ...options,
+      dataSpace: run,
+    });
+    assert.equal(blocked.outcome, 'blocked');
+    assert.equal(blocked.diagnostics[0].code, 'STREAM_DATASPACE_MISMATCH');
+    assert.equal(requests.length, 0);
+  }
+});
+
+test('an existing CRM stream file must list exactly the data spaces of its DLO', async () => {
+  const document = projectCrmDataStream(inSpaces('default'), 'CliCrmPb2', 'retrieve', ['default']);
+  const { clients, requests } = org(() => inSpaces('dataspace2', 'default'));
+  await assert.rejects(preflightDataStream(document, clients, 'default'), {
+    code: 'STREAM_DATASPACE_MISMATCH',
+  });
+  assert.equal(requests.length, 0);
+  const listed = projectCrmDataStream(inSpaces('dataspace2', 'default'), 'CliCrmPb2', 'retrieve', [
+    'dataspace2',
+    'default',
+  ]);
+  const preview = await preflightDataStream(listed, clients, 'dataspace2');
+  assert.equal(preview.outcome, 'unchanged');
+});
+
+test('a CRM stream GET that names no data space takes the spaces of its DLO, never the run', async () => {
+  const unnamed = crmGet();
+  delete unnamed.dataLakeObjectInfo.dataSpaceInfo;
+  const dlo = (space) => ({
+    get: async (name) => {
+      assert.equal(name, 'CliCrmPb2__dll');
+      return { dataLakeObjects: [{ name, dataSpaceInfo: [{ name: space }] }] };
+    },
+  });
+  const read = { get: async () => structuredClone(unnamed) };
+  // Retrieve: the DLO is in another data space than the run.
+  await assert.rejects(
+    retrieveDataStreamDocument(
+      'CliCrmPb2',
+      { streams: read, dlo: dlo('dataspace2') },
+      'default',
+      false,
+      'retrieve',
+    ),
+    { code: 'UNSUPPORTED_STREAM_DATASPACE' },
+  );
+  const retrieved = await retrieveDataStreamDocument(
+    'CliCrmPb2',
+    { streams: read, dlo: dlo('dataspace2') },
+    'dataspace2',
+    false,
+    'retrieve',
+  );
+  assert.deepEqual(retrieved.c__dataSpace, ['dataspace2']);
+  // Deploy plan: the existing stream's spaces come from its DLO too.
+  const document = crmDocument();
+  const { clients, requests } = org(() => unnamed);
+  await assert.rejects(
+    preflightDataStream(document, { ...clients, dlo: dlo('dataspace2') }, 'default'),
+    { code: 'UNSUPPORTED_STREAM_DATASPACE' },
+  );
+  const same = await preflightDataStream(document, { ...clients, dlo: dlo('default') }, 'default');
+  assert.equal(same.outcome, 'unchanged');
+  assert.equal(requests.length, 0);
 });

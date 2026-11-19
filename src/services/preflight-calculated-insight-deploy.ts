@@ -1,8 +1,9 @@
 import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
-import { operationDiagnostic } from './operation-diagnostic.js';
+import { explanationOf, operationDiagnostic } from './operation-diagnostic.js';
 import {
   CalculatedInsightError,
   calculatedInsightMatches,
+  calculatedInsightSpaceMismatch,
   validateNativeCalculatedInsight,
 } from '../artifacts/native-calculated-insight-document.js';
 import type { NativeCalculatedInsight } from '../artifacts/native-calculated-insight-document.js';
@@ -39,8 +40,8 @@ export function calculatedInsightDeployContext(
   context?: CalculatedInsightReadContext,
 ): CalculatedInsightReadContext {
   // The routes are API 68 only, and the file names the data space it belongs to.
-  if (selection.requested !== '68.0' || desired.dataSpace !== dataSpace)
-    throw new Error('Native CI scope');
+  if (selection.requested !== '68.0') throw new Error('Native CI scope');
+  if (desired.dataSpace !== dataSpace) throw calculatedInsightSpaceMismatch(desired, dataSpace);
   const result = context ?? calculatedInsightReadContext(connection, dataSpace);
   result.check();
   return result;
@@ -138,9 +139,11 @@ export async function preflightCalculatedInsightDeploy(
       diagnostics: [
         {
           code: error instanceof CalculatedInsightError ? error.code : 'CI_ADMISSION_FAILED',
-          message: getConnectDiagnostic(error)
-            ? operationDiagnostic(error, 'Native CI deployment was not attempted.')
-            : 'The calculated insight could not be read or its file or data space is invalid; nothing was sent.',
+          // Salesforce's answer or the plugin's own explanation (a data space mismatch).
+          message:
+            getConnectDiagnostic(error) || explanationOf(error) !== undefined
+              ? operationDiagnostic(error, 'Native CI deployment was not attempted.')
+              : 'The calculated insight could not be read or its file or data space is invalid; nothing was sent.',
         },
       ],
     };

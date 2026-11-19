@@ -44,8 +44,12 @@ function invocation(flags = {}) {
   command.acquireDataStream = async (name, clients, scope) => {
     calls.push(name);
     assert.deepEqual(clients, { offline: true });
-    assert.equal(scope, 'default');
-    return { kind: 'data-stream', identity: { apiName: name, dataSpace: scope } };
+    assert.equal(scope, flags.dataspace ?? 'default');
+    return {
+      kind: 'data-stream',
+      c__dataSpace: [scope],
+      identity: { apiName: name },
+    };
   };
   command.writeDataStream = async (document, root, overwrite) => {
     calls.push({ root, overwrite });
@@ -119,7 +123,7 @@ for (const flags of [
   { metadata: ['data-stream:Alpha:Other'] },
   { metadata: ['data-stream:../Alpha'] },
   { metadata: ['data-stream:Alpha', 'segment:1bad'] },
-  { dataspace: 'other' },
+  { dataspace: 'Unknown' },
   ...['61.0', '65.0', '67.0', '69.0', 'latest'].map((version) => ({ 'api-version': version })),
 ])
   test(`stream selectors/options refuse before auth ${JSON.stringify(flags)}`, async () => {
@@ -194,4 +198,20 @@ test('production stream client factory pins native68 without requests', async ()
   assert.equal(typeof clients.dependencies.dlo, 'function');
   assert.equal(clients.facade, undefined);
   assert.equal(typeof clients.dlo.get, 'function');
+});
+
+test('streams are retrieved in another data space with every space of their DLO', async () => {
+  const { command, calls } = invocation({ dataspace: 'dataspace2', metadata: ['data-stream'] });
+  command.listDataStreamNames = async (_connection, version, _warnings, space) => {
+    assert.equal(version, '68.0');
+    assert.equal(space, 'dataspace2');
+    return ['Alpha'];
+  };
+  const { result } = await run(command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(calls.slice(0, 2), ['auth', 'Alpha']);
+  assert.equal(result.result.scope.dataSpace, 'dataspace2');
+  const [item] = result.result.items;
+  assert.deepEqual(item.identity, { dataSpace: 'dataspace2', apiName: 'Alpha' });
+  assert.deepEqual(item.dataSpaces, ['dataspace2']);
 });

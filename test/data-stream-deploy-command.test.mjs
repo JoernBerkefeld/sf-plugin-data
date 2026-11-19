@@ -21,7 +21,8 @@ import { DataStreamError } from '../lib/artifacts/data-stream-document.js';
 const authored = {
   schemaVersion: 1,
   kind: 'data-stream',
-  identity: { apiName: 'Proposed', dataSpace: 'default' },
+  c__dataSpace: ['default'],
+  identity: { apiName: 'Proposed' },
   spec: {
     connectorType: 'IngestApi',
     connectionName: 'SyntheticConnection',
@@ -157,7 +158,7 @@ for (const preview of [true, false])
     });
 
 for (const flags of [
-  { dataspace: 'other' },
+  { dataspace: 'Unknown' },
   ...['latest', '61.0', '67.0', '69.0'].map((version) => ({ 'api-version': version })),
 ])
   test(`stream unsupported options block before auth ${JSON.stringify(flags)}`, async () => {
@@ -188,7 +189,8 @@ test('new-stream landing-DLO collision, Git, nondefault document and digest drif
       ];
     if (mode === 'git')
       command.selectGitInputs = async () => ({ paths: ['stream'], provenance: {} });
-    if (mode === 'space') input.document.identity.dataSpace = 'other';
+    // A data space the org does not have stops the run before the org is opened.
+    if (mode === 'space') input.document.c__dataSpace = ['Unknown'];
     if (mode === 'digest')
       command.verifyDataStreamInput = async () => {
         throw new Error('private-token');
@@ -222,7 +224,7 @@ test('post-preview input drift blocks; unknown write stops next item and preserv
     {
       ...execution.input,
       path: 'next',
-      document: { ...authored, identity: { apiName: 'Zulu', dataSpace: 'default' } },
+      document: { ...authored, c__dataSpace: ['default'], identity: { apiName: 'Zulu' } },
     },
   ];
   execution.command.verifyDataStreamInput = async () => {};
@@ -342,7 +344,7 @@ test('strict stream inputs reject duplicate keys identities malformed selectors 
       '"kind":"data-stream"',
       '"kind":"data-stream","kind":"data-stream"',
     ),
-    JSON.stringify({ ...authored, identity: { apiName: 'Different', dataSpace: 'default' } }),
+    JSON.stringify({ ...authored, c__dataSpace: ['default'], identity: { apiName: 'Different' } }),
     '{bad',
   ]) {
     await writeFile(file, text, 'utf8');
@@ -639,4 +641,53 @@ test('a real stream deploy that is blocked names its code in the envelope', asyn
     ['AMBIGUOUS_STREAM_BINDING'],
   );
   assert.equal(result.result.items[0].diagnostics[0].code, 'AMBIGUOUS_STREAM_BINDING');
+});
+
+test('a stream deploys in another data space; the run space reaches preview and execution', async () => {
+  for (const preview of [true, false]) {
+    const { command, input } = invocation({ dataspace: 'dataspace2', preview });
+    input.document.c__dataSpace = ['dataspace2', 'default'];
+    const spaces = [];
+    command.preflightDataStream = async (_document, _clients, space) => {
+      spaces.push(space);
+      return {
+        family: 'data-stream',
+        outcome: 'unchanged',
+        target: 'existing',
+        absenceProof: 'none',
+        requiredEffects: [],
+        diagnostics: [],
+      };
+    };
+    command.executeDataStream = async (_document, _clients, options) => {
+      spaces.push(options.dataSpace);
+      return {
+        family: 'data-stream',
+        outcome: 'unchanged',
+        mutation: 'not-attempted',
+        targetApiName: 'GeneratedStream',
+        targetDloName: 'ActualDlo__dll',
+        diagnostics: [],
+      };
+    };
+    const { result } = await run(command);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.deepEqual(spaces, ['dataspace2']);
+    assert.equal(result.result.scope.dataSpace, 'dataspace2');
+    assert.deepEqual(result.result.items[0].identity, {
+      dataSpace: 'dataspace2',
+      apiName: 'Proposed',
+    });
+  }
+});
+
+test('a stream file without the run data space is refused before the org is opened', async () => {
+  const { command, calls, input } = invocation({ dataspace: 'dataspace2' });
+  input.document.c__dataSpace = ['default'];
+  const { result, code } = await run(command);
+  assert.equal(code, 1);
+  assert.equal(result.status, 'blocked');
+  assert.equal(result.diagnostics.errors[0].code, 'STREAM_DATASPACE_MISMATCH');
+  assert.ok(!calls.includes('auth'));
+  assert.ok(!calls.includes('execute'));
 });

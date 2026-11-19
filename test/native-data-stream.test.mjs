@@ -89,7 +89,8 @@ const stream = {
 const authored = {
   schemaVersion: 1,
   kind: 'data-stream',
-  identity: { apiName: 'Proposed', dataSpace: 'default' },
+  c__dataSpace: ['default'],
+  identity: { apiName: 'Proposed' },
   spec: {
     connectorType: 'IngestApi',
     connectionName: connection.name,
@@ -989,7 +990,8 @@ test('failed, ambiguous and drifting binding reads fail closed without mutations
       r.target.sourceFields[0].name = 'Changed';
     },
     (r) => {
-      r.target.dataLakeObjectInfo.dataSpaceInfo = [{ name: 'Other' }];
+      // The binding names no data space; the DLO's spaces are checked by the projection.
+      r.target.dataLakeObjectInfo.dataSpaceInfo = [];
     },
     (r) => {
       r.target.dataLakeObjectInfo.fields[0].isPrimaryKey = false;
@@ -1168,7 +1170,7 @@ function createLifecycle(options = {}) {
         return (dispatched ? after : before).clients.streams.get(name);
       },
       create: async (document) => {
-        assert.deepEqual(document, authored);
+        assert.deepEqual(document, options.document ?? authored);
         writes++;
         dispatched = true;
         return options.echo ?? { name: after.target.name, recordId: streamId.slice(0, 15) };
@@ -2466,4 +2468,143 @@ test('delete settlement waits while the stream list is still inconsistent after 
   };
   await assert.rejects(deleteNativeDataStream('GeneratedStream', stuck.clients, stuck.options));
   assert.equal(stuck.state.writes, 1);
+});
+
+// Data spaces (D2): a stream file lists the data spaces of its landing DLO and only mirrors it.
+const spaces = (...names) => names.map((name) => ({ name }));
+
+test('retrieve writes every data space of the DLO, read from the DLO, in any of them', async () => {
+  const fixture = reads();
+  fixture.target.dataLakeObjectInfo.dataSpaceInfo = spaces('default', 'dataspace2');
+  for (const run of ['default', 'dataspace2']) {
+    const document = await retrieveNativeDataStream('GeneratedStream', fixture.clients, run);
+    assert.deepEqual(document.c__dataSpace, ['dataspace2', 'default']);
+    assert.deepEqual(document.identity, { apiName: 'GeneratedStream' });
+  }
+  await assert.rejects(retrieveNativeDataStream('GeneratedStream', fixture.clients, 'Other'), {
+    code: 'UNSUPPORTED_STREAM_DATASPACE',
+  });
+  // The DLO read decides: a DLO listing a space twice or none is no usable membership.
+  for (const listed of [spaces('default', 'default'), [], [{ name: ' bad' }]]) {
+    const odd = reads();
+    const get = odd.clients.dlo.get;
+    odd.clients.dlo.get = async (...arguments_) => {
+      const answer = await get(...arguments_);
+      answer.dataLakeObjects[0].dataSpaceInfo = listed;
+      return answer;
+    };
+    await assert.rejects(retrieveNativeDataStream('GeneratedStream', odd.clients), {
+      code: 'INVALID_STREAM_DLO',
+    });
+  }
+});
+
+test('a new stream in another data space creates its DLO there; several spaces are refused', async () => {
+  const document = { ...structuredClone(authored), c__dataSpace: ['dataspace2'] };
+  const scenario = createLifecycle({ document });
+  scenario.after.target.dataLakeObjectInfo.dataSpaceInfo = spaces('dataspace2');
+  const result = await createNativeDataStream(document, scenario.clients, {
+    ...scenario.options,
+    dataSpace: 'dataspace2',
+  });
+  assert.equal(result.operation, 'create');
+  assert.deepEqual(result.document.c__dataSpace, ['dataspace2']);
+  assert.equal(scenario.counts().writes, 1);
+  // The file must name the run's data space, and a new stream lists it alone.
+  for (const [listed, run] of [
+    [['dataspace2'], 'default'],
+    [['dataspace2', 'default'], 'default'],
+  ]) {
+    const blocked = createLifecycle({ document });
+    await assert.rejects(
+      preflightNativeDataStreamCreate({ ...authored, c__dataSpace: listed }, blocked.clients, run),
+      { code: 'STREAM_DATASPACE_MISMATCH' },
+    );
+    assert.equal(blocked.counts().writes, 0);
+  }
+});
+
+test('an update only checks the list against the DLO and never changes its data spaces', async () => {
+  const scenario = await updateLifecycle();
+  scenario.target.dataLakeObjectInfo.dataSpaceInfo = spaces('dataspace2', 'default');
+  // The file still lists default alone: refused, whatever the run's data space.
+  for (const run of ['default', 'dataspace2'])
+    await assert.rejects(preflightNativeDataStreamUpdate(scenario.desired, scenario.clients, run), {
+      code: 'STREAM_DATASPACE_MISMATCH',
+    });
+  const listed = { ...structuredClone(scenario.desired), c__dataSpace: ['dataspace2', 'default'] };
+  await assert.rejects(preflightNativeDataStreamUpdate(listed, scenario.clients, 'Other'), {
+    code: 'STREAM_DATASPACE_MISMATCH',
+  });
+  const plan = await preflightNativeDataStreamUpdate(listed, scenario.clients, 'dataspace2');
+  assert.equal(plan.operation, 'update');
+  assert.ok(!JSON.stringify(plan.patch.spec).includes('dataspace'));
+  const result = await updateNativeDataStream(listed, scenario.clients, {
+    ...scenario.options,
+    dataSpace: 'dataspace2',
+  });
+  assert.equal(result.operation, 'update');
+  assert.deepEqual(result.document.c__dataSpace, ['dataspace2', 'default']);
+  assert.equal(scenario.counts().writes, 1);
+});
+
+test('a stream is deleted in any data space of its DLO; --delete-dlo needs that space alone', async () => {
+  const fixture = await deleteLifecycle();
+  fixture.target.dataLakeObjectInfo.dataSpaceInfo = spaces('dataspace2', 'default');
+  fixture.parent.dataSpaceInfo = spaces('dataspace2', 'default');
+  const plan = await preflightNativeDataStreamDelete('GeneratedStream', fixture.clients, {
+    ...fixture.options,
+    dataSpace: 'dataspace2',
+  });
+  assert.deepEqual(plan.document.c__dataSpace, ['dataspace2', 'default']);
+  await assert.rejects(
+    preflightNativeDataStreamDelete('GeneratedStream', fixture.clients, {
+      ...fixture.options,
+      dataSpace: 'Other',
+    }),
+    { code: 'UNSUPPORTED_STREAM_DATASPACE' },
+  );
+  const cascade = await deleteLifecycle({ deleteDlo: true });
+  cascade.target.dataLakeObjectInfo.dataSpaceInfo = spaces('dataspace2', 'default');
+  cascade.parent.dataSpaceInfo = spaces('dataspace2', 'default');
+  await assert.rejects(
+    deleteNativeDataStream('GeneratedStream', cascade.clients, {
+      ...cascade.options,
+      dataSpace: 'dataspace2',
+    }),
+    { code: 'DLO_DELETE_OTHER_DATASPACES' },
+  );
+  assert.equal(cascade.state.writes, 0);
+  const alone = await deleteLifecycle({ deleteDlo: true });
+  alone.target.dataLakeObjectInfo.dataSpaceInfo = spaces('dataspace2');
+  alone.parent.dataSpaceInfo = spaces('dataspace2');
+  const receipt = await deleteNativeDataStream('GeneratedStream', alone.clients, {
+    ...alone.options,
+    dataSpace: 'dataspace2',
+  });
+  assert.equal(receipt.operation, 'delete');
+  assert.equal(alone.state.writes, 1);
+});
+
+test('an unmodelled stream whose GET names no data space is checked against its DLO', async () => {
+  const fixture = await deleteLifecycle();
+  // A stream the plugin cannot model: no connector type, and no data space in its GET.
+  fixture.target.connectorInfo = {};
+  fixture.target.dataLakeObjectInfo.dataSpaceInfo = [];
+  fixture.parent.dataSpaceInfo = [{ name: 'dataspace2' }];
+  await assert.rejects(
+    preflightNativeDataStreamDelete('GeneratedStream', fixture.clients, {
+      ...fixture.options,
+      survivorDloNames: [],
+      dataSpace: 'default',
+    }),
+    { code: 'UNSUPPORTED_STREAM_DATASPACE' },
+  );
+  const plan = await preflightNativeDataStreamDelete('GeneratedStream', fixture.clients, {
+    ...fixture.options,
+    survivorDloNames: [],
+    dataSpace: 'dataspace2',
+  });
+  assert.equal(plan.unmodelled, true);
+  assert.equal(fixture.state.writes, 0);
 });

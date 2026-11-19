@@ -5,6 +5,7 @@ import { rejectedNextAction } from './deploy-result.js';
 import {
   CalculatedInsightError,
   calculatedInsightName,
+  calculatedInsightSpaceMismatch,
 } from '../artifacts/native-calculated-insight-document.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
 import { createCalculatedInsightClient } from '../transport/calculated-insight-rest.js';
@@ -100,10 +101,10 @@ export async function deleteCalculatedInsight(
       !value ||
       typeof value.apiName !== 'string' ||
       !calculatedInsightName.test(value.apiName) ||
-      value.dataSpace !== dataSpace ||
       selection.requested !== '68.0'
     )
       throw new CalculatedInsightError('INVALID_CI_SCOPE');
+    if (value.dataSpace !== dataSpace) throw calculatedInsightSpaceMismatch(value, dataSpace);
     if (typeof options.verifyInput !== 'function') throw new Error('Required guards');
     if ('preview' in options && typeof options.preview !== 'boolean') throw new Error('Preview');
     const context = options.context ?? calculatedInsightReadContext(connection, dataSpace);

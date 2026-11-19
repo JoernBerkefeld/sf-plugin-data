@@ -53,6 +53,13 @@ key names and enums as returned, without status, run and derived fields) and
 plain SQL, ending with one LF), under the project root. Trailing line breaks of the SQL
 file are not part of the `expression` that deploy sends and compares.
 
+The JSON names the insight's data space in the top-level `c__dataSpace` string instead of
+Salesforce's `dataSpace` key: retrieve checks that the GET names the run's data space and
+writes it there, and deploy sends it as `dataSpaceName`. A file that still has `dataSpace`
+is refused (`LEGACY_DATASPACE_KEY`), a missing or blank `c__dataSpace` is
+`INVALID_DATASPACE_FIELD`, and one that is not the run's data space (`--dataspace`,
+`default` when omitted) is `CI_DATASPACE_MISMATCH`.
+
 Deploy, publish and delete read the same two files. Either file or the exact selector
 selects the insight; the JSON is joined with exactly its SQL file. A missing JSON or
 SQL file, an `expression` kept in the JSON, any other `Name__cio.calculatedInsight-meta.*`
@@ -141,8 +148,12 @@ there (`TRANSFORM_SCHEDULE_CHANGE`).
 ## Public data stream document
 
 Retrieve writes each data stream as `data360/data-stream/<ApiName>.data-stream-meta.json`
-in one of two shapes, both with `schemaVersion: 1`, `kind: "data-stream"` and
-`identity: {apiName, dataSpace}`:
+in one of two shapes, both with `schemaVersion: 1`, `kind: "data-stream"`, the top-level
+`c__dataSpace` (every data space of the landing DLO, sorted, read from the DLO) and
+`identity: {apiName}`. The list only mirrors the DLO: deploy refuses a list without the run's
+data space, one that differs from the DLO's data spaces, and, for a new stream (whose create
+puts the DLO into the run's data space), more than one entry (`STREAM_DATASPACE_MISMATCH`).
+The old `identity.dataSpace` is refused (`LEGACY_DATASPACE_KEY`).
 
 - **Ingestion API stream:** `spec` holds `connectorType` (`IngestApi`), `connectionName`,
   `event`, `datastreamType` (`INGEST_API`), `refreshMode`, `label`, `newDlo` (`name`,
@@ -152,7 +163,10 @@ in one of two shapes, both with `schemaVersion: 1`, `kind: "data-stream"` and
   `targetFieldReturntype`), plus the read-only `observed` section.
 - **Any other connector** (Salesforce CRM `SalesforceDotCom` tested live; others such as
   S3 untested): `spec` is the stream GET without server-owned keys, system fields and
-  system mappings, with `connectorInfo.connectorType` naming the connector.
+  system mappings, with `connectorInfo.connectorType` naming the connector. Its
+  `dataLakeObjectInfo.dataSpaceInfo` (Salesforce's own list) must name the same data spaces
+  as `c__dataSpace` (`STREAM_DATASPACE_MISMATCH`); deploy fills it from `c__dataSpace` when
+  the file leaves it out.
 
 Create and update send the file as written and Salesforce decides; its 4xx answer to the
 first write is reported as rejected, and a failure after an earlier write as unknown. Of

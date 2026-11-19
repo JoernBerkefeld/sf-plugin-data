@@ -4,6 +4,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The calculated insight list from the target org could not be read completely. Check access to the org, then rerun the retrieve.',
   CI_ADMISSION_FAILED:
     'The calculated insight file or its read from the org did not pass, so nothing was sent. Run the command with --preview, fix the file, data space or target access, then rerun.',
+  CI_DATASPACE_MISMATCH:
+    "The calculated insight file's c__dataSpace is not the data space of the run. Run with the --dataspace the file names, or correct c__dataSpace, then rerun.",
   CI_DELETION_UNCONFIRMED:
     'The DELETE was sent but the plugin could not confirm the calculated insight is gone. Do not resend; check the org, then rerun the delete to confirm absence.',
   CI_IDENTITY_CHANGED:
@@ -33,7 +35,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_CI_NAME:
     'The calculated insight API name is not valid. Use the full API name that starts with a letter and ends in __cio, for example ExampleInsight__cio.',
   INVALID_CI_SCOPE:
-    'The calculated insight request used an unsupported API version, data space or option. Use --api-version auto or 68.0 and the default data space.',
+    'The calculated insight request used an unsupported API version, data space name or option. Use --api-version auto or 68.0 and a valid data space name.',
   PARTIAL_CI_OUTPUT:
     'Only one of the two calculated insight files was written to disk. Check the JSON and SQL files, then rerun the retrieve with --overwrite.',
 };

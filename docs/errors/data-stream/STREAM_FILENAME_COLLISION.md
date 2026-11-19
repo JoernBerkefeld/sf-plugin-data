@@ -37,5 +37,4 @@ Downloaded data-stream: 0
 
 ## Related codes
 
-- [`STREAM_DATASPACE_COLLISION`](../data-stream/STREAM_DATASPACE_COLLISION.md) — the existing file belongs to another data space.
 - [`OVERWRITE_REQUIRED`](../general/OVERWRITE_REQUIRED.md) — the existing file is for the same stream and needs `--overwrite`.

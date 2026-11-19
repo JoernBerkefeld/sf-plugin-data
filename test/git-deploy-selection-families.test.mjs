@@ -121,7 +121,8 @@ const families = {
     value: {
       schemaVersion: 1,
       kind: 'data-stream',
-      identity: { apiName: 'Example_Probe', dataSpace: 'default' },
+      c__dataSpace: ['default'],
+      identity: { apiName: 'Example_Probe' },
       spec: {
         connectorType: 'IngestApi',
         connectionName: 'Example_Connection',
@@ -272,12 +273,10 @@ for (const phase of ['committed', 'index']) {
       const [deletion] = selected.deletions;
       assert.equal(deletion.family, family);
       assert.equal(deletion.path, path.join(cwd, ...file.split('/')));
-      // A DLO has no single data space; its list stays in the base document.
-      assert.deepEqual(
-        deletion.identity,
-        kind === 'dlo' ? { apiName } : { dataSpace: 'default', apiName },
-      );
-      if (kind === 'dlo') assert.deepEqual(deletion.document.c__dataSpace, ['default']);
+      // A DLO or stream has no single data space; its list stays in the base document.
+      const listed = kind === 'dlo' || kind === 'data-stream';
+      assert.deepEqual(deletion.identity, listed ? { apiName } : { dataSpace: 'default', apiName });
+      if (listed) assert.deepEqual(deletion.document.c__dataSpace, ['default']);
       assert.equal(
         deletion.baseDigest,
         createHash('sha256').update(JSON.stringify(value)).digest('hex'),

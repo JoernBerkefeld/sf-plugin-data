@@ -317,6 +317,8 @@ test('README describes optional scope without promoting nondefault qualification
       'Data Lake Objects (DLOs), `dlo`',
       'DLO-to-DMO mappings, `mapping`',
       'DMO field relationships, `relationship`',
+      'Data Streams, `data-stream`',
+      'Calculated insights, `calculated-insight`',
     ],
   );
   assert.ok(rows.every((line) => ['yes', 'no'].includes(space(line))));
@@ -835,7 +837,8 @@ test('delete without a usable org reports TARGET_ORG_REQUIRED like publish', () 
 test('CI delete parser rejects unqualified scope before authentication', () => {
   for (const [arguments_, code] of [
     [['--api-version', '65.0'], 'INVALID_SCOPE'],
-    [['--api-version', '68.0', '--data-space', 'other'], 'INVALID_SCOPE'],
+    // A calculated insight is deleted in any data space: the run stops at the missing org.
+    [['--api-version', '68.0', '--data-space', 'other'], 'TARGET_ORG_REQUIRED'],
   ]) {
     const result = spawnSync(
       process.execPath,
@@ -876,8 +879,11 @@ test('publish parser blocks a missing source and unqualified scope before authen
         '--data-space',
         'other',
       ],
-      'INVALID_SCOPE',
+      // A calculated insight is published in the run's data space; the file is read first.
+      'UNSAFE_SOURCE',
     ],
+    // A segment is published in the default data space only.
+    [['-m', 'segment:Synthetic', '--data-space', 'other'], 'INVALID_SCOPE'],
     [
       ['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '68.0', '--preview'],
       'UNSAFE_SOURCE',

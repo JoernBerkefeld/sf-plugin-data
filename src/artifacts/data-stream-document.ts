@@ -1,6 +1,13 @@
 import { explainInput, printableKey } from '../services/operation-diagnostic.js';
 import { foldEnums, sameEnum } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
+import {
+  dataSpaceKey,
+  isDataSpaceName,
+  readDataSpaceList,
+  refuseLegacyDataSpace,
+  sortedDataSpaces,
+} from './data-space-field.js';
 
 /** An additive mapping: a source field (by label) onto a DLO field Salesforce creates from it. */
 export type DataStreamMapping = {
@@ -19,7 +26,12 @@ export type DataStreamFormulaMapping = {
 export type DataStreamDocument = {
   schemaVersion: 1;
   kind: 'data-stream';
-  identity: { apiName: string; dataSpace: string };
+  /**
+   * The data spaces of the landing DLO (file key `c__dataSpace`), sorted. It mirrors the DLO:
+   * deploy only checks it, and spaces change through the DLO file.
+   */
+  c__dataSpace: string[];
+  identity: { apiName: string };
   spec: {
     /** `IngestApi` in any letter case. */
     connectorType: string;
@@ -179,10 +191,16 @@ export function validateDataStreamDocument(
 ): DataStreamDocument {
   const lenient = mode === 'retrieve';
   const bounded = !lenient;
-  const document = object(value, '', ['schemaVersion', 'kind', 'identity', 'spec'], ['observed']);
-  const identity = object(document.identity, 'identity', ['apiName', 'dataSpace']);
+  const document = object(
+    value,
+    '',
+    ['schemaVersion', 'kind', dataSpaceKey, 'identity', 'spec'],
+    ['observed'],
+  );
+  const identity = object(document.identity, 'identity', ['apiName'], ['dataSpace']);
+  refuseLegacyDataSpace(identity, refuse);
   identifier(identity.apiName, 'identity.apiName');
-  text(identity.dataSpace, 'identity.dataSpace');
+  readDataSpaceList(document, refuse);
   const spec = object(
     document.spec,
     'spec',
@@ -318,6 +336,19 @@ export function validateDataStreamDocument(
 }
 
 /**
+ * The refusal of a new stream whose file lists more than one data space: the create puts the
+ * landing DLO into one space, and the plugin never changes spaces through a stream file.
+ * @param {readonly string[]} spaces The file's c__dataSpace list.
+ * @returns {DataStreamError} STREAM_DATASPACE_MISMATCH with an explanation.
+ */
+export function createSpacesRefusal(spaces: readonly string[]): DataStreamError {
+  return explainInput(
+    new DataStreamError('STREAM_DATASPACE_MISMATCH'),
+    `The stream does not exist yet, and its file lists the data spaces ${spaces.map((space) => printableKey(space)).join(', ')}. A new stream creates its landing DLO in one data space: list only the run's data space in ${dataSpaceKey}, deploy, then add the other spaces with the DLO file and retrieve the stream again.`,
+  );
+}
+
+/**
  * Build the proven PK-only object-shaped POST; no observed fields are replayed. Salesforce creates
  * every other DLO field from the event schema. Additive mappings are sent in the create's source-
  * label shape (live API 68: 201, read back as plain source mappings). Formula mappings are sent
@@ -332,8 +363,8 @@ export function buildDataStreamCreateBody(
   sourceFields: ReadonlyArray<{ name: string; dataType: string }> = [],
 ) {
   const document = validateDataStreamDocument(value);
-  if (document.identity.dataSpace !== 'default')
-    throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
+  // The landing DLO is created in one data space; the others are added through its DLO file.
+  if (document.c__dataSpace.length !== 1) throw createSpacesRefusal(document.c__dataSpace);
   const { spec } = document;
   const formulas = spec.formulaMappings ?? [];
   return freeze({
@@ -351,7 +382,7 @@ export function buildDataStreamCreateBody(
       ...(spec.newDlo.eventDateTimeFieldName === undefined
         ? {}
         : { eventDateTimeFieldName: spec.newDlo.eventDateTimeFieldName }),
-      dataspaceInfo: [{ name: document.identity.dataSpace }],
+      dataspaceInfo: [{ name: document.c__dataSpace[0] }],
       dataLakeFieldInputRepresentations: [{ ...spec.newDlo.primaryKey, isPrimaryKey: true }],
     },
     mappings: [
@@ -377,8 +408,6 @@ export function buildDataStreamCreateBody(
  */
 export function buildDataStreamPatchBody(value: unknown) {
   const document = validateDataStreamDocument(value);
-  if (document.identity.dataSpace !== 'default')
-    throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
   if (document.spec.additiveFieldMappings.length === 0)
     throw new DataStreamError('EMPTY_STREAM_PATCH');
   return freeze({
@@ -408,7 +437,9 @@ export function dataStreamTargetFieldName(value: string): string {
 export type CrmDataStreamDocument = {
   schemaVersion: 1;
   kind: 'data-stream';
-  identity: { apiName: string; dataSpace: string };
+  /** The data spaces of the landing DLO, sorted (see DataStreamDocument). */
+  c__dataSpace: string[];
+  identity: { apiName: string };
   spec: Record<string, unknown>;
 };
 
@@ -571,6 +602,31 @@ export function crmDataStreamSpec(value: unknown): Bag {
 }
 
 /**
+ * The data space names of a stream GET's `dataLakeObjectInfo.dataSpaceInfo`.
+ * @param {unknown} value The list.
+ * @returns {string[] | undefined} Names, or undefined when an entry names no usable data space.
+ */
+export function crmSpaceNames(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const names = value.map((entry) => (isBag(entry) ? entry.name : undefined));
+  return names.every((name) => isDataSpaceName(name)) ? (names as string[]) : undefined;
+}
+
+/**
+ * The CRM stream spec deploy sends: the file's spec with Salesforce's data space list filled from
+ * c__dataSpace when the file leaves it out (the validator has checked that a kept list agrees).
+ * @param {CrmDataStreamDocument} document Validated CRM stream file.
+ * @returns {Bag} Spec to send.
+ */
+export function crmDeploySpec(document: CrmDataStreamDocument): Bag {
+  const spec = structuredClone(document.spec) as Bag;
+  const dlo = spec.dataLakeObjectInfo as Bag;
+  if (dlo.dataSpaceInfo === undefined)
+    dlo.dataSpaceInfo = document.c__dataSpace.map((name) => ({ name }));
+  return spec;
+}
+
+/**
  * Validate a CRM stream document. Only what names and places the file is checked; everything
  * else is sent as written on deploy and Salesforce decides.
  * @param {unknown} value Untrusted document.
@@ -581,10 +637,11 @@ export function validateCrmDataStreamDocument(
   value: unknown,
   mode: DocumentMode = 'deploy',
 ): CrmDataStreamDocument {
-  const document = object(value, '', ['schemaVersion', 'kind', 'identity', 'spec']);
-  const identity = object(document.identity, 'identity', ['apiName', 'dataSpace']);
+  const document = object(value, '', ['schemaVersion', 'kind', dataSpaceKey, 'identity', 'spec']);
+  const identity = object(document.identity, 'identity', ['apiName'], ['dataSpace']);
+  refuseLegacyDataSpace(identity, refuse);
   identifier(identity.apiName, 'identity.apiName');
-  text(identity.dataSpace, 'identity.dataSpace');
+  const spaces = readDataSpaceList(document, refuse);
   if (document.schemaVersion !== 1 || document.kind !== 'data-stream')
     throw new DataStreamError('UNSUPPORTED_STREAM_SPEC');
   const spec = object(
@@ -599,6 +656,20 @@ export function validateCrmDataStreamDocument(
   text(spec.label, 'spec.label', mode === 'deploy');
   const dlo = object(spec.dataLakeObjectInfo, 'spec.dataLakeObjectInfo', ['name'], [], true);
   identifier(dlo.name, 'spec.dataLakeObjectInfo.name', true);
+  // Salesforce's own list of the DLO's data spaces, when the file keeps it, must name the same
+  // spaces as c__dataSpace; deploy fills it from c__dataSpace when the file leaves it out.
+  if (dlo.dataSpaceInfo !== undefined) {
+    const named = crmSpaceNames(dlo.dataSpaceInfo);
+    if (
+      named?.length !== spaces.length ||
+      sortedDataSpaces(named).join('\u0000') !== sortedDataSpaces(spaces).join('\u0000')
+    )
+      throw refuse(
+        'STREAM_DATASPACE_MISMATCH',
+        'spec.dataLakeObjectInfo.dataSpaceInfo',
+        `must name the same data spaces as ${dataSpaceKey}`,
+      );
+  }
   return freeze(structuredClone(value) as CrmDataStreamDocument);
 }
 

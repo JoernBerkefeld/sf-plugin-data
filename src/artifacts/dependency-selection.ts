@@ -1,3 +1,4 @@
+import { isDataSpaceName } from './data-space-field.js';
 import { validateDloDocument } from './dlo-document.js';
 import type { DloDocument } from './dlo-document.js';
 import { calculatedInsightName } from './native-calculated-insight-document.js';
@@ -30,7 +31,7 @@ export class DependencySelectionError extends Error {
 }
 
 /**
- * Key exact typed identities; API names are mandatory, never label fallbacks.
+ * Key exact typed identities in any data space; API names are mandatory, never label fallbacks.
  * @param {DependencyIdentity} identity Logical identity.
  * @returns {string} Unambiguous typed key.
  */
@@ -39,7 +40,7 @@ export function dependencyKey(identity: DependencyIdentity): string {
     !['dmo', 'segment', 'identity-resolution', 'calculated-insight', 'dlo'].includes(
       identity.kind,
     ) ||
-    identity.dataSpace !== 'default' ||
+    !isDataSpaceName(identity.dataSpace) ||
     !/^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(identity.apiName)
   )
     throw new DependencySelectionError('DEPENDENCY_IDENTITY_UNSUPPORTED');
@@ -50,6 +51,8 @@ export function dependencyKey(identity: DependencyIdentity): string {
  * Extract only admitted family structures; unknown closure must not become an empty leaf.
  * @param {NativeDmoDocument | SegmentDocument | IdentityResolutionDocument} value Authored component.
  * @param {DocumentMode} [mode] `retrieve` checks a DLO or DMO only for its identity.
+ * @param {string} [dataSpace] The run's data space: a DLO (which lists every data space it
+ * belongs to) is keyed in it when it lists it.
  * @returns {DependencyNode} Exact component and dependencies.
  */
 export function documentDependencyNode(
@@ -60,16 +63,15 @@ export function documentDependencyNode(
     | CalculatedInsightReference
     | DloDocument,
   mode: DocumentMode = 'deploy',
+  dataSpace = 'default',
 ): DependencyNode {
   if (value.kind === 'dlo') {
     const document = validateDloDocument(value, mode);
-    // Source ownership is freshly admitted by its family service, never provisioned. The ordered
-    // batch is default-space only (dependencyKey), so a DLO is keyed in default when it lists it.
-    const dataSpace = document.c__dataSpace.includes('default')
-      ? 'default'
-      : document.c__dataSpace[0];
+    // Source ownership is freshly admitted by its family service, never provisioned. A DLO is
+    // keyed in the run's data space when it lists it.
+    const keyed = document.c__dataSpace.includes(dataSpace) ? dataSpace : document.c__dataSpace[0];
     return {
-      identity: { kind: 'dlo', dataSpace, apiName: document.identity.apiName },
+      identity: { kind: 'dlo', dataSpace: keyed, apiName: document.identity.apiName },
       dependencies: [],
     };
   }
@@ -137,6 +139,9 @@ export function orderDependencyNodes(
   for (const node of nodes) {
     const key = dependencyKey(node.identity);
     if (remaining.has(key)) throw new DependencySelectionError('DEPENDENCY_DUPLICATE_IDENTITY');
+    // A component may name only components of its own data space.
+    if (node.dependencies.some((identity) => identity.dataSpace !== node.identity.dataSpace))
+      throw new DependencySelectionError('DEPENDENCY_IDENTITY_UNSUPPORTED');
     const dependencies = new Set(node.dependencies.map((identity) => dependencyKey(identity)));
     edges += dependencies.size;
     if (edges > limits.edges) throw new DependencySelectionError('DEPENDENCY_LIMIT_EXCEEDED');

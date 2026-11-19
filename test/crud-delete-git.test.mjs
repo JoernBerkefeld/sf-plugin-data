@@ -136,7 +136,8 @@ const dloDocument = (apiName) => ({
 const streamDocument = {
   schemaVersion: 1,
   kind: 'data-stream',
-  identity: { apiName: 'Example_Probe', dataSpace: 'default' },
+  c__dataSpace: ['default'],
+  identity: { apiName: 'Example_Probe' },
   spec: {
     connectorType: 'IngestApi',
     connectionName: 'Example_Connection',
@@ -546,8 +547,8 @@ test('a relationship deleted in the range takes its source DMO from the base con
 const verbatim = (kind, apiName, native) => ({
   schemaVersion: 1,
   kind,
-  // A DMO, mapping or relationship keeps its data space in c__dataSpace, like its normal file.
-  ...(['dmo', 'mapping', 'relationship'].includes(kind)
+  // A DMO, mapping, relationship or calculated insight keeps its data space in c__dataSpace.
+  ...(['dmo', 'mapping', 'relationship', 'calculated-insight'].includes(kind)
     ? { c__dataSpace: 'default', identity: { apiName } }
     : { identity: { dataSpace: 'default', apiName } }),
   verbatim: { reason: 'UNMODELLED_VARIANT', native },

@@ -14,7 +14,10 @@ import {
   parseNativeCalculatedInsight,
   serializeNativeCalculatedInsight,
 } from '../lib/artifacts/native-calculated-insight-document.js';
-import { documentDependencyNode } from '../lib/artifacts/dependency-selection.js';
+import {
+  documentDependencyNode,
+  orderDependencyNodes,
+} from '../lib/artifacts/dependency-selection.js';
 import { writeNativeCalculatedInsightDocument } from '../lib/artifacts/write-native-calculated-insight.js';
 import {
   captureDeployInputDigest,
@@ -238,9 +241,26 @@ test('the API 68 client sends the translated body on the exact routes, single at
     assert.throws(() => createCalculatedInsightClient(target, pin, 'default'), {
       code: 'INVALID_CI_SCOPE',
     });
-  assert.throws(() => createCalculatedInsightClient(target, '68.0', 'other'), {
-    code: 'INVALID_CI_SCOPE',
-  });
+  // Any data space name: the item routes take none, the bodies carry the file's.
+  createCalculatedInsightClient(target, '68.0', 'dataspace2');
+  for (const space of ['', ' bad', undefined])
+    assert.throws(() => createCalculatedInsightClient(target, '68.0', space), {
+      code: 'INVALID_CI_SCOPE',
+    });
+});
+
+test('every create and update body names the file data space as dataSpaceName', () => {
+  for (const space of ['default', 'dataspace2']) {
+    const document = file({ dataSpace: space });
+    assert.equal(calculatedInsightInputBody(document, 'create').dataSpaceName, space);
+    assert.equal(calculatedInsightInputBody(document, 'update').dataSpaceName, space);
+    assert.equal(
+      calculatedInsightInputBody(document, 'update', document).dataSpaceName,
+      space,
+      'an unchanged data space is still sent',
+    );
+    assert.ok(!('dataSpace' in calculatedInsightInputBody(document, 'create')));
+  }
 });
 
 test('a retrieved file matches its org insight; a shorter file too; a changed key does not', () => {
@@ -321,7 +341,7 @@ test('preview blocks only a data space mismatch, a foreign answer or a failed re
     { context: org(raw()).context },
   );
   assert.equal(space.outcome, 'blocked');
-  assert.equal(space.diagnostics[0].code, 'CI_ADMISSION_FAILED');
+  assert.equal(space.diagnostics[0].code, 'CI_DATASPACE_MISMATCH');
   const foreign = await preflightCalculatedInsightDeploy(file(), connection, version, 'default', {
     context: org(raw({ apiName: 'Foreign__cio' })).context,
   });
@@ -712,4 +732,116 @@ test('deploy help: CI needs no --allow-processing and names the translation', ()
   );
   assert.doesNotMatch(Deploy.description, /CI create\/update requires --allow-processing|API65/u);
   assert.match(Deploy.flags['allow-processing'].summary, /calculated insights do not need it/u);
+});
+
+// Data spaces (D2): a calculated insight file names its data space in c__dataSpace.
+test('deploy in another data space creates, updates and drafts there, the space in every body', async () => {
+  const target = org();
+  target.context.dataSpace = 'dataspace2';
+  const spaces = [];
+  const inSpace = file({ dataSpace: 'dataspace2' });
+  const first = await command(target, { dataspace: 'dataspace2' }, [inSpace]);
+  first.instance.calculatedInsightContext = (_connection, space) => {
+    spaces.push(space);
+    return target.context;
+  };
+  const created = await execute(first.instance);
+  assert.equal(created.status, 'success', JSON.stringify(created.diagnostics));
+  assert.equal(created.result.items[0].outcome, 'created');
+  assert.deepEqual(created.result.items[0].identity, { dataSpace: 'dataspace2', apiName });
+  assert.equal(created.result.scope.dataSpace, 'dataspace2');
+  assert.deepEqual([...new Set(spaces)], ['dataspace2']);
+  assert.equal(
+    calculatedInsightInputBody(writes(target)[0].create, 'create').dataSpaceName,
+    'dataspace2',
+  );
+  const edited = await command(target, { dataspace: 'dataspace2', draft: true }, [inSpace]);
+  edited.instance.calculatedInsightContext = () => target.context;
+  await writeFile(edited.receipts[0].companionPath, sql.replace("'APP_OPEN'", "'APP_CLOSE'"));
+  const updated = await execute(edited.instance);
+  assert.equal(updated.result.items[0].outcome, 'updated', JSON.stringify(updated.diagnostics));
+  const update = writes(target)[1];
+  assert.equal(update.options.draft, true);
+  assert.equal(calculatedInsightInputBody(update.update, 'update').dataSpaceName, 'dataspace2');
+});
+
+test('deploy refuses an insight file of another data space than the run before any read', async () => {
+  const target = org();
+  const { instance } = await command(target, { dataspace: 'dataspace2' });
+  const result = await execute(instance);
+  assert.equal(result.status, 'blocked');
+  assert.deepEqual(result.result.items, []);
+  const [diagnostic] = result.diagnostics.errors;
+  assert.equal(diagnostic.code, 'CI_DATASPACE_MISMATCH');
+  assert.match(diagnostic.message, /names the data space default in c__dataSpace/u);
+  assert.deepEqual(target.calls, []);
+});
+
+test('the deploy preview of one insight still refuses a file of another data space', async () => {
+  const preview = await preflightCalculatedInsightDeploy(
+    file(),
+    { instanceUrl: origin, getApiVersion: () => '68.0' },
+    { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' },
+    'dataspace2',
+    { context: org().context },
+  );
+  assert.equal(preview.diagnostics[0].code, 'CI_DATASPACE_MISMATCH');
+  assert.match(preview.diagnostics[0].message, /names the data space default in c__dataSpace/u);
+});
+
+/**
+ * The planning view of an insight in a data space.
+ * @param {string} name Insight name.
+ * @param {string} space Its data space.
+ * @param {string} sqlText Its SQL.
+ * @returns {object} Planning view.
+ */
+const insightIn = (name, space, sqlText) =>
+  calculatedInsightReference({ ...file({ apiName: name, dataSpace: space }), expression: sqlText });
+
+test('the ordered batch keys insights in their own data space (SQL names carry none)', () => {
+  const insight = insightIn;
+  const dmo = {
+    schemaVersion: 1,
+    kind: 'dmo',
+    c__dataSpace: 'dataspace2',
+    identity: { apiName: 'ds2_Individual__dlm' },
+    spec: { label: 'Individual', category: 'Profile', fields: [] },
+  };
+  const nodes = [
+    documentDependencyNode(insight('Second__cio', 'dataspace2', 'SELECT 1 FROM First__cio')),
+    documentDependencyNode(
+      insight('First__cio', 'dataspace2', 'SELECT 1 FROM ds2_Individual__dlm'),
+    ),
+    {
+      identity: { kind: 'dmo', dataSpace: 'dataspace2', apiName: 'ds2_Individual__dlm' },
+      dependencies: [],
+    },
+  ];
+  assert.deepEqual(orderDependencyNodes(nodes), [
+    'dmo:dataspace2:ds2_Individual__dlm',
+    'calculated-insight:dataspace2:First__cio',
+    'calculated-insight:dataspace2:Second__cio',
+  ]);
+  assert.equal(dmo.c__dataSpace, 'dataspace2');
+  // A DLO lists its data spaces; it is keyed in the run's data space when it lists it.
+  const dlo = {
+    schemaVersion: 1,
+    kind: 'dlo',
+    c__dataSpace: ['dataspace2', 'default'],
+    identity: { apiName: 'Source__dll' },
+    spec: { label: 'Source', category: 'Profile', fields: [] },
+  };
+  assert.equal(
+    documentDependencyNode(dlo, 'retrieve', 'dataspace2').identity.dataSpace,
+    'dataspace2',
+  );
+  assert.equal(documentDependencyNode(dlo, 'retrieve').identity.dataSpace, 'default');
+  // CI SQL names carry no data space, so an insight's dependencies are always taken from its own
+  // space; the batch still refuses a dependency into another one (a guard for other families).
+  const crossing = documentDependencyNode(insight('Cross__cio', 'dataspace2', 'SELECT 1'));
+  crossing.dependencies.push({ kind: 'dmo', dataSpace: 'default', apiName: 'Other__dlm' });
+  assert.throws(() => orderDependencyNodes([crossing]), {
+    code: 'DEPENDENCY_IDENTITY_UNSUPPORTED',
+  });
 });

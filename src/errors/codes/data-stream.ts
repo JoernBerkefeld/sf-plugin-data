@@ -23,7 +23,7 @@ export const hints: Readonly<Record<string, string>> = {
   INCOMPLETE_STREAM_LIST:
     "The connection's data stream list could not be read completely, for example because pages repeated or totals changed. Rerun the command; avoid changing streams while it runs.",
   INVALID_STREAM_BINDING:
-    'The stream selection is outside the supported scope: data streams work only in the default data space with valid developer names. Remove --dataspace or use default.',
+    'A stream, connection, event or primary key name of the stream selection is not a valid developer name. Use the exact names from a retrieved stream file, then rerun.',
   INVALID_STREAM_CONNECTION:
     'The connection name used to list streams is not a valid developer name. Fix spec.connectionName so it starts with a letter and uses only letters, digits and underscores.',
   INVALID_STREAM_DELETE_SELECTION:
@@ -31,7 +31,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_STREAM_DELETE_SURVIVOR:
     'A DLO that should stay after the stream delete could not be checked. This is an internal guard; rerun the delete and report it if it happens again.',
   INVALID_STREAM_DLO:
-    "The stream's linked DLO could not be read as exactly one matching DLO in the default data space. Check the DLO in the org, then rerun.",
+    "The stream's linked DLO could not be read as exactly one matching DLO with its data spaces. Check the DLO in the org, then rerun.",
   INVALID_STREAM_DOCUMENT:
     'A data stream document does not have the expected JSON structure. Retrieve the stream again, or compare the local file with a freshly retrieved one.',
   INVALID_STREAM_LABEL:
@@ -72,8 +72,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The stream was created but did not become ACTIVE within 15 minutes, or reached another status. Check the stream and its DLO in the org before you deploy again.',
   STREAM_CREATE_UNCONFIRMED:
     "Salesforce accepted the stream create but its answer lacked a valid stream name or record ID. A stream may exist; inspect the connection's streams before you deploy again.",
-  STREAM_DATASPACE_COLLISION:
-    'A local stream file with this name already exists for a different data space. Move or rename that file, then rerun the retrieve.',
+  STREAM_DATASPACE_MISMATCH:
+    "The stream file's c__dataSpace list does not name the run's data space, differs from its DLO's data spaces, or lists several for a new stream. Change spaces with the DLO file.",
   STREAM_DELETE_DEPENDENCIES_BLOCKED:
     'Something still depends on the stream or its DLO. Remove those dependencies, such as mappings or segments, then rerun the delete; inspect the org first if mutation is unknown.',
   STREAM_DELETE_DLO_REQUIRES_STREAM_SELECTION:
@@ -123,13 +123,13 @@ export const hints: Readonly<Record<string, string>> = {
   UNSUPPORTED_STREAM_CONNECTOR:
     'The stream GET names no connector type, or the Ingestion API connector with another stream type, which fits no stream file. Retrieve wrote it as-is; manage it in Salesforce.',
   UNSUPPORTED_STREAM_DATASPACE:
-    'Data streams are supported only in the default data space: deploy refuses another identity.dataSpace, and retrieve does not write a stream whose DLO is in another space.',
+    "The stream's landing DLO does not belong to the run's data space. Run the command with --dataspace set to one of the data spaces of that DLO.",
   UNSUPPORTED_STREAM_MAPPING_SOURCE:
     'A sourceFieldLabel in spec.additiveFieldMappings matches no field of the event, or several. Salesforce would store such a mapping unchecked and it would carry no data. Use the exact label of one source field.',
   UNSUPPORTED_STREAM_PROJECTION:
     'The stream has a mapping the file cannot represent: from a field the event lacks or from a label several event fields share, onto a field the DLO lacks, or with both source and formula. Manage it in Salesforce.',
   UNSUPPORTED_STREAM_READ:
-    'The Ingestion API stream read is outside what the stream file can hold: another stream type, no refresh mode, another data space, or missing names or lists. Manage this stream in Salesforce.',
+    'The Ingestion API stream read is outside what the stream file can hold: another stream type, no refresh mode, no data space, or missing names or lists. Manage this stream in Salesforce.',
   UNSUPPORTED_STREAM_SETTINGS_CHANGE:
     'The file changes what no stream update changes: the refresh mode, DLO label, category, event time field or primary key, or a plain CRM field mapping. Use the values from a freshly retrieved file.',
   UNSUPPORTED_STREAM_SPEC:

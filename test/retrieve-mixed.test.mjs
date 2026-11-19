@@ -348,12 +348,6 @@ for (const [metadata, overrides, code, family] of [
   ],
   [['data-graph:Alpha', 'segment:Audience'], { 'api-version': '65.0' }, 'INVALID_SCOPE', 'segment'],
   [
-    ['dmo:Sample__dlm', 'data-stream:Alpha'],
-    { dataspace: 'other' },
-    'INVALID_SCOPE',
-    'data-stream',
-  ],
-  [
     ['dmo:Sample__dlm', 'data-transform:Alpha'],
     { dataspace: 'other' },
     'INVALID_SCOPE',
@@ -383,10 +377,11 @@ for (const [metadata, overrides, code, family] of [
   });
 
 test('outside default, DLOs, DMOs and mappings beside a family not converted yet refuse the group', async () => {
-  // DLOs, DMOs and mappings follow the run's data space; the families not converted to
-  // c__dataSpace yet (segment, calculated insight, identity resolution) refuse it before org access.
+  // DLOs, DMOs, mappings, streams and calculated insights follow the run's data space; the
+  // families not converted to c__dataSpace yet (segment, identity resolution, transform, graph)
+  // refuse it before org access.
   for (const metadata of [
-    ['dlo:Source__dll', 'calculated-insight:Insight__cio'],
+    ['dlo:Source__dll', 'calculated-insight:Insight__cio', 'segment:Audience'],
     ['dmo:Sample__dlm', 'segment:Audience'],
     ['mapping:Some_map', 'identity-resolution:Individual'],
   ]) {

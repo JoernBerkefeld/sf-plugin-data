@@ -9,6 +9,7 @@ import {
   buildDataStreamCreateBody,
   buildDataStreamPatchBody,
   crmDataStreamWriteBody,
+  crmDeploySpec,
   isCrmDataStreamDocument,
   validateCrmDataStreamDocument,
 } from '../artifacts/data-stream-document.js';
@@ -311,7 +312,7 @@ export function createDataStreamClient(
         'POST',
         '',
         isCrmDataStreamDocument(document)
-          ? crmDataStreamWriteBody(validateCrmDataStreamDocument(document).spec)
+          ? crmDataStreamWriteBody(crmDeploySpec(validateCrmDataStreamDocument(document)))
           : buildDataStreamCreateBody(document, sourceFields),
       ),
     update: async (recordId, document) => {

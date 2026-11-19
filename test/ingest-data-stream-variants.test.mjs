@@ -260,7 +260,8 @@ function file(event) {
   return {
     schemaVersion: 1,
     kind: 'data-stream',
-    identity: { apiName: `CliConn_${event}_FFFFFFFF`, dataSpace: 'default' },
+    c__dataSpace: ['default'],
+    identity: { apiName: `CliConn_${event}_FFFFFFFF` },
     spec: {
       connectorType: 'IngestApi',
       connectionName: connection.name,

@@ -17,9 +17,9 @@ const table = 'ssot__DeviceApplicationEngagement__dlm';
 const device = `${table}.ssot__DeviceId__c`;
 const app = `${table}.ssot__SoftwareApplicationId__c`;
 const expression = `SELECT APPROX_COUNT_DISTINCT(${device}) AS device_count__c, ${app} AS app_id__c FROM ${table} WHERE 1 = 0 GROUP BY ${app}`;
-const runtime = (status = 'DRAFT') => ({
+const runtime = (status = 'DRAFT', dataSpace = 'default') => ({
   apiName: 'SyntheticDelete__cio',
-  dataSpace: 'default',
+  dataSpace,
   calculatedInsightStatus: status,
   creationType: 'Custom',
   definitionStatus: 'IN_USE',
@@ -93,7 +93,9 @@ const run = async (command) => {
 const harness = async (overrides = {}) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-delete-command-'));
   await writeFile(path.join(root, '.owner'), randomUUID());
-  const files = observeNativeCalculatedInsight(runtime());
+  // The org answers in the run's data space.
+  const space = overrides.dataspace ?? 'default';
+  const files = observeNativeCalculatedInsight(runtime('DRAFT', space));
   const pair = await writeNativeCalculatedInsightDocument(files, root, false);
   const flags = {
     metadata: ['calculated-insight:SyntheticDelete__cio'],
@@ -117,8 +119,9 @@ const harness = async (overrides = {}) => {
     calls.auth++;
     return connection;
   };
+  const contexts = [];
   const context = {
-    dataSpace: 'default',
+    dataSpace: space,
     check() {
       assert.equal(connection.getApiVersion(), '68.0');
     },
@@ -129,10 +132,13 @@ const harness = async (overrides = {}) => {
         error.nativeCode = 'ITEM_NOT_FOUND';
         throw error;
       }
-      return runtime(status);
+      return runtime(status, space);
     },
   };
-  command.calculatedInsightContext = () => context;
+  command.calculatedInsightContext = (_connection, dataSpace) => {
+    contexts.push(dataSpace);
+    return context;
+  };
   command.deleteCalculatedInsight = (...arguments_) =>
     deleteCalculatedInsight(...arguments_.slice(0, 4), {
       ...arguments_[4],
@@ -148,6 +154,7 @@ const harness = async (overrides = {}) => {
     command,
     flags,
     calls,
+    contexts,
     pair,
     context,
     connection,
@@ -208,6 +215,25 @@ for (const absent of [false, true])
     assert.equal(h.calls.writes, 0);
     assert.equal(result.result.items[0].outcome, absent ? 'unchanged' : 'delete');
   });
+test('CI delete in another data space reads and deletes in that data space', async () => {
+  const h = await harness({ dataspace: 'dataspace2' });
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(h.calls.writes, 1);
+  assert.deepEqual([...new Set(h.contexts)], ['dataspace2']);
+  assert.equal(result.result.scope.dataSpace, 'dataspace2');
+  assert.deepEqual(result.result.items[0].identity, {
+    dataSpace: 'dataspace2',
+    apiName: 'SyntheticDelete__cio',
+  });
+});
+test('CI delete refuses an insight the org reads in another data space than the run', async () => {
+  const h = await harness({ dataspace: 'dataspace2' });
+  h.context.get = async () => runtime('DRAFT', 'default');
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(h.calls.writes, 0);
+});
 test('CI delete by name needs no --confirm-delete and reads the definition from the org', async () => {
   const h = await harness();
   assert.equal(h.flags['confirm-delete'], undefined);
@@ -232,7 +258,7 @@ for (const pin of ['65.0', '64.0', '66.0', '67.0', '69.0', 'latest'])
     assert.equal(h.calls.auth, 0);
   });
 for (const overrides of [
-  { dataspace: 'other' },
+  { dataspace: 'Unknown' },
   { metadata: ['calculated-insight:*'] },
   { 'delete-dlo': true },
   { metadata: ['dlo:Other__dll'] },

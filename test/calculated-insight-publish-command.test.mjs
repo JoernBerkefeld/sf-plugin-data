@@ -23,9 +23,9 @@ const table = 'ssot__DeviceApplicationEngagement__dlm';
 const device = `${table}.ssot__DeviceId__c`;
 const app = `${table}.ssot__SoftwareApplicationId__c`;
 const expression = `SELECT APPROX_COUNT_DISTINCT(${device}) AS device_count__c, ${app} AS app_id__c FROM ${table} WHERE 1 = 0 GROUP BY ${app}`;
-const runtime = (status) => ({
+const runtime = (status, dataSpace = 'default') => ({
   apiName: 'SyntheticPublish__cio',
-  dataSpace: 'default',
+  dataSpace,
   calculatedInsightStatus: status,
   creationType: 'Custom',
   definitionStatus: 'IN_USE',
@@ -94,14 +94,16 @@ const run = async (command) => {
     process.exitCode = previous;
   }
 };
-const harness = async (overrides = {}) => {
+const harness = async (overrides = {}, fileSpace = 'default') => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-publish-command-'));
   await writeFile(path.join(root, '.owner'), randomUUID());
   const pair = await writeNativeCalculatedInsightDocument(
-    observeNativeCalculatedInsight(runtime('DRAFT')),
+    observeNativeCalculatedInsight(runtime('DRAFT', fileSpace)),
     root,
     false,
   );
+  // The org answers in the run's data space.
+  const space = overrides.dataspace ?? 'default';
   const flags = {
     'source-dir': pair.path,
     'api-version': '68.0',
@@ -123,17 +125,21 @@ const harness = async (overrides = {}) => {
     calls.auth++;
     return connection;
   };
+  const contexts = [];
   const context = {
-    dataSpace: 'default',
+    dataSpace: space,
     check() {
       assert.equal(connection.getApiVersion(), '68.0');
     },
     async get() {
       calls.reads++;
-      return runtime(status);
+      return runtime(status, space);
     },
   };
-  command.calculatedInsightContext = () => context;
+  command.calculatedInsightContext = (_connection, dataSpace) => {
+    contexts.push(dataSpace);
+    return context;
+  };
   command.publishCalculatedInsight = (...arguments_) =>
     publishCalculatedInsight(...arguments_.slice(0, 4), {
       ...arguments_[4],
@@ -149,6 +155,7 @@ const harness = async (overrides = {}) => {
     command,
     flags,
     calls,
+    contexts,
     pair,
     context,
     connection,
@@ -238,8 +245,27 @@ for (const pin of ['65.0', '64.0', '66.0', '67.0', '69.0', 'latest'])
     assert.equal(h.calls.auth, 0);
     assert.equal(h.calls.writes, 0);
   });
+test('publish works in the run data space the file names', async () => {
+  const h = await harness({ dataspace: 'dataspace2' }, 'dataspace2');
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(h.calls.writes, 1);
+  assert.deepEqual(h.contexts, ['dataspace2']);
+  assert.deepEqual(result.result.items[0].identity, {
+    apiName: 'SyntheticPublish__cio',
+    dataSpace: 'dataspace2',
+  });
+  // The PATCH body names the file's data space.
+  assert.equal(h.calls.bodies[0].document.dataSpace, 'dataspace2');
+});
+test('publish refuses a file of another data space than the run without a write', async () => {
+  const h = await harness({ dataspace: 'dataspace2' });
+  const { result } = await run(h.command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(h.calls.writes, 0);
+  assert.equal(result.diagnostics.errors[0].code, 'CI_DATASPACE_MISMATCH');
+});
 for (const overrides of [
-  { dataspace: 'other' },
   { 'source-dir': undefined },
   { 'source-dir': 'folder' },
   { 'source-dir': 'other.dmo-meta.json' },

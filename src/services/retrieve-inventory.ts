@@ -21,6 +21,8 @@ type InventoryRoute = {
   pattern: RegExp;
   /** The data spaces an entry names; none named leaves the decision to the item's own read. */
   spaces: (entry: Record<string, unknown>) => string[];
+  /** The run's data space: an entry that names spaces must name it. */
+  dataSpace: string;
 };
 
 /**
@@ -66,7 +68,7 @@ async function listNames(
       seen.add(apiName);
       added++;
       const spaces = route.spaces(item);
-      if (spaces.length === 0 || spaces.includes('default')) names.push(apiName);
+      if (spaces.length === 0 || spaces.includes(route.dataSpace)) names.push(apiName);
     }
     if (route.pageSize === undefined) break;
     offset += entries.length;
@@ -90,16 +92,18 @@ const named = (value: unknown): string[] => (typeof value === 'string' && value 
 
 /**
  * Every data stream `GET /ssot/data-streams` lists (`limit` 1 to 200, `offset`), kept unless its
- * DLO names only other data spaces.
+ * DLO names only other data spaces than the run's.
  * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated connection.
  * @param {string} version Numeric API version.
  * @param {string[]} [warnings] Receives one warning per skipped entry.
+ * @param {string} [dataSpace] The run's data space.
  * @returns {Promise<string[]>} Sorted stream API names.
  */
 export async function listDataStreamNames(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   version: string,
   warnings?: string[],
+  dataSpace = 'default',
 ): Promise<string[]> {
   return listNames(
     connection,
@@ -111,6 +115,7 @@ export async function listDataStreamNames(
       key: 'dataStreams',
       nameKey: 'name',
       pattern: componentName,
+      dataSpace,
       spaces: (entry) => {
         const info = (entry.dataLakeObjectInfo as { dataSpaceInfo?: unknown } | undefined)
           ?.dataSpaceInfo;
@@ -144,6 +149,7 @@ export async function listDataTransformNames(
       key: 'dataTransforms',
       nameKey: 'name',
       pattern: dataTransformName,
+      dataSpace: 'default',
       spaces: (entry) => named(entry.dataSpaceName),
     },
     warnings,
@@ -169,6 +175,7 @@ export async function listDataGraphNames(
       key: 'dataGraphMetadata',
       nameKey: 'developerName',
       pattern: componentName,
+      dataSpace: 'default',
       spaces: (entry) => named(entry.dataspaceName),
     },
     warnings,

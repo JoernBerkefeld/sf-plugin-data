@@ -22,7 +22,7 @@ import { ConnectError } from '../lib/transport/connect-client.js';
 const verbatim = (kind, apiName) => ({
   schemaVersion: 1,
   kind,
-  ...(['dmo', 'mapping', 'relationship'].includes(kind)
+  ...(['dmo', 'mapping', 'relationship', 'calculated-insight'].includes(kind)
     ? { c__dataSpace: 'default', identity: { apiName } }
     : { identity: { dataSpace: 'default', apiName } }),
   verbatim: { reason: 'UNMODELLED_RESPONSE', native: {} },

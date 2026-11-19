@@ -306,3 +306,34 @@ test('a failing stream listing fails that inventory only; a named stream is stil
     ['Named'],
   );
 });
+
+const unnamedSpace = () => ({
+  totalSize: 2,
+  dataStreams: [stream('Second', 'dataspace2'), stream('Unnamed', '')],
+});
+const listedSpaces = () => ({
+  totalSize: 3,
+  dataStreams: [
+    {
+      name: 'Both',
+      dataLakeObjectInfo: { dataSpaceInfo: [{ name: 'default' }, { name: 'dataspace2' }] },
+    },
+    stream('Second', 'dataspace2'),
+    stream('First'),
+  ],
+});
+
+test('stream inventory keeps the streams whose DLO lists the run data space', async () => {
+  const both = listedSpaces;
+  assert.deepEqual(await listDataStreamNames(connectionOf(both), '68.0', [], 'dataspace2'), [
+    'Both',
+    'Second',
+  ]);
+  assert.deepEqual(await listDataStreamNames(connectionOf(both), '68.0', [], 'default'), [
+    'Both',
+    'First',
+  ]);
+  // An entry that names no data space is left to the item's own read.
+  const names = await listDataStreamNames(connectionOf(unnamedSpace), '68.0', [], 'dataspace2');
+  assert.ok(names.includes('Unnamed'));
+});

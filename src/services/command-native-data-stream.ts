@@ -15,6 +15,7 @@ import {
   preflightNativeDataStreamDelete,
   deleteNativeDataStream,
   isStreamNotFound,
+  requireRunSpace,
 } from './native-data-stream.js';
 import type {
   DataStreamDeployClients,
@@ -78,6 +79,7 @@ export async function preflightDeleteDataStream(
     plan = await preflightNativeDataStreamDelete(apiName, watched.clients, {
       deleteDlo: options.deleteDlo,
       survivorDloNames: [],
+      ...(options.dataSpace === undefined ? {} : { dataSpace: options.dataSpace }),
       ...(options.covered ? { covered: options.covered } : {}),
     });
   } catch (error) {
@@ -170,10 +172,12 @@ export async function executeDeleteDataStream(
  * Select create only from independently confirmed logical absence, never an artifact-name miss.
  * @param {unknown} value Portable stream intent.
  * @param {DataStreamDeployClients} clients Independent target readers.
+ * @param {string} dataSpace The run's data space.
  * @returns {Promise<object>} Private selected lifecycle plan.
  */
-async function planDataStream(value: unknown, clients: DataStreamDeployClients) {
+async function planDataStream(value: unknown, clients: DataStreamDeployClients, dataSpace: string) {
   const document = validateDataStreamDocument(value);
+  requireRunSpace(document, dataSpace);
   const binding = await resolveDataStreamBinding(
     {
       ...document.identity,
@@ -184,19 +188,24 @@ async function planDataStream(value: unknown, clients: DataStreamDeployClients) 
     clients,
   );
   return binding.target
-    ? preflightNativeDataStreamUpdate(document, clients)
-    : preflightNativeDataStreamCreate(document, clients);
+    ? preflightNativeDataStreamUpdate(document, clients, dataSpace)
+    : preflightNativeDataStreamCreate(document, clients, dataSpace);
 }
 
 /**
  * Compare qualified stream configuration without exposing private source/schema/record identifiers.
  * @param {unknown} value Portable stream intent.
  * @param {DataStreamDeployClients} clients Independent target readers.
+ * @param {string} [dataSpace] The run's data space.
  * @returns {Promise<object>} Public payload-free read-only preview.
  */
-export async function preflightDataStream(value: unknown, clients: DataStreamDeployClients) {
-  if (isCrmDataStreamDocument(value)) return preflightCrmDataStream(value, clients);
-  const plan = await planDataStream(value, clients);
+export async function preflightDataStream(
+  value: unknown,
+  clients: DataStreamDeployClients,
+  dataSpace = 'default',
+) {
+  if (isCrmDataStreamDocument(value)) return preflightCrmDataStream(value, clients, dataSpace);
+  const plan = await planDataStream(value, clients, dataSpace);
   return {
     family: 'data-stream' as const,
     outcome: plan.operation === 'noop' ? ('unchanged' as const) : plan.operation,
@@ -262,7 +271,7 @@ export async function executeDataStream(
   try {
     const document = validateDataStreamDocument(value);
     await options.verifyInput();
-    const plan = await planDataStream(document, guarded);
+    const plan = await planDataStream(document, guarded, options.dataSpace ?? 'default');
     const result =
       plan.operation === 'create'
         ? await createNativeDataStream(document, guarded, options)

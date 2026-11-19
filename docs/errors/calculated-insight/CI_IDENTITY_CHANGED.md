@@ -10,7 +10,7 @@
 
 ## What it means
 
-The plugin selects a calculated insight by its exact API name in the default data space. This code means the org returned a calculated insight whose API name or data space differs from what was asked for, or the local JSON file names a different calculated insight than the one found in the org.
+The plugin selects a calculated insight by its exact API name in the run's data space (`--dataspace`, or `default` when you leave it out). This code means the org returned a calculated insight whose API name or data space differs from what was asked for, or the local JSON file names a different calculated insight than the one found in the org.
 
 ## Why the plugin stops
 
@@ -19,7 +19,7 @@ The plugin must never write files for, or change, a calculated insight other tha
 ## How to fix
 
 1. Check the API name in `-m calculated-insight:Name__cio` or in the `apiName` of the JSON file, including upper and lower case.
-2. Make sure the data space is `default`.
+2. Run with the `--dataspace` the insight belongs to; `c__dataSpace` in the JSON names it.
 3. Rerun the command.
 
 ## Example output

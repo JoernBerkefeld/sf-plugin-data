@@ -1,6 +1,6 @@
 # `UNSUPPORTED_STREAM_READ`
 
-> The Ingestion API stream read is outside what the stream file can hold: another stream type, no refresh mode, another data space, or missing names or lists. Manage this stream in Salesforce.
+> The Ingestion API stream read is outside what the stream file can hold: another stream type, no refresh mode, no data space, or missing names or lists. Manage this stream in Salesforce.
 
 |              |                                                                                                                                                                                                                                                                                        |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -10,7 +10,7 @@
 
 ## What it means
 
-An Ingestion API stream file holds a stream of type `INGESTAPI` on the `IngestApi` connector, with a refresh mode, whose landing DLO is in the `default` data space only (with or without a category). This code means a stream it read is different: another stream type, no refresh mode, another data space, or a stream without a name, record ID, data source, status, label, source field list or mapping list.
+An Ingestion API stream file holds a stream of type `INGESTAPI` on the `IngestApi` connector, with a refresh mode, whose landing DLO names at least one data space (with or without a category). This code means a stream it read is different: another stream type, no refresh mode, no data space, or a stream without a name, record ID, data source, status, label, source field list or mapping list.
 
 It also appears when another stream of a different kind shares the connection.
 

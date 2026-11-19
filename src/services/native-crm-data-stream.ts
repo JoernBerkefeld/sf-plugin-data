@@ -1,11 +1,14 @@
 import { setTimeout as wait } from 'node:timers/promises';
 import {
   DataStreamError,
+  createSpacesRefusal,
   crmDataStreamPatch,
   crmDataStreamSpec,
+  crmDeploySpec,
   isCrmDataStream,
   validateCrmDataStreamDocument,
 } from '../artifacts/data-stream-document.js';
+import { dataSpaceKey, sortedDataSpaces } from '../artifacts/data-space-field.js';
 import type { CrmDataStreamDocument } from '../artifacts/data-stream-document.js';
 import type { DocumentMode } from '../artifacts/verbatim-document.js';
 import type { DataStreamClient } from '../transport/data-stream-rest.js';
@@ -17,6 +20,10 @@ import {
   checkRetrievedStreamScope,
   isStreamNotFound,
   projectNativeDataStream,
+  requireRunSpace,
+  sameSpaces,
+  spacesDiffer,
+  streamSpaces,
 } from './native-data-stream.js';
 import type { DataStreamReadClients, DataStreamReadMode } from './native-data-stream.js';
 
@@ -24,31 +31,39 @@ type Json = Record<string, unknown>;
 /** Native stream access a CRM stream deploy needs. */
 export type CrmDataStreamClients = {
   streams: Pick<DataStreamClient, 'get' | 'create' | 'patch' | 'relabel'>;
+  /** DLO reader: the stream's data spaces come from its DLO when the stream GET names none. */
+  dlo?: DataStreamReadClients['dlo'];
 };
 export type CrmDataStreamDeployOptions = {
   allowProcessing: boolean;
+  /** The run's data space (default when absent): the file's c__dataSpace must list it. */
+  dataSpace?: string;
   verifyInput: () => Promise<void>;
   now?: () => number;
   wait?: (milliseconds: number) => Promise<unknown>;
 };
 
 /**
- * Project a CRM stream GET into its stream file.
+ * Project a CRM stream GET into its stream file: c__dataSpace lists the data spaces of its DLO
+ * (see streamSpaces), and the spec keeps Salesforce's own list of them.
  * @param {unknown} read Stream GET response.
  * @param {string} apiName Requested stream name.
  * @param {DocumentMode} mode Validation mode.
+ * @param {readonly string[]} spaces The data spaces of the stream's DLO.
  * @returns {CrmDataStreamDocument} Stream document.
  */
 export function projectCrmDataStream(
   read: unknown,
   apiName: string,
   mode: DocumentMode,
+  spaces: readonly string[],
 ): CrmDataStreamDocument {
   return validateCrmDataStreamDocument(
     {
       schemaVersion: 1,
       kind: 'data-stream',
-      identity: { apiName, dataSpace: 'default' },
+      [dataSpaceKey]: sortedDataSpaces(spaces),
+      identity: { apiName },
       spec: crmDataStreamSpec(read),
     },
     mode,
@@ -60,7 +75,7 @@ export function projectCrmDataStream(
  * keys, every other stream through the Ingestion API projection.
  * @param {string} apiName Exact stream name.
  * @param {DataStreamReadClients} clients Native readers.
- * @param {string} dataSpace Data space (default only).
+ * @param {string} dataSpace The run's data space: the stream's DLO must belong to it.
  * @param {boolean} postWrite Whether this read belongs to create/update settlement.
  * @param {DataStreamReadMode} mode `retrieve` or `deploy`.
  * @returns {Promise<DataStreamDocument | CrmDataStreamDocument>} Stream document.
@@ -72,14 +87,30 @@ export async function retrieveDataStreamDocument(
   postWrite = false,
   mode: DataStreamReadMode = 'deploy',
 ): Promise<DataStreamDocument | CrmDataStreamDocument> {
-  if (!/^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(apiName) || dataSpace !== 'default')
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,199}$/u.test(apiName))
     throw new DataStreamError('INVALID_STREAM_BINDING');
   const read = await clients.streams.get(apiName);
   if (mode === 'retrieve' && isCrmDataStream(read)) {
-    checkRetrievedStreamScope(read, apiName);
-    return projectCrmDataStream(read, apiName, mode);
+    checkRetrievedStreamScope(read, apiName, dataSpace);
+    const spaces = await streamSpaces(read, apiName, dataSpace, clients);
+    return projectCrmDataStream(read, apiName, mode, spaces);
   }
   return projectNativeDataStream(read, apiName, clients, dataSpace, postWrite, mode);
+}
+
+/**
+ * The spec of an org stream for comparison: a GET that names no data space gets the spaces read
+ * from its DLO, so a file that keeps Salesforce's list is not taken as a change of it.
+ * @param {Json} current Stream GET.
+ * @param {readonly string[]} spaces The DLO's data spaces.
+ * @returns {Json} Spec.
+ */
+function orgSpec(current: Json, spaces: readonly string[]): Json {
+  const spec = crmDataStreamSpec(current);
+  const dlo = spec.dataLakeObjectInfo as Json | undefined;
+  if (dlo && typeof dlo === 'object' && dlo.dataSpaceInfo === undefined)
+    dlo.dataSpaceInfo = spaces.map((name) => ({ name }));
+  return spec;
 }
 
 /**
@@ -129,26 +160,34 @@ type CrmPlan =
 
 /**
  * Compare the file with the org: absent creates, equal is unchanged, otherwise a PATCH of the
- * changed parts.
+ * changed parts. The file's c__dataSpace must name the run's data space; a new stream must list
+ * it alone, an existing one must list exactly the data spaces of its DLO (check only).
  * @param {CrmDataStreamDocument} document Validated CRM stream file.
  * @param {CrmDataStreamClients} clients Native reader.
+ * @param {string} dataSpace The run's data space.
  * @returns {Promise<CrmPlan>} Plan.
  */
 async function planCrmDataStream(
   document: CrmDataStreamDocument,
   clients: CrmDataStreamClients,
+  dataSpace: string,
 ): Promise<CrmPlan> {
-  if (document.identity.dataSpace !== 'default')
-    throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
+  requireRunSpace(document, dataSpace);
   const current = await readCrmStream(
     document.identity.apiName,
     connectorTypeOf(document),
     clients,
   );
-  if (!current) return { operation: 'create' };
+  if (!current) {
+    if (document.c__dataSpace.length !== 1) throw createSpacesRefusal(document.c__dataSpace);
+    return { operation: 'create' };
+  }
+  const org = await streamSpaces(current, document.identity.apiName, dataSpace, clients);
+  if (!sameSpaces(document.c__dataSpace, org))
+    throw spacesDiffer(document.identity.apiName, document.c__dataSpace, org);
   const { body, parts, unsupported } = crmDataStreamPatch(
-    document.spec,
-    crmDataStreamSpec(current),
+    crmDeploySpec(document),
+    orgSpec(current, org),
   );
   if (unsupported.length > 0)
     throw explainInput(
@@ -162,11 +201,16 @@ async function planCrmDataStream(
  * Read-only comparison of a CRM stream file with the org.
  * @param {unknown} value CRM stream document.
  * @param {CrmDataStreamClients} clients Native reader.
+ * @param {string} [dataSpace] The run's data space.
  * @returns {Promise<object>} Preview item.
  */
-export async function preflightCrmDataStream(value: unknown, clients: CrmDataStreamClients) {
+export async function preflightCrmDataStream(
+  value: unknown,
+  clients: CrmDataStreamClients,
+  dataSpace = 'default',
+) {
   const document = validateCrmDataStreamDocument(value);
-  const plan = await planCrmDataStream(document, clients);
+  const plan = await planCrmDataStream(document, clients, dataSpace);
   return {
     family: 'data-stream' as const,
     outcome: plan.operation === 'noop' ? ('unchanged' as const) : plan.operation,
@@ -225,7 +269,7 @@ export async function executeCrmDataStream(
     const apiName = document.identity.apiName;
     const targetDloName = (document.spec.dataLakeObjectInfo as Json).name as string;
     await options.verifyInput();
-    const plan = await planCrmDataStream(document, clients);
+    const plan = await planCrmDataStream(document, clients, options.dataSpace ?? 'default');
     if (plan.operation === 'noop')
       return {
         family: 'data-stream' as const,
@@ -266,7 +310,10 @@ export async function executeCrmDataStream(
             : 'STREAM_UPDATE_SETTLEMENT_UNCONFIRMED',
         );
       if (current?.status === 'ACTIVE') {
-        const left = crmDataStreamPatch(document.spec, crmDataStreamSpec(current));
+        const left = crmDataStreamPatch(
+          crmDeploySpec(document),
+          orgSpec(current, document.c__dataSpace),
+        );
         // Plain mappings are never sent: Salesforce maps source fields itself on create.
         remaining = [...left.parts, ...left.unsupported];
         settledReads++;

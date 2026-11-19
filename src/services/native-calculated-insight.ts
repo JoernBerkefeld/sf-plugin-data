@@ -62,9 +62,12 @@ export async function acquireCalculatedInsight(
   const read = await readCalculatedInsight(context, apiName);
   if (read.state === 'absent') return read;
   const { raw } = read;
-  const document = observeNativeCalculatedInsight(raw);
-  if (document.apiName !== apiName || document.dataSpace !== context.dataSpace)
+  // Name and data space first, from the GET itself: an insight of another name or data space is
+  // an item failure, never a projection (or a verbatim file stamped with the run's data space).
+  const answered = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  if (answered.apiName !== apiName || answered.dataSpace !== context.dataSpace)
     throw new CalculatedInsightError('CI_IDENTITY_CHANGED');
+  const document = observeNativeCalculatedInsight(raw);
   const status = (raw as { calculatedInsightStatus?: unknown }).calculatedInsightStatus;
   return { state: 'present', status: typeof status === 'string' ? status : 'UNKNOWN', document };
 }

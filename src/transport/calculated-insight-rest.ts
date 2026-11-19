@@ -1,3 +1,4 @@
+import { isDataSpaceName } from '../artifacts/data-space-field.js';
 import {
   calculatedInsightInputBody,
   calculatedInsightName,
@@ -54,7 +55,8 @@ class CalculatedInsightTransport extends ConnectClient {
  * key names and enum forms (`calculatedInsightInputBody`); Salesforce decides the rest.
  * @param {ConstructorParameters<typeof ConnectClient>[0]} connection Authenticated connection.
  * @param {string} apiVersion '68.0' only.
- * @param {string} dataSpace 'default' only (the item routes take no data space).
+ * @param {string} dataSpace The run's data space. The item routes take none (names are unique in
+ * the org); the create and update bodies carry it as `dataSpaceName` from the file.
  * @returns {CalculatedInsightClient} Exact-name operations.
  */
 export function createCalculatedInsightClient(
@@ -62,7 +64,7 @@ export function createCalculatedInsightClient(
   apiVersion: string,
   dataSpace: string,
 ): CalculatedInsightClient {
-  if (apiVersion !== '68.0' || dataSpace !== 'default')
+  if (apiVersion !== '68.0' || !isDataSpaceName(dataSpace))
     throw new CalculatedInsightError('INVALID_CI_SCOPE');
   const transport = new CalculatedInsightTransport(connection, apiVersion);
   const endpoint = `/services/data/v${apiVersion}/ssot/calculated-insights`;

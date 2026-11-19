@@ -927,8 +927,8 @@ async function readCalculatedInsightInput(file: string): Promise<CalculatedInsig
     );
     if (native.apiName !== apiName) throw new Error('Identity mismatch');
     document = calculatedInsightReference(native);
-  } catch {
-    throw new DeployInputError('INVALID_SOURCE');
+  } catch (error) {
+    throw invalidSource(error);
   }
   for (const [index, member] of members.entries()) {
     const after = await memberBytes(member);
@@ -1245,7 +1245,8 @@ export async function readDeployInputs(flags: DeployInputFlags): Promise<DeployI
       if (file.endsWith('.data-stream-meta.json')) {
         const input = await readDataStreamInput(file);
         const key =
-          `data-stream:${input.document.identity.dataSpace}:${input.document.identity.apiName}`.toLowerCase();
+          // A stream name is unique in the org, whatever data spaces its DLO belongs to.
+          `data-stream:${input.document.identity.apiName}`.toLowerCase();
         if (identities.has(key)) throw new DeployInputError('DUPLICATE_IDENTITY');
         if (
           selectors &&

@@ -404,6 +404,21 @@ under the copy name; proven live through the raw API (DB entry
 unique in the org. A member list that cannot be read after a DLO member PUT is
 `DLO_DATASPACE_MEMBERS_UNCONFIRMED` (the change was sent).
 
+Data spaces of data streams and calculated insights (2026-11-19, D2): a stream file lists the
+data spaces of its landing DLO in `c__dataSpace` (read from the DLO on retrieve) and deploy
+only checks it: it must hold the run's data space and equal the DLO's data spaces, and a new
+stream lists the run's data space alone, sent as the DLO's `dataspaceInfo` in the create
+(`STREAM_DATASPACE_MISMATCH`). Spaces change only through the DLO file. A stream belongs to the
+run's data space when its DLO lists it; the stream list is kept by each entry's
+`dataLakeObjectInfo.dataSpaceInfo`, and a stream outside the run's data space is
+`UNSUPPORTED_STREAM_DATASPACE`. `STREAM_DATASPACE_COLLISION` is gone. A calculated insight file
+names its data space in a top-level `c__dataSpace` string instead of Salesforce's `dataSpace`;
+deploy sends it as `dataSpaceName` in create and update, retrieve lists with `?dataspace=` and
+checks each GET, and deploy, publish and delete refuse a file of another data space
+(`CI_DATASPACE_MISMATCH`). The ordered batch keys components by data space; CI SQL names
+carry no data space, so an insight's dependencies are taken from its own data space. Neither family has run live outside `default` through the
+plugin yet.
+
 Native DLO retrieve and delete read one exact `__dll` detail at API 68 (or an explicit
 numeric pin of 61 and up) through the guarded GET transport without refresh, retry or
 redirects. Stream/connector bindings, lineage and generated replay remain unqualified.

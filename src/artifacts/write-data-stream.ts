@@ -134,8 +134,6 @@ export async function writeDataStreamDocument(
       );
       if (saved.apiName !== undefined && saved.apiName !== document.identity.apiName)
         throw new DataStreamError('STREAM_FILENAME_COLLISION');
-      if (saved.dataSpace !== undefined && saved.dataSpace !== document.identity.dataSpace)
-        throw new DataStreamError('STREAM_DATASPACE_COLLISION');
       if (!overwrite) throw new DataStreamError('OVERWRITE_REQUIRED');
     }
     verifyTemporaryDirectory();

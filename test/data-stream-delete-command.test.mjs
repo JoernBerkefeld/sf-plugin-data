@@ -132,7 +132,7 @@ for (const overrides of [
   { metadata: ['data-stream:*'] },
   { metadata: ['data-stream:../Other'] },
   { metadata: ['dlo:Other__dll'], 'delete-dlo': true },
-  { dataspace: 'Other' },
+  { dataspace: 'Unknown' },
   ...['latest', '67.0', '69.0', '68', ''].map((pin) => ({ 'api-version': pin })),
 ])
   test(`stream delete refuses local scope before auth ${JSON.stringify(overrides)}`, async () => {
@@ -573,4 +573,40 @@ test('a stream already gone pairs no selected DLO: the DLO is checked on its own
       ['data-stream', 'unchanged', undefined],
     ],
   );
+});
+
+/**
+ * A stream delete seam that records the data space it was given.
+ * @param {string[]} spaces Receives each data space.
+ * @param {string} outcome Reported outcome.
+ * @returns {Function} Seam.
+ */
+const recordSpace = (spaces, outcome) => async (name, _clients, options) => {
+  spaces.push(options.dataSpace);
+  await options.verifyInput();
+  return {
+    outcome,
+    mutation: outcome === 'delete' ? 'not-attempted' : 'confirmed-deleted',
+    deleteDlo: options.deleteDlo,
+    targetApiName: name,
+    targetDloName: 'Linked__dll',
+    diagnostics: [],
+  };
+};
+
+test('a stream is deleted in another data space, which reaches preview and delete', async () => {
+  for (const preview of [true, false]) {
+    const fixture = invocation({ dataspace: 'dataspace2', preview });
+    const spaces = [];
+    fixture.command.preflightDeleteDataStream = recordSpace(spaces, 'delete');
+    fixture.command.executeDeleteDataStream = recordSpace(spaces, 'deleted');
+    const { result } = await run(fixture.command);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.deepEqual(spaces, ['dataspace2']);
+    assert.equal(result.result.scope.dataSpace, 'dataspace2');
+    assert.deepEqual(result.result.items[0].identity, {
+      apiName: 'Selected',
+      dataSpace: 'dataspace2',
+    });
+  }
 });

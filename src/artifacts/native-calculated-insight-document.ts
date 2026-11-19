@@ -1,6 +1,8 @@
 import { sameProperty } from './enum-case.js';
 import { joinCodeFields, splitCodeFields } from './code-fields.js';
 import type { CodeField, CodeFile } from './code-fields.js';
+import { dataSpaceKey, readSingleDataSpace } from './data-space-field.js';
+import { explainInput } from '../services/operation-diagnostic.js';
 
 export const calculatedInsightName = /^[A-Za-z][A-Za-z0-9_]{0,194}__cio$/u;
 
@@ -45,7 +47,12 @@ export const calculatedInsightCodeFields: readonly CodeField[] = [
   { path: ['expression'], extension: 'sql' },
 ];
 
-/** One calculated insight as the API 68 GET returns it, without the server fields. */
+/**
+ * One calculated insight as the API 68 GET returns it, without the server fields. The file
+ * keeps its data space in the top-level `c__dataSpace` key instead of Salesforce's `dataSpace`:
+ * serialize and parse translate between the two, so `dataSpace` (sent as `dataSpaceName`)
+ * always comes from `c__dataSpace`.
+ */
 export type NativeCalculatedInsight = Record<string, unknown> & {
   apiName: string;
   dataSpace: string;
@@ -153,10 +160,66 @@ export function serializeNativeCalculatedInsight(value: unknown): {
     calculatedInsightCodeFields,
     () => new CalculatedInsightError('INVALID_CI_DOCUMENT'),
   );
+  const file = { ...(document as Record<string, unknown>) };
+  file[dataSpaceKey] = file.dataSpace;
+  delete file.dataSpace;
   return {
-    json: `${JSON.stringify(sorted(document), undefined, 2)}\n`,
+    json: `${JSON.stringify(sorted(file), undefined, 2)}\n`,
     files: files.map((file) => ({ ...file, text: `${withoutTrailingLineBreaks(file.text)}\n` })),
   };
+}
+
+/**
+ * The refusal of an insight file whose `c__dataSpace` is not the run's data space.
+ * @param {object} document The insight.
+ * @param {string} document.apiName Its name.
+ * @param {string} document.dataSpace Its data space (the file's c__dataSpace).
+ * @param {string} dataSpace The run's data space.
+ * @returns {CalculatedInsightError} CI_DATASPACE_MISMATCH with an explanation.
+ */
+export function calculatedInsightSpaceMismatch(
+  document: { apiName: string; dataSpace: string },
+  dataSpace: string,
+): CalculatedInsightError {
+  return explainInput(
+    new CalculatedInsightError('CI_DATASPACE_MISMATCH'),
+    `${document.apiName} names the data space ${document.dataSpace} in ${dataSpaceKey}, but the run's data space is ${dataSpace}. Run the command with --dataspace ${document.dataSpace}, or correct the file.`,
+  );
+}
+
+/**
+ * Refuse a calculated insight file problem, naming the key.
+ * @param {string} code Refusal code.
+ * @param {string} keyPath Key path.
+ * @param {string} problem What is wrong with it.
+ * @returns {CalculatedInsightError} Refusal with an explanation.
+ */
+function refuseFile(code: string, keyPath: string, problem: string): CalculatedInsightError {
+  return explainInput(
+    new CalculatedInsightError(code),
+    `The calculated insight file cannot be deployed: ${keyPath} ${problem}. Correct the file, or retrieve the insight again.`,
+  );
+}
+
+/**
+ * The parsed file with its `c__dataSpace` moved to Salesforce's `dataSpace` key. A file that still
+ * carries `dataSpace` itself is refused (pre-alpha: not migrated).
+ * @param {unknown} parsed Parsed JSON.
+ * @returns {unknown} Document in the GET's key names.
+ */
+function fromFileDataSpace(parsed: unknown): unknown {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    throw new CalculatedInsightError('INVALID_CI_DOCUMENT');
+  const file = { ...(parsed as Record<string, unknown>) };
+  if (Object.hasOwn(file, 'dataSpace'))
+    throw refuseFile(
+      'LEGACY_DATASPACE_KEY',
+      'dataSpace',
+      `is Salesforce's key; the file names its data space in the top-level key ${dataSpaceKey}`,
+    );
+  file.dataSpace = readSingleDataSpace(file, refuseFile);
+  delete file[dataSpaceKey];
+  return file;
 }
 
 /**
@@ -178,7 +241,7 @@ export function parseNativeCalculatedInsight(
   }
   const document = validateNativeCalculatedInsight(
     joinCodeFields(
-      parsed,
+      fromFileDataSpace(parsed),
       calculatedInsightCodeFields,
       files,
       () => new CalculatedInsightError('INVALID_CI_DOCUMENT'),

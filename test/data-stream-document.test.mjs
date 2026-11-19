@@ -13,7 +13,8 @@ import { operationDiagnostic } from '../lib/services/operation-diagnostic.js';
 const document = () => ({
   schemaVersion: 1,
   kind: 'data-stream',
-  identity: { apiName: 'Example_ProbeRecord_43F5E7F5', dataSpace: 'default' },
+  c__dataSpace: ['default'],
+  identity: { apiName: 'Example_ProbeRecord_43F5E7F5' },
   spec: {
     connectorType: 'IngestApi',
     connectionName: 'Example_Connection',
@@ -181,10 +182,38 @@ test('PATCH serializes sourceFieldLabel Text additions only, target normalizes t
   assert.equal(dataStreamTargetFieldName('QualificationValue'), 'QualificationValue__c');
   assert.throws(() => dataStreamTargetFieldName('QualificationValue__c'), /INVALID_STREAM_MAPPING/);
   assert.throws(() => dataStreamTargetFieldName('../escape'), /INVALID_STREAM_NAME/);
-  for (const builder of [buildDataStreamCreateBody, buildDataStreamPatchBody]) {
-    input.identity.dataSpace = 'other';
-    assert.throws(() => builder(input), /UNSUPPORTED_STREAM_DATASPACE/);
+  // The create puts the landing DLO into one data space, the one the file names.
+  const single = document();
+  single.c__dataSpace = ['dataspace2'];
+  assert.deepEqual(buildDataStreamCreateBody(single).dataLakeObjectInfo.dataspaceInfo, [
+    { name: 'dataspace2' },
+  ]);
+  input.c__dataSpace = ['dataspace2', 'default'];
+  assert.throws(() => buildDataStreamCreateBody(input), /STREAM_DATASPACE_MISMATCH/);
+  // A PATCH carries no data space: the spaces only mirror the DLO.
+  assert.ok(!JSON.stringify(buildDataStreamPatchBody(input)).includes('dataspace'));
+  const legacy = document();
+  legacy.identity.dataSpace = 'default';
+  assert.throws(() => buildDataStreamCreateBody(legacy), /LEGACY_DATASPACE_KEY/);
+});
+
+test('the c__dataSpace list of a stream file is checked like a DLO list', () => {
+  for (const [value, code] of [
+    [undefined, /INVALID_STREAM_DOCUMENT/],
+    ['default', /INVALID_DATASPACE_FIELD/],
+    [[], /INVALID_DATASPACE_FIELD/],
+    [['default', 'default'], /INVALID_DATASPACE_FIELD/],
+    [[' bad'], /INVALID_DATASPACE_FIELD/],
+    [[{ name: 'default', filter: 'x' }], /UNSUPPORTED_DATASPACE_FILTER/],
+  ]) {
+    const input = document();
+    if (value === undefined) delete input.c__dataSpace;
+    else input.c__dataSpace = value;
+    assert.throws(() => validateDataStreamDocument(input), code, JSON.stringify(value));
   }
+  const listed = document();
+  listed.c__dataSpace = ['dataspace2', 'default'];
+  assert.deepEqual(validateDataStreamDocument(listed).c__dataSpace, ['dataspace2', 'default']);
 });
 
 test('stream validation rejects malformed intent, IDs, status, duplicate/conflicting mappings and formula intent', () => {
@@ -193,7 +222,7 @@ test('stream validation rejects malformed intent, IDs, status, duplicate/conflic
       d.identity.apiName = '../escape';
     },
     (d) => {
-      d.identity.dataSpace = ' bad';
+      d.c__dataSpace = [' bad'];
     },
     (d) => {
       d.recordId = 'source-runtime';

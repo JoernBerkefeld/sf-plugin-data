@@ -196,7 +196,13 @@ test('an S3-connector stream is written as a deployable GET-shaped file without 
   assert.equal(result.result.items[0].verbatim, undefined);
   const saved = JSON.parse(await readFile(streamFile(cwd, 'Account_Home'), 'utf8'));
   assert.equal(saved.kind, 'data-stream');
-  assert.deepEqual(saved.identity, { dataSpace: 'default', apiName: 'Account_Home' });
+  assert.deepEqual(saved.identity, { apiName: 'Account_Home' });
+  // The data spaces of the DLO, as the GET names them; Salesforce's own list stays in spec.
+  assert.deepEqual(saved.c__dataSpace, ['default']);
+  assert.deepEqual(
+    saved.spec.dataLakeObjectInfo.dataSpaceInfo.map((space) => space.name),
+    ['default'],
+  );
   assert.equal(saved.spec.connectorInfo.connectorType, 'S3');
   assert.equal(saved.spec.refreshConfig.refreshMode, 'FULL_REFRESH');
   assert.equal(saved.spec.recordId, undefined);
@@ -496,7 +502,8 @@ test('retrieve keeps unknown mapping and source field keys and a long DLO label;
 const validStream = () => ({
   schemaVersion: 1,
   kind: 'data-stream',
-  identity: { apiName: 'GeneratedStream', dataSpace: 'default' },
+  c__dataSpace: ['default'],
+  identity: { apiName: 'GeneratedStream' },
   spec: {
     connectorType: 'IngestApi',
     connectionName: 'SyntheticConnection',

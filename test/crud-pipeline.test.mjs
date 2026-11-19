@@ -29,7 +29,8 @@ const stream = (dlo = 'Feed__dll') => ({
   document: {
     schemaVersion: 1,
     kind: 'data-stream',
-    identity: { apiName: 'Feed', dataSpace: 'default' },
+    c__dataSpace: ['default'],
+    identity: { apiName: 'Feed' },
     spec: { newDlo: { name: dlo }, additiveFieldMappings: [] },
   },
 });

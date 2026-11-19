@@ -85,6 +85,8 @@ const kept = [
   'queryDialect',
   'sourceCiDevName',
 ];
+// The JSON file: the GET keys with c__dataSpace in place of dataSpace, sorted.
+const fileKeys = kept.map((key) => (key === 'dataSpace' ? 'c__dataSpace' : key)).toSorted();
 const root = async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'data360-ci-retrieve-'));
   await writeFile(path.join(cwd, '.owner'), randomUUID());
@@ -187,7 +189,9 @@ test('module: observe keeps the GET body as returned without server fields, SQL 
   assert.equal(document.publishScheduleInterval, 'NOT_SCHEDULED');
   const { json, files } = serializeNativeCalculatedInsight(document);
   assert.ok(!json.includes('expression'));
-  assert.deepEqual(Object.keys(JSON.parse(json)), kept);
+  // The file names the data space in c__dataSpace, never in Salesforce's dataSpace.
+  assert.deepEqual(Object.keys(JSON.parse(json)), fileKeys);
+  assert.equal(JSON.parse(json).c__dataSpace, 'default');
   assert.ok(json.endsWith('}\n'));
   assert.deepEqual(files, [{ extension: 'sql', text: `${plainSql}\n` }]);
   assert.deepEqual(parseNativeCalculatedInsight(json, files), document);
@@ -406,9 +410,10 @@ test('inventory: pages past 200 pages until total, and ends on a repeated page',
  * A retrieve command with a stub org whose GET returns `getBody`, writing into a real folder.
  * @param {string[]} metadata Selectors.
  * @param {string} cwd Output project root.
+ * @param {string} [space] The run data space (--dataspace when not default).
  * @returns {{command: object, reads: string[]}} Command and the names read.
  */
-const command = (metadata, cwd) => {
+const command = (metadata, cwd, space = 'default') => {
   const instance = Object.create(Retrieve.prototype);
   const reads = [];
   instance.parse = async () => ({
@@ -418,6 +423,7 @@ const command = (metadata, cwd) => {
       'target-org': 'synthetic',
       'output-dir': cwd,
       overwrite: false,
+      ...(space === 'default' ? {} : { dataspace: space }),
     },
   });
   instance.jsonEnabled = () => true;
@@ -432,19 +438,19 @@ const command = (metadata, cwd) => {
       return connection;
     },
   });
-  instance.createCalculatedInsightClient = (receiver, version, space) => {
+  instance.createCalculatedInsightClient = (receiver, version, client) => {
     assert.equal(receiver, connection);
-    assert.deepEqual([version, space], ['68.0', 'default']);
+    assert.deepEqual([version, client], ['68.0', space]);
     return {
       get: async (name) => {
         reads.push(name);
-        return getBody(name);
+        return { ...getBody(name), dataSpace: space };
       },
     };
   };
-  instance.listCalculatedInsightNames = async (receiver, space) => {
+  instance.listCalculatedInsightNames = async (receiver, listed) => {
     assert.equal(receiver, connection);
-    assert.equal(space, 'default');
+    assert.equal(listed, space);
     return ['Listed_Two__cio', 'Listed_One__cio'];
   };
   return { command: instance, reads };
@@ -473,7 +479,7 @@ test('retrieve writes the JSON and SQL files; a repeat retrieve is unchanged', a
   ]);
   assert.equal(await readFile(item.companionPath, 'utf8'), `${plainSql}\n`);
   const json = JSON.parse(await readFile(item.path, 'utf8'));
-  assert.deepEqual(Object.keys(json), kept);
+  assert.deepEqual(Object.keys(json), fileKeys);
   const bytes = await Promise.all([readFile(item.path), readFile(item.companionPath)]);
   const again = await run(command(['calculated-insight:Synthetic__cio'], cwd).command);
   assert.equal(again.status, 'success');
@@ -592,7 +598,7 @@ test('a failing insight listing fails that inventory only; named insights are st
 for (const overrides of [
   { 'api-version': '65.0' },
   { 'api-version': '67.0' },
-  { dataspace: 'other' },
+  { dataspace: 'Unknown' },
   { metadata: ['calculated-insight:Invalid'] },
 ])
   test(`CI retrieve refuses ${JSON.stringify(overrides)} before auth`, async () => {
@@ -603,3 +609,56 @@ for (const overrides of [
     const result = await run(instance);
     assert.equal(result.status, 'blocked');
   });
+
+test('retrieve in another data space lists and reads there and writes it to c__dataSpace', async () => {
+  const cwd = await root();
+  const { command: instance, reads } = command(['calculated-insight'], cwd, 'dataspace2');
+  const result = await run(instance);
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.deepEqual(reads, ['Listed_One__cio', 'Listed_Two__cio']);
+  assert.equal(result.result.scope.dataSpace, 'dataspace2');
+  for (const item of result.result.items) {
+    assert.equal(item.identity.dataSpace, 'dataspace2');
+    const json = JSON.parse(await readFile(item.path, 'utf8'));
+    assert.equal(json.c__dataSpace, 'dataspace2');
+    assert.ok(!('dataSpace' in json));
+  }
+});
+
+test('an insight the GET names in another data space than the run is not written', async () => {
+  const cwd = await root();
+  const { command: instance } = command(['calculated-insight:Synthetic__cio'], cwd, 'dataspace2');
+  instance.createCalculatedInsightClient = () => ({ get: async (name) => getBody(name) });
+  const result = await run(instance);
+  assert.notEqual(result.status, 'success');
+  assert.equal(result.diagnostics.errors[0].code, 'CI_IDENTITY_CHANGED');
+  await assert.rejects(readdir(path.join(cwd, 'data360', 'calculatedInsights')));
+});
+
+test('a file names its data space in c__dataSpace; Salesforce dataSpace is refused', () => {
+  const document = observeNativeCalculatedInsight({ ...getBody(), dataSpace: 'dataspace2' });
+  const { json, files } = serializeNativeCalculatedInsight(document);
+  assert.equal(parseNativeCalculatedInsight(json, files).dataSpace, 'dataspace2');
+  const parsed = JSON.parse(json);
+  for (const [file, code] of [
+    [{ ...parsed, dataSpace: 'dataspace2' }, 'LEGACY_DATASPACE_KEY'],
+    [{ ...parsed, c__dataSpace: undefined }, 'INVALID_DATASPACE_FIELD'],
+    [{ ...parsed, c__dataSpace: ' bad' }, 'INVALID_DATASPACE_FIELD'],
+    [{ ...parsed, c__dataSpace: ['dataspace2'] }, 'INVALID_DATASPACE_FIELD'],
+  ])
+    assert.throws(() => parseNativeCalculatedInsight(JSON.stringify(file), files), { code });
+});
+
+test('an insight of another data space that cannot be modelled is an item failure, not verbatim', async () => {
+  const cwd = await root();
+  const { command: instance } = command(['calculated-insight:Synthetic__cio'], cwd, 'dataspace2');
+  // No SQL: the projection would refuse it and write it as-is, stamped with the run's space.
+  instance.createCalculatedInsightClient = () => ({
+    get: async (name) => ({ ...getBody(name), expression: undefined }),
+  });
+  const result = await run(instance);
+  assert.notEqual(result.status, 'success');
+  assert.equal(result.diagnostics.errors[0].code, 'CI_IDENTITY_CHANGED');
+  assert.ok(!result.result.items.some((item) => item.verbatim));
+  await assert.rejects(readdir(path.join(cwd, 'data360', 'calculatedInsights')));
+});

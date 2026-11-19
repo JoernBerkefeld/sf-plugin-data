@@ -1,13 +1,15 @@
 import { isDeepStrictEqual } from 'node:util';
-import { explainInput, explainMismatch } from './operation-diagnostic.js';
+import { explainInput, explainMismatch, printableKey } from './operation-diagnostic.js';
 import { setTimeout as wait } from 'node:timers/promises';
 import {
   DataStreamError,
   buildDataStreamCreateBody,
   buildDataStreamPatchBody,
+  createSpacesRefusal,
   decodeFormula,
   validateDataStreamDocument,
 } from '../artifacts/data-stream-document.js';
+import { dataSpaceKey, isDataSpaceName, sortedDataSpaces } from '../artifacts/data-space-field.js';
 import { ConnectError } from '../transport/connect-client.js';
 import type {
   DataStreamDocument,
@@ -286,8 +288,8 @@ export function inspectNativeDataStream(value: unknown): Json {
     typeof dlo.name !== 'string' ||
     !/^[A-Za-z][A-Za-z0-9_]*__dll$/u.test(dlo.name) ||
     !Array.isArray(spaces) ||
-    spaces.length !== 1 ||
-    object(spaces[0]).name !== 'default' ||
+    spaces.length === 0 ||
+    !spaces.every((entry) => isDataSpaceName(object(entry).name)) ||
     typeof raw.status !== 'string' ||
     typeof raw.label !== 'string' ||
     !raw.label ||
@@ -299,13 +301,18 @@ export function inspectNativeDataStream(value: unknown): Json {
 }
 
 /**
- * The item checks of a retrieved stream GET: a stream of another name, or one whose DLO is in
- * another data space (selection is per data space), stays an item failure.
+ * The item checks of a retrieved stream GET: a stream of another name, or one whose DLO does not
+ * belong to the run's data space (selection is per data space), stays an item failure.
  * @param {unknown} value Stream GET response.
  * @param {string} apiName Requested stream name.
+ * @param {string} dataSpace The run's data space.
  * @returns {Json} The GET.
  */
-export function checkRetrievedStreamScope(value: unknown, apiName: string): Json {
+export function checkRetrievedStreamScope(
+  value: unknown,
+  apiName: string,
+  dataSpace: string,
+): Json {
   const raw = object(value);
   if (raw.name !== apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
   const bag = (entry: unknown): Json =>
@@ -314,9 +321,113 @@ export function checkRetrievedStreamScope(value: unknown, apiName: string): Json
   const spaces = Array.isArray(dlo.dataSpaceInfo)
     ? (dlo.dataSpaceInfo as unknown[]).map((entry) => bag(entry).name)
     : [];
-  if (spaces.some((space) => typeof space === 'string' && space !== 'default'))
-    throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
+  if (spaces.length > 0 && !spaces.includes(dataSpace))
+    throw outsideRunSpace(String(raw.name), dataSpace);
   return raw;
+}
+
+/**
+ * The refusal of a stream whose landing DLO does not belong to the run's data space.
+ * @param {string} apiName Stream name.
+ * @param {string} dataSpace The run's data space.
+ * @returns {DataStreamError} UNSUPPORTED_STREAM_DATASPACE with an explanation.
+ */
+function outsideRunSpace(apiName: string, dataSpace: string): DataStreamError {
+  return explainInput(
+    new DataStreamError('UNSUPPORTED_STREAM_DATASPACE'),
+    `The landing DLO of ${printableKey(apiName)} does not belong to the data space ${printableKey(dataSpace)}. Run the command with --dataspace set to one of its DLO's data spaces.`,
+  );
+}
+
+/**
+ * The data spaces of a native DLO read, sorted; an entry without a usable name, or a name listed
+ * twice, is INVALID_STREAM_DLO.
+ * @param {Json} dlo Native DLO object.
+ * @returns {string[]} Its data spaces.
+ */
+function streamDloSpaces(dlo: Json): string[] {
+  const names = Array.isArray(dlo.dataSpaceInfo)
+    ? dlo.dataSpaceInfo.map((entry) => bag(entry).name)
+    : [];
+  if (
+    names.length === 0 ||
+    !names.every((name) => isDataSpaceName(name)) ||
+    new Set(names).size !== names.length
+  )
+    throw new DataStreamError('INVALID_STREAM_DLO');
+  return sortedDataSpaces(names as string[]);
+}
+
+/**
+ * The data spaces of a stream's landing DLO, sorted: the names the stream GET lists, or, when it
+ * names none, the DLO's own `dataSpaceInfo` read by name. A GET that names no space is never taken
+ * as the run's. The run's data space must be among them (UNSUPPORTED_STREAM_DATASPACE otherwise).
+ * @param {unknown} value Stream GET response.
+ * @param {string} apiName Stream name.
+ * @param {string} dataSpace The run's data space.
+ * @param {Pick<DataStreamReadClients, 'dlo'>} [clients] DLO reader, needed when the GET names no
+ * data space (INVALID_STREAM_DLO without one).
+ * @returns {Promise<string[]>} The data spaces.
+ */
+export async function streamSpaces(
+  value: unknown,
+  apiName: string,
+  dataSpace: string,
+  clients?: Partial<Pick<DataStreamReadClients, 'dlo'>>,
+): Promise<string[]> {
+  const info = bag(bag(value).dataLakeObjectInfo);
+  const listed = Array.isArray(info.dataSpaceInfo)
+    ? info.dataSpaceInfo.map((entry) => bag(entry).name)
+    : [];
+  let spaces: string[];
+  if (listed.length > 0) {
+    if (!listed.every((name) => isDataSpaceName(name)))
+      throw new DataStreamError('UNSUPPORTED_STREAM_READ');
+    spaces = sortedDataSpaces(listed as string[]);
+  } else {
+    if (
+      !clients?.dlo ||
+      typeof info.name !== 'string' ||
+      !/^[A-Za-z][A-Za-z0-9_]*__dll$/u.test(info.name)
+    )
+      throw new DataStreamError('INVALID_STREAM_DLO');
+    const wrapper = object(await clients.dlo.get(info.name));
+    if (Array.isArray(wrapper.dataLakeObjects) && wrapper.dataLakeObjects.length !== 1)
+      throw new DataStreamError('INVALID_STREAM_DLO');
+    spaces = streamDloSpaces(
+      Array.isArray(wrapper.dataLakeObjects) ? object(wrapper.dataLakeObjects[0]) : wrapper,
+    );
+  }
+  if (!spaces.includes(dataSpace)) throw outsideRunSpace(apiName, dataSpace);
+  return spaces;
+}
+
+/**
+ * Whether two data space lists name the same spaces.
+ * @param {readonly string[]} left One list.
+ * @param {readonly string[]} right The other list.
+ * @returns {boolean} Same spaces.
+ */
+export function sameSpaces(left: readonly string[], right: readonly string[]): boolean {
+  return isDeepStrictEqual(sortedDataSpaces(left), sortedDataSpaces(right));
+}
+
+/**
+ * The refusal of a stream file whose c__dataSpace list differs from its DLO's data spaces.
+ * @param {string} apiName Stream name.
+ * @param {readonly string[]} file The file's list.
+ * @param {readonly string[]} org The DLO's data spaces.
+ * @returns {DataStreamError} STREAM_DATASPACE_MISMATCH with an explanation.
+ */
+export function spacesDiffer(
+  apiName: string,
+  file: readonly string[],
+  org: readonly string[],
+): DataStreamError {
+  return explainInput(
+    new DataStreamError('STREAM_DATASPACE_MISMATCH'),
+    `The ${dataSpaceKey} list of ${printableKey(apiName)} (${file.map((space) => printableKey(space)).join(', ')}) differs from the data spaces of its DLO (${org.map((space) => printableKey(space)).join(', ')}). A stream file only mirrors its DLO: change the spaces with the DLO file, or retrieve the stream again.`,
+  );
 }
 
 /**
@@ -354,9 +465,10 @@ function fieldsOf(values: unknown, typeKey: string): string {
  * type, fits neither file shape and is refused, so retrieve writes the GET as-is.
  * @param {unknown} value Stream GET response.
  * @param {string} apiName Requested stream name.
+ * @param {string} dataSpace The run's data space.
  */
-function triageRetrievedStream(value: unknown, apiName: string): void {
-  const raw = checkRetrievedStreamScope(value, apiName);
+function triageRetrievedStream(value: unknown, apiName: string, dataSpace: string): void {
+  const raw = checkRetrievedStreamScope(value, apiName, dataSpace);
   if (raw.dataStreamType !== 'INGESTAPI' || bag(raw.connectorInfo).connectorType !== 'IngestApi')
     throw new DataStreamError('UNSUPPORTED_STREAM_CONNECTOR');
 }
@@ -396,7 +508,6 @@ export function streamEvent(stream: Json, events: unknown[]): string {
  * @param {string} selection.connectionName Connection developer name.
  * @param {string} selection.event Uploaded event name.
  * @param {string} selection.primaryKey Explicit Text primary key.
- * @param {string} selection.dataSpace Expected data space.
  * @param {DataStreamReadClients} clients Read-only dependency boundaries.
  * @param {boolean} postWrite Whether this read belongs to bounded create/update settlement.
  * @param {DataStreamReadMode} mode `retrieve` lists connections leniently (every page, extra
@@ -409,14 +520,12 @@ export async function resolveDataStreamBinding(
     connectionName: string;
     event: string;
     primaryKey: string;
-    dataSpace: string;
   },
   clients: DataStreamReadClients,
   postWrite = false,
   mode: DataStreamReadMode = 'deploy',
 ): Promise<DataStreamBinding> {
   if (
-    selection.dataSpace !== 'default' ||
     ![selection.apiName, selection.connectionName, selection.event, selection.primaryKey].every(
       (value) => name.test(value),
     )
@@ -587,7 +696,7 @@ export async function resolveDataStreamBinding(
  * Unsupported mappings block projection rather than silently dropping authored intent.
  * @param {string} apiName Exact server-generated stream name.
  * @param {DataStreamReadClients} clients Internal read clients.
- * @param {string} dataSpace Explicit observed-scope constraint.
+ * @param {string} dataSpace The run's data space: the stream's DLO must belong to it.
  * @param {boolean} postWrite Whether this read belongs to bounded create/update settlement.
  * @param {DataStreamReadMode} mode `retrieve` lists connections leniently; `deploy` strictly.
  * @returns {Promise<DataStreamDocument>} Detached validated portable document without runtime IDs.
@@ -599,7 +708,7 @@ export async function retrieveNativeDataStream(
   postWrite = false,
   mode: DataStreamReadMode = 'deploy',
 ): Promise<DataStreamDocument> {
-  if (!name.test(apiName) || dataSpace !== 'default')
+  if (!name.test(apiName) || !isDataSpaceName(dataSpace))
     throw new DataStreamError('INVALID_STREAM_BINDING');
   return projectNativeDataStream(
     await clients.streams.get(apiName),
@@ -616,10 +725,11 @@ export async function retrieveNativeDataStream(
  * @param {unknown} read Stream GET response.
  * @param {string} apiName Exact stream name.
  * @param {DataStreamReadClients} clients Internal read clients.
- * @param {string} dataSpace Explicit observed-scope constraint.
+ * @param {string} dataSpace The run's data space: the stream's DLO must belong to it.
  * @param {boolean} postWrite Whether this read belongs to bounded create/update settlement.
  * @param {DataStreamReadMode} mode `retrieve` lists connections leniently; `deploy` strictly.
- * @returns {Promise<DataStreamDocument>} Detached validated portable document without runtime IDs.
+ * @returns {Promise<DataStreamDocument>} Detached validated portable document; its c__dataSpace
+ * lists every data space of the DLO.
  */
 export async function projectNativeDataStream(
   read: unknown,
@@ -630,7 +740,7 @@ export async function projectNativeDataStream(
   mode: DataStreamReadMode = 'deploy',
 ): Promise<DataStreamDocument> {
   // Decide from the stream GET alone whether the plugin can model it, before connection reads.
-  if (mode === 'retrieve') triageRetrievedStream(read, apiName);
+  if (mode === 'retrieve') triageRetrievedStream(read, apiName, dataSpace);
   const raw = inspectNativeDataStream(read);
   if (raw.name !== apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
   let listed: unknown[];
@@ -663,7 +773,6 @@ export async function projectNativeDataStream(
       connectionName: raw.dataSource as string,
       event: eventName,
       primaryKey: keys[0].name,
-      dataSpace,
     },
     clients,
     postWrite,
@@ -686,12 +795,12 @@ export async function projectNativeDataStream(
     typeof dlo.id !== 'string' ||
     !recordId.test(dlo.id) ||
     dlo.category !== info.category ||
-    !Array.isArray(dlo.dataSpaceInfo) ||
-    dlo.dataSpaceInfo.length !== 1 ||
-    object(dlo.dataSpaceInfo[0]).name !== dataSpace ||
     !Array.isArray(dlo.fields)
   )
     throw new DataStreamError('INVALID_STREAM_DLO');
+  // The DLO read names every data space it belongs to; the stream file mirrors that list.
+  const spaces = streamDloSpaces(dlo);
+  if (!spaces.includes(dataSpace)) throw outsideRunSpace(apiName, dataSpace);
   const dloFields = dlo.fields.map((value) => {
     const field = object(value);
     return {
@@ -784,7 +893,8 @@ export async function projectNativeDataStream(
     {
       schemaVersion: 1,
       kind: 'data-stream',
-      identity: { apiName, dataSpace },
+      [dataSpaceKey]: spaces,
+      identity: { apiName },
       spec: {
         connectorType: 'IngestApi',
         connectionName: binding.connectionName,
@@ -847,6 +957,8 @@ export type DataStreamUpdatePlan = {
 export type DataStreamNotice = { code: string; message: string };
 export type DataStreamDeployOptions = {
   allowProcessing: boolean;
+  /** The run's data space (default when absent): the file's c__dataSpace must list it. */
+  dataSpace?: string;
   verifyInput: () => Promise<void>;
   now?: () => number;
   wait?: (milliseconds: number) => Promise<unknown>;
@@ -891,6 +1003,22 @@ async function streamDloAbsent(identity: string, clients: DataStreamReadClients)
 }
 
 /**
+ * Refuse a stream file whose c__dataSpace list does not name the run's data space.
+ * @param {DataStreamDocument} document Stream file.
+ * @param {string} dataSpace The run's data space.
+ */
+export function requireRunSpace(
+  document: Pick<DataStreamDocument, 'c__dataSpace' | 'identity'>,
+  dataSpace: string,
+): void {
+  if (!document.c__dataSpace.includes(dataSpace))
+    throw explainInput(
+      new DataStreamError('STREAM_DATASPACE_MISMATCH'),
+      `The ${dataSpaceKey} list of ${printableKey(document.identity.apiName)} does not name the run's data space ${printableKey(dataSpace)}. Deploy it with --dataspace set to one of its data spaces.`,
+    );
+}
+
+/**
  * Every additive mapping's source label must name exactly one field of the event: Salesforce stores
  * an unknown label without checking it, as a mapping that never carries data (live, API 68).
  * @param {DataStreamMapping[]} additions Additive mappings of the file.
@@ -914,16 +1042,21 @@ function additiveSources(
 
 /**
  * Admit a create with independent name and binding absence; its additive mappings must name
- * source fields of the event.
+ * source fields of the event. The file must list the run's data space alone: the create puts
+ * the landing DLO into it.
  * @param {unknown} value Portable authored stream.
  * @param {DataStreamReadClients} clients Independent read boundaries.
+ * @param {string} [dataSpace] The run's data space.
  * @returns {Promise<DataStreamCreatePlan>} Private read-only create admission, never dispatch authority.
  */
 export async function preflightNativeDataStreamCreate(
   value: unknown,
   clients: DataStreamReadClients,
+  dataSpace = 'default',
 ): Promise<DataStreamCreatePlan> {
   const document = validateDataStreamDocument(value);
+  requireRunSpace(document, dataSpace);
+  if (document.c__dataSpace.length !== 1) throw createSpacesRefusal(document.c__dataSpace);
   buildDataStreamCreateBody(document);
   const binding = await resolveDataStreamBinding(
     {
@@ -985,12 +1118,13 @@ export async function createNativeDataStream(
   notices: DataStreamNotice[];
 }> {
   const document = validateDataStreamDocument(value);
+  const dataSpace = options.dataSpace ?? 'default';
   if (options.allowProcessing !== true)
     throw new DataStreamError('PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
   await options.verifyInput();
-  const plan = await preflightNativeDataStreamCreate(document, clients);
+  const plan = await preflightNativeDataStreamCreate(document, clients, dataSpace);
   await options.verifyInput();
-  const fresh = await preflightNativeDataStreamCreate(document, clients);
+  const fresh = await preflightNativeDataStreamCreate(document, clients, dataSpace);
   if (!sameStreamSnapshot(plan, fresh))
     throw explainMismatch(
       new DataStreamError('STREAM_BINDING_DRIFT'),
@@ -1022,7 +1156,6 @@ export async function createNativeDataStream(
       const binding = await resolveDataStreamBinding(
         {
           apiName: echo.name,
-          dataSpace: document.identity.dataSpace,
           connectionName: document.spec.connectionName,
           event: document.spec.event,
           primaryKey: document.spec.newDlo.primaryKey.name,
@@ -1048,12 +1181,7 @@ export async function createNativeDataStream(
           target,
           byId,
         );
-      const actual = await retrieveNativeDataStream(
-        echo.name,
-        clients,
-        document.identity.dataSpace,
-        true,
-      );
+      const actual = await retrieveNativeDataStream(echo.name, clients, dataSpace, true);
       if (
         actual.spec.newDlo.label !== document.spec.newDlo.label ||
         !isDeepStrictEqual(actual.spec.newDlo.primaryKey, document.spec.newDlo.primaryKey) ||
@@ -1077,9 +1205,7 @@ export async function createNativeDataStream(
         typeof dlo.id !== 'string' ||
         !recordId.test(dlo.id) ||
         dlo.category !== actual.spec.newDlo.category ||
-        !Array.isArray(dlo.dataSpaceInfo) ||
-        dlo.dataSpaceInfo.length !== 1 ||
-        object(dlo.dataSpaceInfo[0]).name !== 'default' ||
+        !sameSpaces(streamDloSpaces(dlo), document.c__dataSpace) ||
         !Array.isArray(dlo.fields) ||
         !isDeepStrictEqual(
           dlo.fields.map((value) => {
@@ -1101,7 +1227,7 @@ export async function createNativeDataStream(
           {
             name: actual.spec.newDlo.name,
             category: actual.spec.newDlo.category,
-            dataSpaceInfo: [{ name: 'default' }],
+            dataSpaceInfo: document.c__dataSpace.map((space) => ({ name: space })),
             fields: actual.observed?.dloFields,
             id: true,
           },
@@ -1219,9 +1345,7 @@ async function readUpdateStreamDlo(
     typeof dlo.id !== 'string' ||
     !recordId.test(dlo.id) ||
     dlo.category !== document.spec.newDlo.category ||
-    !Array.isArray(dlo.dataSpaceInfo) ||
-    dlo.dataSpaceInfo.length !== 1 ||
-    object(dlo.dataSpaceInfo[0]).name !== 'default' ||
+    !sameSpaces(streamDloSpaces(dlo), document.c__dataSpace) ||
     !Array.isArray(dlo.fields) ||
     !isDeepStrictEqual(
       dlo.fields.map((value) => {
@@ -1243,7 +1367,7 @@ async function readUpdateStreamDlo(
       {
         name: document.spec.newDlo.name,
         category: document.spec.newDlo.category,
-        dataSpaceInfo: [{ name: 'default' }],
+        dataSpaceInfo: document.c__dataSpace.map((space) => ({ name: space })),
         fields: document.observed?.dloFields,
         id: true,
       },
@@ -1274,15 +1398,20 @@ async function readUpdateStreamDlo(
  * Compare the file with the stream. Mapping changes are sent as the file holds them and Salesforce
  * decides (live, API 68, it refuses any change or removal of an existing mapping on an Ingestion
  * API stream); settings Salesforce answers with 200 but ignores are refused before any write.
+ * The file's c__dataSpace list must name the run's data space and equal the DLO's data spaces
+ * (check only: spaces change through the DLO file).
  * @param {unknown} value The stream file (desired state of its mappings).
  * @param {DataStreamReadClients} clients Independent binding, source and parent readers.
+ * @param {string} [dataSpace] The run's data space.
  * @returns {Promise<DataStreamUpdatePlan>} Private update/noop comparison without dispatch.
  */
 export async function preflightNativeDataStreamUpdate(
   value: unknown,
   clients: DataStreamReadClients,
+  dataSpace = 'default',
 ): Promise<DataStreamUpdatePlan> {
   const document = validateDataStreamDocument(value);
+  requireRunSpace(document, dataSpace);
   const binding = await resolveDataStreamBinding(
     {
       ...document.identity,
@@ -1293,7 +1422,9 @@ export async function preflightNativeDataStreamUpdate(
     clients,
   );
   if (!binding.target) throw new DataStreamError('STREAM_UPDATE_TARGET_ABSENT');
-  const target = await retrieveNativeDataStream(binding.target.name as string, clients);
+  const target = await retrieveNativeDataStream(binding.target.name as string, clients, dataSpace);
+  if (!sameSpaces(document.c__dataSpace, target.c__dataSpace))
+    throw spacesDiffer(document.identity.apiName, document.c__dataSpace, target.c__dataSpace);
   const confirmation = inspectNativeDataStream(
     await clients.streams.get(binding.target.recordId as string),
   );
@@ -1474,12 +1605,13 @@ export async function updateNativeDataStream(
   notices: DataStreamNotice[];
 }> {
   const document = validateDataStreamDocument(value);
+  const dataSpace = options.dataSpace ?? 'default';
   await options.verifyInput();
-  const plan = await preflightNativeDataStreamUpdate(document, clients);
+  const plan = await preflightNativeDataStreamUpdate(document, clients, dataSpace);
   if (plan.operation === 'update' && options.allowProcessing !== true)
     throw new DataStreamError('PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
   await options.verifyInput();
-  const fresh = await preflightNativeDataStreamUpdate(document, clients);
+  const fresh = await preflightNativeDataStreamUpdate(document, clients, dataSpace);
   if (!sameStreamSnapshot(plan, fresh))
     throw explainMismatch(
       new DataStreamError('STREAM_BINDING_DRIFT'),
@@ -1547,11 +1679,10 @@ export async function updateNativeDataStream(
     );
   for (let attempt = 0; attempt < 20 && now() < deadline; attempt++) {
     try {
-      const actual = await retrieveNativeDataStream(apiName, clients, 'default', true);
+      const actual = await retrieveNativeDataStream(apiName, clients, dataSpace, true);
       const binding = await resolveDataStreamBinding(
         {
           apiName,
-          dataSpace: 'default',
           connectionName: plan.document.spec.connectionName,
           event: plan.document.spec.event,
           primaryKey: plan.document.spec.newDlo.primaryKey.name,
@@ -1784,6 +1915,8 @@ export type DataStreamDeleteClients = DataStreamReadClients & {
 };
 export type DataStreamDeleteOptions = {
   deleteDlo: boolean;
+  /** The run's data space (default when absent): the stream's DLO must belong to it. */
+  dataSpace?: string;
   verifyInput: () => Promise<void>;
   survivorDloNames: readonly string[];
   /**
@@ -1909,6 +2042,21 @@ async function checkStreamDeleteDependents(
 }
 
 /**
+ * The refusal of a stream delete with --delete-dlo whose landing DLO belongs to other data spaces
+ * than the run's: deleting the DLO would remove it from all of them.
+ * @param {string} dloName Landing DLO.
+ * @param {string} apiName Stream name.
+ * @param {string} dataSpace The run's data space.
+ * @returns {DataStreamError} DLO_DELETE_OTHER_DATASPACES with an explanation.
+ */
+function otherSpacesRefusal(dloName: string, apiName: string, dataSpace: string): DataStreamError {
+  return explainInput(
+    new DataStreamError('DLO_DELETE_OTHER_DATASPACES'),
+    `The landing DLO ${dloName} of ${apiName} does not belong to the data space ${dataSpace} alone, and deleting it with the stream would remove it from every data space. Delete the stream without --delete-dlo, or take the DLO out of the other data spaces first.`,
+  );
+}
+
+/**
  * Plan the by-name delete of a stream the plugin cannot model, from its raw GET only.
  * @param {string} apiName Exact selected stream name.
  * @param {DataStreamReadClients} clients Native readers.
@@ -1921,8 +2069,12 @@ async function checkStreamDeleteDependents(
 async function preflightUnmodelledDataStreamDelete(
   apiName: string,
   clients: DataStreamReadClients,
-  options: Pick<DataStreamDeleteOptions, 'deleteDlo' | 'survivorDloNames' | 'covered'>,
+  options: Pick<
+    DataStreamDeleteOptions,
+    'deleteDlo' | 'survivorDloNames' | 'covered' | 'dataSpace'
+  >,
 ): Promise<UnmodelledDataStreamDeletePlan> {
+  const dataSpace = options.dataSpace ?? 'default';
   const raw = object(await clients.streams.get(apiName));
   if (raw.name !== apiName) throw new DataStreamError('STREAM_TARGET_MISMATCH');
   if (typeof raw.recordId !== 'string' || !recordId.test(raw.recordId))
@@ -1931,12 +2083,9 @@ async function preflightUnmodelledDataStreamDelete(
     raw.dataLakeObjectInfo && typeof raw.dataLakeObjectInfo === 'object'
       ? (raw.dataLakeObjectInfo as Json)
       : {};
-  // A data space the GET names must be the selected one (default); none named is the default.
-  const spaces = Array.isArray(info.dataSpaceInfo)
-    ? info.dataSpaceInfo.map((entry) => object(entry).name)
-    : [];
-  if (spaces.some((space) => space !== 'default'))
-    throw new DataStreamError('UNSUPPORTED_STREAM_DATASPACE');
+  // The stream's data spaces (from the GET, or from its DLO when the GET names none) must hold
+  // the run's.
+  await streamSpaces(raw, apiName, dataSpace, clients);
   if (raw.status !== 'ACTIVE') throw new DataStreamError('STREAM_NOT_READY');
   if (typeof info.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*__dll$/u.test(info.name))
     throw new DataStreamError('INVALID_STREAM_DLO');
@@ -1944,7 +2093,7 @@ async function preflightUnmodelledDataStreamDelete(
   if (options.survivorDloNames.length > 0)
     throw new DataStreamError('INVALID_STREAM_DELETE_SURVIVOR');
   // Deleting the landing DLO removes it from every data space it belongs to: it must belong to
-  // the run's data space (default for streams) alone, read from the DLO itself.
+  // the run's data space alone, read from the DLO itself.
   if (options.deleteDlo) {
     const wrapper = object(await clients.dlo.get(dloName));
     // A wrapped read must hold exactly the one DLO; another count says nothing about its spaces.
@@ -1956,12 +2105,8 @@ async function preflightUnmodelledDataStreamDelete(
     const memberships = Array.isArray(dlo.dataSpaceInfo)
       ? dlo.dataSpaceInfo.map((entry) => object(entry).name)
       : [];
-    if (memberships.length !== 1 || memberships[0] !== 'default') {
-      throw explainInput(
-        new DataStreamError('DLO_DELETE_OTHER_DATASPACES'),
-        `The landing DLO ${dloName} of ${apiName} does not belong to the default data space alone, and deleting it with the stream would remove it from every data space. Delete the stream without --delete-dlo, or take the DLO out of the other data spaces first.`,
-      );
-    }
+    if (memberships.length !== 1 || memberships[0] !== dataSpace)
+      throw otherSpacesRefusal(dloName, apiName, dataSpace);
   }
   const streamDependencies = streamDeleteDependencies(
     await clients.dependencies.stream(raw.recordId),
@@ -2001,13 +2146,17 @@ async function preflightUnmodelledDataStreamDelete(
 export async function preflightNativeDataStreamDelete(
   apiName: string,
   clients: DataStreamReadClients,
-  options: Pick<DataStreamDeleteOptions, 'deleteDlo' | 'survivorDloNames' | 'covered'>,
+  options: Pick<
+    DataStreamDeleteOptions,
+    'deleteDlo' | 'survivorDloNames' | 'covered' | 'dataSpace'
+  >,
 ): Promise<DataStreamDeletePlan | UnmodelledDataStreamDeletePlan> {
   if (!name.test(apiName) || typeof options.deleteDlo !== 'boolean')
     throw new DataStreamError('INVALID_STREAM_DELETE_SELECTION');
+  const dataSpace = options.dataSpace ?? 'default';
   let document: DataStreamDocument;
   try {
-    document = await retrieveNativeDataStream(apiName, clients);
+    document = await retrieveNativeDataStream(apiName, clients, dataSpace);
   } catch (error) {
     // A stream the plugin cannot model (another connector, settings it does not know) is
     // deleted by name from its raw GET. Read failures, absence and identity stay refusals.
@@ -2043,6 +2192,12 @@ export async function preflightNativeDataStreamDelete(
       confirmation ?? target,
     );
   const dlo = await readUpdateStreamDlo(document, clients);
+  // Deleting the landing DLO removes it from every data space it belongs to.
+  if (
+    options.deleteDlo &&
+    (document.c__dataSpace.length !== 1 || document.c__dataSpace[0] !== dataSpace)
+  )
+    throw otherSpacesRefusal(String(dlo.name), apiName, dataSpace);
   if (target.status !== 'ACTIVE' || dlo.status !== 'ACTIVE')
     throw new DataStreamError('STREAM_NOT_READY');
   const parentById = object(await clients.dlo.get(dlo.id as string));
@@ -2206,6 +2361,7 @@ export async function deleteNativeDataStream(
   const selection = Object.freeze({
     deleteDlo: options.deleteDlo,
     survivorDloNames: Object.freeze([...options.survivorDloNames]),
+    dataSpace: options.dataSpace ?? 'default',
   });
   await options.verifyInput();
   const plan = await preflightNativeDataStreamDelete(apiName, clients, selection);
