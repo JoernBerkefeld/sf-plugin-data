@@ -22,8 +22,8 @@ You need Salesforce CLI, Node.js `^22.22.2 || ^24.15.0` and npm. Until the packa
 published, install it from a checkout of this repository:
 
 ```sh
-npm ci --no-workspaces
-npm run build --no-workspaces
+npm ci
+npm run build
 sf plugins link .
 sf data360 --help
 ```
@@ -158,9 +158,9 @@ are left out, and deploy keeps them. The exact layout of each file is on its typ
 
 `sf data360 deploy --preview` and `sf data360 delete --preview` read the org and report, per
 component, what would happen: `create`, `update`, `unchanged`, `delete`, or `blocked` with the
-reason. They never write to the org and never change local files. A component whose parent is
-created by the same command reports `planned-dependencies`, because its target cannot be
-compared yet.
+reason. They never write to the org and never change local files. When a component needs another
+component that the same command creates first, the preview cannot compare it yet and reports
+`planned-dependencies` for it.
 
 ### Deploy
 
@@ -173,6 +173,9 @@ compared yet.
   It refuses a change before any write only where Salesforce would accept the request but not
   apply it, or where the change cannot be undone (for example removing fields); the type pages
   list these refusals.
+- **Size.** One deploy takes at most 256 components and 512 links between them. A larger
+  selection stops before any write with `DEPENDENCY_LIMIT_EXCEEDED`; split it into smaller
+  deploys and run them one after another.
 - **Unchanged components are not written.** Deploying the same file again reports `unchanged`.
   Values that differ only in letter case (`Text` and `text`) count as equal.
 - **Processing.** Creating or updating a data stream, segment, data graph or identity resolution
@@ -189,12 +192,12 @@ compared yet.
 ### Retrieve is lenient, deploy is strict
 
 - Retrieve never refuses a component because the org returns something the plugin does not
-  model. One failing component never stops the others.
-- A key the plugin does not know stays in the retrieved file. Deploy refuses such a file and
-  names the key.
-- A component the file format cannot represent is saved as Salesforce returned it, with a
-  warning. Such a file is skipped by a folder or Git deploy and refused when named
-  (`VERBATIM_NOT_DEPLOYABLE`), but you can still delete the component by name.
+  recognise. One failing component never stops the others.
+- A setting the plugin does not recognise stays in the retrieved file. Deploy refuses such a
+  file and names the setting.
+- A component the file format cannot hold is saved exactly as Salesforce returned it, with a
+  warning. Deploy skips such a file in a folder or Git deploy and refuses it when you name it
+  (error `VERBATIM_NOT_DEPLOYABLE`). You can still delete the component by name.
 
 ### Delete
 
@@ -223,6 +226,7 @@ accepted the deletion and is still finishing it. Pass `--keep-local-files` to ke
 - Only regular files inside the project's `data360` folder are removed, one at a time.
 - If a file cannot be removed, the org result stays as it is and the command exits with an
   error; remove that file by hand instead of repeating the delete.
+- A `--changed-since` delete removes no file: its files are already gone in Git.
 - A field delete (`--field`) removes no file; it refreshes the DMO and mapping files.
 
 The JSON fields and every case are in [Delete](docs/types/delete.md#local-files-after-delete).
@@ -256,10 +260,10 @@ upgrading. The other types accept `auto` or `68.0`. `--api-version latest` is no
 
 ## Data spaces
 
-Every command runs in one data space: pass the optional `--dataspace NAME`, or leave it out to
-work in `default`. `--data-space` is a compatibility alias. Neither spelling has a CLI default
-value of its own; the plugin uses `default`. A command never works on
-all data spaces at once, and an unknown data space stops it before any read or write.
+Every command runs in one data space, chosen with the optional `--dataspace NAME`;
+`--data-space` is a compatibility alias. Neither spelling has a CLI default of its own: leave
+both out and the command works in `default`. A command never works on all data spaces at once,
+and an unknown data space stops it before any read or write.
 
 - **The file names its data space.** Every file carries the top-level key `c__dataSpace`. Deploy
   and delete refuse a file of another data space than the run's, before any write.
@@ -269,9 +273,10 @@ all data spaces at once, and an unknown data space stops it before any read or w
   `--allow-dataspace-removal`. Delete refuses a DLO that also belongs to another data space.
 - **Data streams** belong to the data spaces of their landing DLO; change them through the DLO
   file.
-- **Names are what Salesforce stores.** Outside `default`, Salesforce gives some components the
-  data space's prefix (chosen when the data space was created; `ds2` in these examples): a standard DMO is a copy such as `ds2_Individual__dlm` (fields without `ssot__`), a
-  segment is stored as `ds2_<Name>`, and an identity resolution ruleset as
+- **Names are what Salesforce stores.** Every data space has a prefix, chosen when it was
+  created. Outside `default`, Salesforce puts that prefix in front of some names: in a data
+  space with the prefix `ds2`, a standard DMO is a copy such as `ds2_Individual__dlm` (fields
+  without `ssot__`), a segment is stored as `ds2_<Name>`, and an identity resolution ruleset as
   `ds2_<type>_<rulesetId>`. Files carry these names, and the plugin adds or removes no prefix.
 - **First mapping onto a standard DMO copy.** The copy exists only once something is mapped
   onto it in that data space. Deploy the mapping, not a DMO file, to create it; the plugin
@@ -288,8 +293,9 @@ The few things to know per type. Each type page has the full rules and error cod
 ### Data streams
 
 - Create the stream first: it creates its landing DLO. Then create the DMO, then the mapping.
-- Salesforce renames a new Ingestion API stream. Deploy reports the new name as
-  `targetApiName`; retrieve the stream under that name and keep that file.
+- Salesforce gives a new Ingestion API stream a name of its own. Deploy shows that name in its
+  result (`targetApiName` in JSON output); retrieve the stream under that name and keep that
+  file.
 - Ingestion API streams and Salesforce CRM streams are tested; other connectors are sent as
   written.
 - Delete keeps the landing DLO unless you add `--delete-dlo`, and is refused while something
@@ -383,7 +389,7 @@ The few things to know per type. Each type page has the full rules and error cod
 ## Local development
 
 ```sh
-npm ci --no-workspaces
+npm ci
 npm run build
 npm run lint
 npm test
@@ -391,7 +397,12 @@ node bin/run.js data360 --help
 ```
 
 `bin/run.js` runs the commands from the checkout without installing them into Salesforce CLI.
-The tests run offline and never contact an org.
+The tests run offline and never contact an org. `npm run smoke` runs the quick command and
+documentation checks; `npm run smoke:package` packs the plugin and checks the package in an
+isolated installation.
+
+To try an installed copy, use a separate Salesforce CLI profile rather than your everyday one:
+other plugins installed there may claim the same `data360` command names.
 
 ## More documentation
 

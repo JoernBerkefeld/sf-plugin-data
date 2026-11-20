@@ -62,7 +62,7 @@ Deploy reads the complete transform list and looks for the name in the file, ign
 An update replaces the whole transform: a field the file leaves out is reset by Salesforce (`fullRunFrequency` to `DAILY`, `writeMode` to `OVERWRITE`), so keep the retrieved file complete. A definition PUT keeps the schedule.
 
 - Salesforce stores a normalized form (upper-case values such as `WEEKLY`; a DCSQL definition without `version` and with empty `macros` and `sources`). Retrieve after deploying a hand-written file to keep the stored form.
-- Enum values (`type`, `fullRunFrequency`, an output's `category`, `type` and field `type`, `writeMode`) are sent as written and compared ignoring letter case, so `Daily` against a stored `DAILY` is `unchanged`. Any other difference from the stored form is sent again on each deploy.
+- Values chosen from a fixed list (`type`, `fullRunFrequency`, an output's `category`, `type` and field `type`, `writeMode`) are sent as written and compared ignoring letter case, so `Daily` against a stored `DAILY` is `unchanged`. Any other difference from the stored form is sent again on each deploy.
 - A transform of any owner is sent and Salesforce decides. It refuses writes to a system transform (an update with 400, a schedule PUT with 403, a create from its file with 400). A 4xx answer to the first write is reported as `failed` with mutation `rejected`: nothing was written.
 - Writes to packaged (namespaced) transforms are untested.
 - `--allow-processing` is not needed.

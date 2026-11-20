@@ -162,7 +162,7 @@ test('docs describe the native mapping lifecycle without obsolete XML-only or ba
   ])
     assert.ok(mapping.includes(required), `missing mapping contract: ${required}`);
   for (const file of currentDocuments) {
-    const text = readText(file);
+    const text = flatDocument(file);
     for (const obsolete of [
       'There is no public plugin Delete command',
       'An already-absent mapping is conservatively blocked without writes',
@@ -176,7 +176,7 @@ test('docs describe the native mapping lifecycle without obsolete XML-only or ba
       'This does not claim installed API61 CLI acceptance',
       'installed deletion acceptance remains separate',
       'mixed-family deployment remain blocked',
-      'The whole\nselection is preflighted before any executor call',
+      'The whole selection is preflighted before any executor call',
       'observed live at API 68 only',
       'Desired-state removal/retarget remains API68-only',
       'does not qualify installed Number removal',
