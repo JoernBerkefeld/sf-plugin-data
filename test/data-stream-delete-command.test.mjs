@@ -610,3 +610,36 @@ test('a stream is deleted in another data space, which reaches preview and delet
     });
   }
 });
+
+test('a --delete-dlo refusal for a DLO of other data spaces is named on the item and the command', async () => {
+  const refusal = {
+    code: 'DLO_DELETE_OTHER_DATASPACES',
+    message:
+      'The landing DLO Linked__dll of Selected does not belong to the data space default alone.',
+    retryable: false,
+  };
+  for (const preview of [false, true]) {
+    const fixture = invocation({ 'delete-dlo': true, preview });
+    fixture.command.executeDeleteDataStream = async () => ({
+      outcome: 'blocked',
+      mutation: 'not-attempted',
+      diagnostics: [refusal],
+    });
+    fixture.command.preflightDeleteDataStream = async () => {
+      throw new DataStreamError('DLO_DELETE_OTHER_DATASPACES');
+    };
+    const { result, code } = await run(fixture.command);
+    assert.equal(code, 1);
+    assert.equal(result.status, 'blocked');
+    const [item] = result.result.items;
+    assert.equal(item.family, 'data-stream');
+    assert.equal(item.outcome, 'blocked');
+    assert.equal(item.diagnostics[0].code, 'DLO_DELETE_OTHER_DATASPACES');
+    assert.equal(result.diagnostics.errors[0].code, 'DLO_DELETE_OTHER_DATASPACES');
+    if (preview) {
+      assert.match(item.diagnostics[0].message, /Preview stopped; nothing was deleted/u);
+    } else {
+      assert.equal(item.diagnostics[0].message, refusal.message);
+    }
+  }
+});

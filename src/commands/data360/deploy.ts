@@ -102,7 +102,7 @@ import {
   CalculatedInsightError,
   calculatedInsightSpaceMismatch,
 } from '../../artifacts/native-calculated-insight-document.js';
-import { requireRunSpace } from '../../services/native-data-stream.js';
+import { requireRunSpace, streamFailureCause } from '../../services/native-data-stream.js';
 import {
   IdentityResolutionError,
   identityResolutionSpaceMismatch,
@@ -2348,8 +2348,13 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               operation: 'execute',
               path: input.path,
             });
+            // The error behind the item, so the command's message carries its explanation too.
             if (result.outcome === 'blocked' || result.outcome === 'failed')
-              return stageResult(result.outcome, result.diagnostics[0]?.code);
+              return stageResult(
+                result.outcome,
+                result.diagnostics[0]?.code,
+                streamFailureCause(result),
+              );
           }
         }
         await verify();

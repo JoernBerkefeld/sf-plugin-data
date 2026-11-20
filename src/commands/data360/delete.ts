@@ -614,7 +614,7 @@ export type DeleteEnvelope = {
        * mapping of a DMO); no request is sent for this item, and it reports the owner's outcome.
        */
       removedWith?: string;
-      /** Preview: why the item is planned rather than checked. */
+      /** Why the item is planned rather than checked, or why a data stream delete was refused. */
       diagnostics?: Array<{ code: string; message: string }>;
       deleteDlo?: boolean;
       /** Field-level delete: the DMO fields named with --field. */
@@ -2337,10 +2337,26 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
           await verifyInput();
           const options = { deleteDlo, verifyInput, dataSpace: effectiveScope };
           if (flags.preview) {
-            const preview = await this.preflightDeleteDataStream(apiName, clients, {
-              ...options,
-              covered: plannedStreamDependent,
-            });
+            let preview: Awaited<ReturnType<typeof preflightDeleteDataStream>>;
+            try {
+              preview = await this.preflightDeleteDataStream(apiName, clients, {
+                ...options,
+                covered: plannedStreamDependent,
+              });
+            } catch (error) {
+              // A refused stream names its cause on its item too; the command reports it as well.
+              if (error instanceof DataStreamError)
+                item.diagnostics = [
+                  {
+                    code: error.code,
+                    message: operationDiagnostic(
+                      error,
+                      'Preview stopped; nothing was deleted. Correct the reported check before another attempt.',
+                    ),
+                  },
+                ];
+              throw error;
+            }
             await verifyInput();
             item.outcome = preview.outcome;
             if ('plannedDependencies' in preview && preview.plannedDependencies)
@@ -2370,6 +2386,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             // Already gone (a rerun after it was deleted): nothing to delete.
             if (result.outcome === 'unchanged') continue;
             if (result.outcome !== 'deleted') {
+              // The refusal is reported on the stream's item as well as on the command.
+              item.diagnostics = result.diagnostics.map(({ code, message }) => ({ code, message }));
               envelope.diagnostics.errors.push(...result.diagnostics);
               return result.outcome;
             }

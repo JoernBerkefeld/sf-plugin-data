@@ -691,3 +691,24 @@ test('a stream file without the run data space is refused before the org is open
   assert.ok(!calls.includes('auth'));
   assert.ok(!calls.includes('execute'));
 });
+
+test('a stream refused by the real executor names the specific cause on the command too', async () => {
+  const fixture = lifecycle();
+  const { command, input } = invocation();
+  // A new stream listing two data spaces: refused before any write (STREAM_DATASPACE_MISMATCH).
+  input.document.c__dataSpace = ['default', 'dataspace2'];
+  command.createDataStreamClients = () => fixture.clients;
+  command.executeDataStream = executeDataStream;
+  const { result, code } = await run(command);
+  assert.equal(code, 1);
+  assert.equal(result.status, 'blocked');
+  assert.equal(fixture.counts(), 0);
+  const [item] = result.result.items;
+  assert.equal(item.mutation, 'not-attempted');
+  assert.equal(item.diagnostics[0].code, 'STREAM_DATASPACE_MISMATCH');
+  const [error] = result.diagnostics.errors;
+  assert.equal(error.code, 'STREAM_DATASPACE_MISMATCH');
+  assert.match(error.message, /lists the data spaces default, dataspace2/u);
+  assert.match(error.message, /refused before any write; nothing was sent to the org/u);
+  assert.doesNotMatch(error.message, /Read the item diagnostics/u);
+});

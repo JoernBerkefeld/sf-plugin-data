@@ -1002,6 +1002,29 @@ async function streamDloAbsent(identity: string, clients: DataStreamReadClients)
   return false;
 }
 
+const failureCauses = new WeakMap<object, unknown>();
+
+/**
+ * Keep the error behind a failed stream deploy result, so the command can report its explanation.
+ * @template {object} T
+ * @param {T} result The item result built from the error.
+ * @param {unknown} error The caught error.
+ * @returns {T} The same result.
+ */
+export function retainStreamFailure<T extends object>(result: T, error: unknown): T {
+  failureCauses.set(result, error);
+  return result;
+}
+
+/**
+ * The error behind a failed stream deploy result, when the executor kept it.
+ * @param {object} result Item result.
+ * @returns {unknown} The caught error, or undefined.
+ */
+export function streamFailureCause(result: object): unknown {
+  return failureCauses.get(result);
+}
+
 /**
  * Refuse a stream file whose c__dataSpace list does not name the run's data space.
  * @param {DataStreamDocument} document Stream file.

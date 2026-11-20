@@ -16,6 +16,7 @@ import {
   deleteNativeDataStream,
   isStreamNotFound,
   requireRunSpace,
+  retainStreamFailure,
 } from './native-data-stream.js';
 import type {
   DataStreamDeployClients,
@@ -296,23 +297,26 @@ export async function executeDataStream(
     };
   } catch (error) {
     const { outcome, mutation } = ledger.failure(error);
-    return {
-      family: 'data-stream' as const,
-      outcome,
-      mutation,
-      diagnostics: [
-        {
-          code: error instanceof DataStreamError ? error.code : 'DATA_STREAM_REQUEST_UNCONFIRMED',
-          message: operationDiagnostic(
-            error,
-            mutation === 'rejected'
-              ? rejectedNextAction
-              : mutation === 'unknown'
-                ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
-                : 'No write attempted; correct the reported check before another attempt.',
-          ),
-        },
-      ],
-    };
+    return retainStreamFailure(
+      {
+        family: 'data-stream' as const,
+        outcome,
+        mutation,
+        diagnostics: [
+          {
+            code: error instanceof DataStreamError ? error.code : 'DATA_STREAM_REQUEST_UNCONFIRMED',
+            message: operationDiagnostic(
+              error,
+              mutation === 'rejected'
+                ? rejectedNextAction
+                : mutation === 'unknown'
+                  ? 'Write outcome is unknown; inspect target before another attempt. No automatic retry.'
+                  : 'No write attempted; correct the reported check before another attempt.',
+            ),
+          },
+        ],
+      },
+      error,
+    );
   }
 }
