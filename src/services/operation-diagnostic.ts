@@ -234,6 +234,7 @@ export function hintOf(error: unknown): { hint?: string } {
  * @param {string} apiName The file's validated component name.
  * @param {string} fileSpace The data space the file names in c__dataSpace.
  * @param {string} runSpace The run's data space.
+ * @param {boolean} [crossSpace] A deploy of a kind --allow-cross-dataspace can translate: say so.
  * @returns {T} The same error with the explanation.
  */
 export function explainSpaceMismatch<T extends Error>(
@@ -241,11 +242,21 @@ export function explainSpaceMismatch<T extends Error>(
   apiName: string,
   fileSpace: string,
   runSpace: string,
+  crossSpace = false,
 ): T {
   return explainInput(
     error,
-    `${apiName} names the data space ${printableKey(fileSpace)} in c__dataSpace, but the run's data space is ${printableKey(runSpace)} (--dataspace, default "default"). Run the command with --dataspace ${printableKey(fileSpace)}, or correct the file.`,
+    `${apiName} names the data space ${printableKey(fileSpace)} in c__dataSpace, but the run's data space is ${printableKey(runSpace)} (--dataspace, default "default"). Run the command with --dataspace ${printableKey(fileSpace)}, or correct the file.${crossSpace ? crossSpaceSentence(runSpace) : ''}`,
   );
+}
+
+/**
+ * The sentence a deploy refusal adds for a file --allow-cross-dataspace can translate.
+ * @param {string} runSpace The run's data space.
+ * @returns {string} The sentence, with a leading space.
+ */
+export function crossSpaceSentence(runSpace: string): string {
+  return ` To deploy it into ${printableKey(runSpace)} instead, add --allow-cross-dataspace (-c).`;
 }
 
 /**

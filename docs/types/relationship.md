@@ -153,6 +153,11 @@ org. Deploy and delete refuse a file of another data space
 (`UNSUPPORTED_RELATIONSHIP_DATASPACE`); the message names both data spaces. See
 [Data spaces](../../README.md#data-spaces).
 
+Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a
+relationship file of another data space. Both DMOs and their fields are renamed by rule; a CRM
+object on the target side keeps its name. After the deploy the translated file is written under
+the name Salesforce gave the relationship. See [Deploy from another data space](../../README.md#deploy-from-another-data-space-only-if-you-have-more-than-one-data-space).
+
 ## Error codes you act on
 
 | Code                                                                                                     | What to do                                                    |

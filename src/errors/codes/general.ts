@@ -6,6 +6,12 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce rejected the session or the org could not be loaded. Check the org with sf org display, log in again with sf org login web if needed, then rerun.',
   BLOCKED_GIT_LIFECYCLE:
     'The Git changes include a rename (also one split across commit, index and worktree), a conflict or a deleted file the plugin cannot identify. Stage renames so Git can detect them, or select the files with --source-dir or -m.',
+  CROSS_DATASPACE_COPY_CONFLICT:
+    'The translated copy of a file would go to a path that already holds other content. Existing files are never changed, so nothing was sent. Move or remove that file, then rerun.',
+  CROSS_DATASPACE_UNRESOLVED:
+    "A name in a file of another data space cannot be placed in the run's data space by rule, so nothing was sent. Read which name and why, change the selection or the file, then rerun.",
+  CROSS_DATASPACE_UNSUPPORTED:
+    '--allow-cross-dataspace cannot translate this kind of file yet (graphs, identity resolution, transforms, insights, SQL segments, streams). Nothing was sent. Deploy those in their own data space.',
   DATASPACE_READ_FAILED:
     'The list of data spaces could not be read completely from the org, so nothing was read or written. Check the org session and Data Cloud access, then rerun.',
   DELETE_FAILED:

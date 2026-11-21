@@ -266,7 +266,8 @@ both out and the command works in `default`. A command never works on all data s
 and an unknown data space stops it before any read or write.
 
 - **The file names its data space.** Every file carries the top-level key `c__dataSpace`. Deploy
-  and delete refuse a file of another data space than the run's, before any write.
+  and delete refuse a file of another data space than the run's, before any write. Deploy can
+  translate some of them with `--allow-cross-dataspace` (below).
 - **DLOs follow the run's data space** and can belong to several data spaces. Their file lists
   all of them in `c__dataSpace`. Deploy adds the DLO to the listed data spaces it is not in yet.
   It removes the DLO from a data space the file no longer lists only with
@@ -309,6 +310,44 @@ What the plugin does:
 - Only what you make yourself is checked. Standard DMOs and their copies, objects Salesforce
   generates and packaged components are not.
 - With only the `default` data space nothing is checked and nothing extra is read.
+
+### Deploy from another data space (only if you have more than one data space)
+
+`sf data360 deploy --dataspace <target> --allow-cross-dataspace` (short `-c`) deploys files of
+another data space into `<target>`. Each file's `c__dataSpace` says where it comes from. Without
+the flag such a file is refused, and the message names the flag.
+
+```bash
+# See every rename first; nothing is written
+sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.dmo-meta.json -d data360/segments/Audience.segment.json --preview
+# Then deploy
+sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.dmo-meta.json -d data360/segments/Audience.segment.json --allow-processing
+```
+
+- **What is translated:** DMOs, mappings, relationships, UI and Waterfall segments. A DLO is
+  added to the target data space; nothing in it is renamed.
+- **How names change:** by fixed rules, with the prefixes from the org's list of data spaces.
+  - Custom DMOs and segments get, lose or swap the prefix: `Order__dlm` becomes
+    `ds2_Order__dlm`, `Audience` becomes `ds2_Audience`.
+  - A standard DMO becomes its copy and its fields lose `ssot__`: `ssot__Individual__dlm`
+    becomes `ds2_Individual__dlm`, `ssot__FirstName__c` becomes `FirstName__c`.
+  - Identity resolution outputs: `UnifiedssotIndividual<Id>__dlm` becomes
+    `ds2_UnifiedIndividual<Id>__dlm`.
+  - A mapping keeps its DLO side; it is found by its DLO and DMO, as always.
+- **Nothing is guessed.** A name no rule places exactly is listed, and the whole deploy is
+  refused before any write (`CROSS_DATASPACE_UNRESOLVED`). For example, `ds2_Order__dlm`
+  towards `default` can be a standard copy or a custom DMO: select its retrieved DMO file too.
+- **Not translated yet:** data graphs, identity resolution, data transforms, calculated
+  insights, SQL segments and data streams. Under the flag they are refused before any write
+  (`CROSS_DATASPACE_UNSUPPORTED`).
+- **`--preview`** lists every rename (file, place in the file, old and new name, rule) and the
+  copy files it would write. It writes nothing.
+- **Copy files:** after an item has deployed, deploy writes its translated file under the new
+  name, for example `data360/dmo/ds2_Order__dlm.dmo-meta.json`. Your original files never change.
+  - A copy goes only to a new path. An existing file with the same content is reused; one with
+    other content stops the deploy before any write (`CROSS_DATASPACE_COPY_CONFLICT`).
+  - A mapping or relationship copy takes the name Salesforce gave it.
+  - A DLO gets no copy file; the output shows its new data space.
 
 Each type page has a "Data spaces" section with its own rules. The
 [Data spaces guide on sfmc.guide](https://sfmc.guide/next/data-spaces/) explains the concept and

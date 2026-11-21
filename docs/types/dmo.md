@@ -327,6 +327,12 @@ sfmc.guide [Data Spaces page](https://sfmc.guide/next/data-spaces/).
   ([`DMO_PREFIX_MISMATCH`](../errors/dmo/DMO_PREFIX_MISMATCH.md)); for an existing one deploy
   and retrieve only warn. Standard DMOs, their copies and generated or namespaced DMOs are not
   checked. See [Name prefixes](../../README.md#name-prefixes-only-if-you-have-more-than-one-data-space).
+- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a DMO
+  file of another data space. A custom DMO gets the target prefix (`Order__dlm` becomes
+  `ds2_Order__dlm`); a standard DMO becomes its copy and its fields lose `ssot__`. Towards
+  `default`, a `ds2_<Name>__dlm` name is placed only when the file shows a custom DMO (fields
+  with creationType `Custom`). After the deploy the translated file is written under the new
+  name. See [Deploy from another data space](../../README.md#deploy-from-another-data-space-only-if-you-have-more-than-one-data-space).
 
 ## Order in a batch
 

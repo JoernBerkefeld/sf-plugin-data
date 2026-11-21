@@ -308,7 +308,7 @@ export async function verifyDataStreamInputDigest(input: DataStreamDeployInput):
     const current = await readDataStreamInput(input.path);
     if (
       current.inputDigest !== input.inputDigest ||
-      JSON.stringify(current.document) !== JSON.stringify(input.document)
+      JSON.stringify(current.document) !== JSON.stringify(authoredDocument(input))
     )
       refuse();
   } catch {
@@ -363,7 +363,7 @@ export async function verifyNativeDataGraphInputDigest(
   const fresh = await readNativeDataGraphInput(input.path);
   if (
     fresh.inputDigest !== input.inputDigest ||
-    JSON.stringify(fresh.document) !== JSON.stringify(input.document)
+    JSON.stringify(fresh.document) !== JSON.stringify(authoredDocument(input))
   )
     refuse();
 }
@@ -425,7 +425,7 @@ export async function verifyDataTransformInputDigest(
     const current = await readDataTransformInput(input.path);
     if (
       current.inputDigest !== input.inputDigest ||
-      JSON.stringify(current.document) !== JSON.stringify(input.document)
+      JSON.stringify(current.document) !== JSON.stringify(authoredDocument(input))
     )
       refuse();
   } catch {
@@ -475,6 +475,43 @@ export async function readRelationshipInput(file: string): Promise<RelationshipD
     document,
     inputDigest: createHash('sha256').update(bytes).digest('hex'),
   });
+}
+
+// The file's own content of an input whose document a cross-data-space deploy translated in
+// memory: every re-check of the file's bytes compares against this, never the translation.
+const authoredDocuments = new WeakMap<object, unknown>();
+
+/**
+ * The document the file holds: for an input translated into another data space, the original.
+ * @param {{document: unknown}} input Admitted input.
+ * @param {unknown} input.document Its document, translated or as read.
+ * @returns {unknown} The file's document.
+ */
+export function authoredDocument(input: { document: unknown }): unknown {
+  return authoredDocuments.has(input) ? authoredDocuments.get(input) : input.document;
+}
+
+/**
+ * A frozen copy of an admitted input that carries a translated document; its file checks still
+ * compare against the document the file holds.
+ * @param {T} input Admitted input.
+ * @param {unknown} document Translated document.
+ * @returns {T} The translated input.
+ * @template T
+ */
+export function translatedDeployInput<T extends { document: unknown }>(
+  input: T,
+  document: unknown,
+): T {
+  const freeze = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || Object.isFrozen(value)) return;
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  };
+  freeze(document);
+  const translated = Object.freeze({ ...input, document });
+  authoredDocuments.set(translated, authoredDocument(input));
+  return translated;
 }
 
 export type DeployInput =
@@ -538,7 +575,7 @@ export async function verifyDloInputDigest(input: DloDeployInput): Promise<void>
     const current = await readDloInput(input.path);
     if (
       current.inputDigest !== input.inputDigest ||
-      JSON.stringify(current.document) !== JSON.stringify(input.document)
+      JSON.stringify(current.document) !== JSON.stringify(authoredDocument(input))
     )
       refuse();
   } catch {
@@ -608,7 +645,7 @@ export async function verifyIdentityResolutionInputDigest(
     const current = await readIdentityResolutionInput(input.path);
     if (
       current.inputDigest !== input.inputDigest ||
-      JSON.stringify(current.document) !== JSON.stringify(input.document)
+      JSON.stringify(current.document) !== JSON.stringify(authoredDocument(input))
     )
       refuse();
   } catch {
@@ -967,7 +1004,7 @@ export async function verifyCalculatedInsightInputDigest(
       current.companionPath !== input.companionPath ||
       current.inputDigest !== input.inputDigest ||
       JSON.stringify(current.native) !== JSON.stringify(input.native) ||
-      JSON.stringify(current.document) !== JSON.stringify(input.document)
+      JSON.stringify(current.document) !== JSON.stringify(authoredDocument(input))
     )
       refuse();
   } catch {
@@ -986,7 +1023,7 @@ export async function verifySegmentInputDigest(input: SegmentDeployInput): Promi
     if (
       JSON.stringify(current.codePaths) !== JSON.stringify(input.codePaths) ||
       current.inputDigest !== input.inputDigest ||
-      JSON.stringify(current.document) !== JSON.stringify(input.document)
+      JSON.stringify(current.document) !== JSON.stringify(authoredDocument(input))
     )
       refuse();
   } catch {
@@ -1016,7 +1053,7 @@ export async function captureDeployInputDigest(input: DeployInput): Promise<stri
     const current = await readMappingInput(input.path);
     if (
       current.inputDigest !== (input as MappingDeployInput).inputDigest ||
-      JSON.stringify(current.document) !== JSON.stringify(input.document)
+      JSON.stringify(current.document) !== JSON.stringify(authoredDocument(input))
     )
       refuse();
     return current.inputDigest;
@@ -1025,7 +1062,7 @@ export async function captureDeployInputDigest(input: DeployInput): Promise<stri
     const current = await readRelationshipInput(input.path);
     if (
       current.inputDigest !== (input as RelationshipDeployInput).inputDigest ||
-      JSON.stringify(current.document) !== JSON.stringify(input.document)
+      JSON.stringify(current.document) !== JSON.stringify(authoredDocument(input))
     )
       refuse();
     return current.inputDigest;
@@ -1034,7 +1071,7 @@ export async function captureDeployInputDigest(input: DeployInput): Promise<stri
     const current = await readNativeDmoInput(input.path);
     if (
       current.inputDigest !== input.inputDigest ||
-      JSON.stringify(current.document) !== JSON.stringify(input.document)
+      JSON.stringify(current.document) !== JSON.stringify(authoredDocument(input))
     )
       refuse();
     return current.inputDigest;

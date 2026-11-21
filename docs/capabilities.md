@@ -476,6 +476,31 @@ not created by a mapping file either (only the `ssot__` spelling is). Proven liv
 `data360:plugin-dataspace-prefix-rule-acceptance-api68`); transforms and graphs are covered by
 unit tests only.
 
+Cross-data-space deploy (2026-11-21, `--allow-cross-dataspace` / `-c`): a selected file whose
+`c__dataSpace` is not the run's is translated in memory before any other check, with the
+prefixes of the same one `GET /ssot/data-spaces` (read early only when such a file is selected).
+Rule renames only: the data space prefix on, off or swapped (custom DMOs, segments, Waterfall
+children), standard DMO `ssot__<Name>__dlm` and its copy `<prefix>_<Name>__dlm` with fields
+`ssot__X__c` and `X__c` (`KQ_` fields keep their names), identity resolution outputs
+`Unifiedssot<Entity><Id>__dlm` and `<prefix>_Unified<Entity><Id>__dlm` (also `UnifiedLink`; towards
+`default` the unified fields get `ssot__` back except `UnifiedRecordId__c` and
+`SourceRecordId__c`). Translated: DMO (name, fields), mapping (target DMO and target fields; the
+DLO side stays, the mapping is found by its binding), relationship (both sides; a CRM target
+stays), DLO (the run's data space added to its list), UI segment (name, `segmentOn`, every
+`objectApiName` and `fieldApiName` of the criteria; compared values stay) and Waterfall segment
+(name, `segmentOn`, children). A name no rule places exactly (towards `default` a
+`<prefix>_<Name>__dlm` without a selected custom DMO file, packaged DMOs, unified outputs without
+the `ssot` spelling, a foreign prefix, a data space without a prefix) is
+`CROSS_DATASPACE_UNRESOLVED`; graphs, identity resolution, transforms, calculated insights, SQL
+and other segment types and data streams are `CROSS_DATASPACE_UNSUPPORTED`; both before any
+write. Every later file check compares against the file's own bytes and document, never the
+translation. After the stages, every translated item that deployed gets a copy file written
+like retrieve writes it, only to a new path: DMO and segment copy paths are checked before the
+first write (identical content reused, other content `CROSS_DATASPACE_COPY_CONFLICT`); a
+mapping or relationship copy takes the name Salesforce holds it under and is left alone when a
+differing file exists there; a DLO gets none. `--preview` reports every rewrite and the planned
+copy files and writes nothing. Proven live through the plugin on API 68, default to `dataspace2` in one run: a custom DMO (created under its `ds2_` name), its DLO (membership added), its mapping (copy file under the name Salesforce returned) and a UI segment on it; the copy files redeploy unchanged, the default originals stay unchanged, a repeat reuses the identical copies, and the reverse preview places the `ds2_` files back (DB entry `data360:plugin-cross-dataspace-deploy-2a-api68`). Graph and other refused kinds are covered by unit tests only.
+
 Native DLO retrieve and delete read one exact `__dll` detail at API 68 (or an explicit
 numeric pin of 61 and up) through the guarded GET transport without refresh, retry or
 redirects. Stream/connector bindings, lineage and generated replay remain unqualified.

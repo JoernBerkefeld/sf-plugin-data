@@ -361,6 +361,7 @@ export async function preflightNativeDmo(
       apiName,
       desired.c__dataSpace,
       requestScope,
+      true,
     );
   const extras = Object.fromEntries(
     Object.entries(desired.spec).filter(([key]) => !handledSpecKeys.has(key)),

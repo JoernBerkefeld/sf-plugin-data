@@ -98,6 +98,21 @@ import {
   prefixRuleCoversRead,
 } from '../../services/data-space-prefix.js';
 import type { PrefixType } from '../../services/data-space-prefix.js';
+import path from 'node:path';
+import {
+  CrossSpaceError,
+  crossSpaceRefusal,
+  crossSpaceSource,
+  fileDataSpaces,
+  planCrossSpaceInputs,
+  precheckCopyFiles,
+  writeCopyFile,
+} from '../../services/cross-dataspace-deploy.js';
+import type {
+  CopyOutcome,
+  CrossSpaceFile,
+  CrossSpacePlan,
+} from '../../services/cross-dataspace-deploy.js';
 import { verifyDloInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { DloDeployInput } from '../../artifacts/read-deploy-input.js';
 import {
@@ -324,6 +339,16 @@ export type DeployEnvelope = {
   };
   result: {
     scope: { dataSpace: string };
+    /**
+     * With --allow-cross-dataspace: every file of another data space translated into the run's
+     * one (each rewrite and each name that cannot be placed), the copy files planned before any
+     * write, and after the deploy what happened to each copy file.
+     */
+    crossDataSpace?: {
+      files: CrossSpaceFile[];
+      plannedCopies: string[];
+      copies?: CopyOutcome[];
+    };
     selection: {
       sourceDir: string[];
       metadata: string[];
@@ -431,7 +456,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     dataspace: Flags.string({
       aliases: ['data-space'],
       summary:
-        'The run data space; omitted means default, and the org must have it. --data-space is a compatibility alias. A DLO or data stream file must list it in c__dataSpace; every other file must name it in c__dataSpace.',
+        'The run data space; omitted means default, and the org must have it. --data-space is a compatibility alias. A DLO or data stream file must list it in c__dataSpace; every other file must name it in c__dataSpace (or use --allow-cross-dataspace).',
     }),
     'source-dir': Flags.string({
       char: 'd',
@@ -462,6 +487,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       default: false,
       summary:
         'Native DMO only: remove custom target fields missing from the file with a Metadata API destructive change. A mapped field needs every mapping holding its pair, without the pair, in the same selection; Salesforce drops the pair together with the field. The primary key and standard, system or generated fields missing from the file are kept, never removed (retrieve leaves generated fields out); sf data360 delete --field removes those.',
+    }),
+    'allow-cross-dataspace': Flags.boolean({
+      char: 'c',
+      default: false,
+      summary:
+        'Only with more than one data space: deploy files of another data space into --dataspace. DMO, mapping, relationship, DLO (membership only), UI and Waterfall segment files are translated in memory by rule (prefix, ssot__); each translated file gets a copy file under its new name after it deployed. Other kinds and any name that cannot be placed exactly are refused before any write. With --preview it lists every rewrite.',
     }),
     'allow-dataspace-removal': Flags.boolean({
       default: false,
@@ -804,6 +835,27 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       return prefix === undefined ? {} : { dataSpacePrefix: prefix };
     };
     const cwd = process.cwd();
+    /**
+     * A file path as the output shows it: relative to the working directory.
+     * @param {string} file Absolute path.
+     * @returns {string} Shown path.
+     */
+    const shown = (file: string): string => path.relative(cwd, file) || file;
+    // Opens the shared bound sender for the run's one data space list read.
+    const openSpaceSender = async (): Promise<BoundSsot> => {
+      const checkOrg =
+        passedOrg && typeof passedOrg === 'object'
+          ? (passedOrg as Pick<Org, 'getUsername'>)
+          : flags['target-org'] === undefined && !this.resolveTargetOrg
+            ? undefined
+            : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
+      const checkTarget = checkOrg?.getUsername();
+      if (!checkTarget) throw new DataSpaceError('TARGET_ORG_REQUIRED');
+      return this.ssotSender(checkTarget, '68.0');
+    };
+    let crossPlan: CrossSpacePlan | undefined;
+    // The name Salesforce holds for each mapping (also an unchanged one), for its copy file.
+    const mappingTargetNames = new Map<string, string>();
     const plugin = {
       name: packageMetadata.name,
       version: packageMetadata.version,
@@ -907,6 +959,25 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         );
         // The default data space goes without saying; any other is named.
         if (effectiveScope !== 'default') this.log(`Data space: ${effectiveScope}.`);
+        const crossDataSpace = envelope.result.crossDataSpace;
+        for (const translated of crossDataSpace?.files ?? []) {
+          this.log(
+            `Translated from ${translated.from}: ${shown(translated.path)} (${translated.family}).`,
+          );
+          for (const rewrite of translated.rewrites)
+            this.log(`  ${rewrite.at}: ${rewrite.from} -> ${rewrite.to} (${rewrite.rule}).`);
+          for (const entry of translated.unresolved)
+            this.log(`  Cannot place ${entry.at}: ${entry.name} (${entry.reason}).`);
+        }
+        if (flags.preview)
+          for (const copy of crossDataSpace?.plannedCopies ?? [])
+            this.log(`Planned copy file: ${shown(copy)}.`);
+        for (const copy of crossDataSpace?.copies ?? [])
+          this.log(
+            copy.outcome === 'not-written'
+              ? `Copy file not written for ${shown(copy.source)}: ${copy.reason}.`
+              : `Copy file ${copy.outcome === 'written' ? 'written' : 'unchanged (same content)'}: ${shown(copy.path!)}.`,
+          );
         for (const deletion of envelope.result.selection.deletions ?? [])
           this.log(
             `Not deleted: ${deletion.family}:${deletion.apiName} (file deleted in the Git range; deploy never deletes; delete it with sf data360 delete --changed-since ${envelope.result.selection.changedSince ?? '<ref>'} --confirm-delete after a --preview).`,
@@ -1054,11 +1125,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         gitSegments = selected.segments;
         gitIdentityResolutions = selected.identityResolutions;
       }
-      const resolvedInputs = await this.resolveInputs({
+      const authoredInputs = await this.resolveInputs({
         cwd,
         sourceDir: sourceDirectories,
         metadata: flags.metadata,
       });
+      let resolvedInputs = authoredInputs;
       // Verbatim files (retrieved as-is) in a selected folder were skipped with a warning.
       const skipped = skippedVerbatimWarnings(resolvedInputs);
       envelope.diagnostics.warnings.push(...skipped);
@@ -1076,6 +1148,50 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             )
           )
             throw new GitSelectionError('INVALID_GIT_SELECTION');
+      }
+      // --allow-cross-dataspace: files of another data space are translated into the run's one, in
+      // memory, before any other check. Only then is the space list read early (the same single
+      // read the data space check below reuses); a selection of the run's data space reads nothing.
+      if (
+        flags['allow-cross-dataspace'] === true &&
+        authoredInputs.some(
+          (input) =>
+            crossSpaceSource(
+              input.document as unknown as Record<string, unknown>,
+              effectiveScope,
+            ) !== undefined,
+        )
+      ) {
+        let plan: CrossSpacePlan;
+        try {
+          const check = dataSpaceCheckOf(this, openSpaceSender);
+          await check.require([
+            effectiveScope,
+            ...authoredInputs.flatMap((input) =>
+              fileDataSpaces(input.document as unknown as Record<string, unknown>),
+            ),
+          ]);
+          plan = planCrossSpaceInputs(authoredInputs, effectiveScope, await check.entries());
+        } catch (error) {
+          return finish('blocked', dataSpaceCheckCode(error, 'TARGET_ORG_REQUIRED'), error);
+        }
+        crossPlan = plan;
+        envelope.result.crossDataSpace = { files: plan.files, plannedCopies: [] };
+        const refusal = crossSpaceRefusal(plan, effectiveScope, shown);
+        if (refusal) return finish('blocked', refusal.code, refusal);
+        try {
+          envelope.result.crossDataSpace.plannedCopies = await precheckCopyFiles(
+            plan.inputs.filter((input) => plan.files.some((entry) => entry.path === input.path)),
+            shown,
+          );
+        } catch (error) {
+          return finish(
+            'blocked',
+            error instanceof CrossSpaceError ? error.code : 'OUTPUT_FAILED',
+            error,
+          );
+        }
+        resolvedInputs = plan.inputs;
       }
       if (
         flags.async &&
@@ -1415,6 +1531,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     (changes) => mappingChanges.set(input.path, changes),
                     effectiveScope,
                     (apiName) => mappingNames.set(input.path, apiName),
+                    (apiName) => mappingTargetNames.set(input.path, apiName),
                   )
                 : kind === 'dlo'
                   ? await (this.executeDlo ?? executeDloDeploy)(
@@ -2845,17 +2962,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       // The run's data space and every data space a selected file names must exist in the org:
       // one read per run, before the first stage reads or writes anything (preview too).
       try {
-        await dataSpaceCheckOf(this, async () => {
-          const checkOrg =
-            passedOrg && typeof passedOrg === 'object'
-              ? (passedOrg as Pick<Org, 'getUsername'>)
-              : flags['target-org'] === undefined && !this.resolveTargetOrg
-                ? undefined
-                : await (this.resolveTargetOrg ?? resolveTargetOrg)(flags['target-org']);
-          const checkTarget = checkOrg?.getUsername();
-          if (!checkTarget) throw new DataSpaceError('TARGET_ORG_REQUIRED');
-          return this.ssotSender(checkTarget, '68.0');
-        }).require([
+        await dataSpaceCheckOf(this, openSpaceSender).require([
           effectiveScope,
           ...resolvedInputs.flatMap((input) => {
             const named = (input.document as { c__dataSpace?: unknown }).c__dataSpace;
@@ -2897,6 +3004,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 apiName,
                 input.document.c__dataSpace,
                 effectiveScope,
+                true,
               );
             // Without the prefix the stored name cannot be checked: refused, never guessed.
             if (effectiveScope !== 'default' && prefix === undefined)
@@ -3103,6 +3211,32 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   : runBatchStage(stage.inputs as typeof legacyInputs, planned),
         { continueAfterBlocked: flags.preview },
       );
+      // Each translated item that deployed gets its copy file, only now and only to a new path.
+      if (crossPlan && envelope.result.crossDataSpace && !flags.preview) {
+        const copies: CopyOutcome[] = [];
+        for (const input of crossPlan.inputs) {
+          if (!crossPlan.files.some((entry) => entry.path === input.path)) continue;
+          const item = envelope.result.items.find(
+            (entry) => entry.path === input.path && entry.operation === 'execute',
+          ) as { outcome?: string; mutation?: string; targetApiName?: string } | undefined;
+          if (
+            !item ||
+            !['created', 'updated', 'unchanged'].includes(String(item.outcome)) ||
+            item.mutation === 'unknown'
+          )
+            continue;
+          const copy = await writeCopyFile(
+            input,
+            input.document.kind === 'mapping'
+              ? mappingTargetNames.get(input.path)
+              : input.document.kind === 'relationship'
+                ? item.targetApiName
+                : undefined,
+          );
+          if (copy) copies.push(copy);
+        }
+        envelope.result.crossDataSpace.copies = copies;
+      }
       return finish(outcome.status, outcome.code, outcome.error);
     } catch (error: unknown) {
       if (error instanceof GitSelectionError) {

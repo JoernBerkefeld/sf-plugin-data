@@ -233,6 +233,11 @@ are unique in the org. See [Data spaces](../../README.md#data-spaces) and the sf
 
 - Deploy and delete refuse a file of another data space (`MAPPING_DATASPACE_MISMATCH`); the
   message names both data spaces.
+- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a mapping
+  file of another data space. The target DMO and its fields are renamed by rule
+  (`ssot__Individual__dlm` to `ds2_Individual__dlm`, `ssot__FirstName__c` to `FirstName__c`);
+  the DLO side stays. After the deploy the translated file is written under the name
+  Salesforce gave the mapping. See [Deploy from another data space](../../README.md#deploy-from-another-data-space-only-if-you-have-more-than-one-data-space).
 - **First mapping onto a standard DMO copy.** In a non-default data space a standard DMO is a
   copy (`ds2_X__dlm`) that exists only once something is mapped onto it. When the copy reads
   404 in the run's data space, the plugin reads `ssot__X__dlm` (the prefix comes from the

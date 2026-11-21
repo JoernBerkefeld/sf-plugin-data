@@ -141,6 +141,9 @@ Every command runs in one data space: `--dataspace`, or `default` when it is lef
 - **Deploy** refuses a file whose `c__dataSpace` does not hold the run's data space
   (`DLO_DATASPACE_MISMATCH`). A new DLO is created in the run's data space and then added to
   the other listed ones.
+- Only if you have more than one data space: with `--allow-cross-dataspace` (`-c`) such a file
+  is deployed with the run's data space added to its list. Nothing is renamed and no copy file
+  is written; the output shows the data space change. See [Deploy from another data space](../../README.md#deploy-from-another-data-space-only-if-you-have-more-than-one-data-space).
 - An existing DLO is added to each listed data space it is not in yet with one
   `PUT /ssot/data-spaces/<space>/members` that names only this DLO; Salesforce keeps every
   other member. The plugin then reads the DLO until it lists the planned data spaces

@@ -963,6 +963,7 @@ export async function preflightNativeMapping(
       desired.identity.apiName,
       desired.c__dataSpace,
       requestScope,
+      true,
     );
   const { generated, context, activates, activation, typeDifferences } = await validateDependencies(
     desired,

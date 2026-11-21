@@ -1,5 +1,10 @@
 import { sameEnum, sameRecord } from '../artifacts/enum-case.js';
-import { explainInput, explainMismatch, printableKey } from './operation-diagnostic.js';
+import {
+  crossSpaceSentence,
+  explainInput,
+  explainMismatch,
+  printableKey,
+} from './operation-diagnostic.js';
 import {
   DloError,
   dloDataSpaces,
@@ -143,7 +148,7 @@ export async function preflightNativeDlo(
   if (!dataSpaces.includes(dataSpace))
     throw explainInput(
       new DloError('DLO_DATASPACE_MISMATCH'),
-      `The file lists the data spaces ${spaceList(dataSpaces)} in c__dataSpace, not the run's data space ${printableKey(dataSpace)} (--dataspace, default "default").`,
+      `The file lists the data spaces ${spaceList(dataSpaces)} in c__dataSpace, not the run's data space ${printableKey(dataSpace)} (--dataspace, default "default").${crossSpaceSentence(dataSpace)}`,
     );
   let raw: Record<string, unknown>;
   try {

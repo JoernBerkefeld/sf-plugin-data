@@ -241,6 +241,7 @@ function admit(
       document.identity.apiName,
       document.c__dataSpace,
       requestScope,
+      mode === 'deploy',
     );
   return document;
 }
