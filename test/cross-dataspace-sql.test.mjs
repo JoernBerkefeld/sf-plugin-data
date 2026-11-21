@@ -75,9 +75,9 @@ test('aliases, also of subqueries in FROM and in WHERE, place columns by their t
   // A column alias of the subquery is a user name; the outer query reads it as written.
   assert.equal(
     clean(
-      'SELECT s.total__c AS t__c FROM (SELECT SUM(o.ssot__Amount__c) total__c FROM ssot__SalesOrder__dlm o) s',
+      'SELECT s.total__c AS t__c FROM (SELECT SUM(o.ssot__Amount__c) AS total__c FROM ssot__SalesOrder__dlm o) s',
     ),
-    'SELECT s.total__c AS t__c FROM (SELECT SUM(o.Amount__c) total__c FROM ds2_SalesOrder__dlm o) s',
+    'SELECT s.total__c AS t__c FROM (SELECT SUM(o.Amount__c) AS total__c FROM ds2_SalesOrder__dlm o) s',
   );
 });
 
@@ -330,6 +330,131 @@ test('a DBT segment: its name, DMO and every SQL model', () => {
   assert.deepEqual(
     missed.unresolved.map((entry) => [entry.at, entry.name]),
     [['CliSql.segment.Audience.sql line 1:10', 'ssot__Id__c']],
+  );
+});
+
+test('a word after an operator keyword is an operand, never a column alias', () => {
+  for (const [text, expected] of [
+    [
+      'SELECT NOT ssot__Flag__c FROM ssot__Individual__dlm',
+      'SELECT NOT Flag__c FROM ds2_Individual__dlm',
+    ],
+    [
+      'SELECT ssot__A__c IS NULL OR ssot__B__c AS x__c FROM ssot__Individual__dlm',
+      'SELECT A__c IS NULL OR B__c AS x__c FROM ds2_Individual__dlm',
+    ],
+    [
+      'SELECT ssot__A__c BETWEEN 1 AND ssot__B__c AS x__c FROM ssot__Individual__dlm',
+      'SELECT A__c BETWEEN 1 AND B__c AS x__c FROM ds2_Individual__dlm',
+    ],
+    [
+      'SELECT EXISTS ssot__A__c FROM ssot__Individual__dlm',
+      'SELECT EXISTS A__c FROM ds2_Individual__dlm',
+    ],
+    [
+      'SELECT i.ssot__A__c RLIKE ssot__B__c FROM ssot__Individual__dlm i',
+      'SELECT i.A__c RLIKE B__c FROM ds2_Individual__dlm i',
+    ],
+    [
+      'SELECT i.ssot__A__c DIV ssot__B__c FROM ssot__Individual__dlm i',
+      'SELECT i.A__c DIV B__c FROM ds2_Individual__dlm i',
+    ],
+    [
+      'SELECT CASE WHEN ssot__A__c = 1 THEN ssot__B__c ELSE ssot__C__c END AS x__c FROM ssot__Individual__dlm',
+      'SELECT CASE WHEN A__c = 1 THEN B__c ELSE C__c END AS x__c FROM ds2_Individual__dlm',
+    ],
+  ])
+    assert.equal(clean(text), expected);
+  // After a complete operand a plain word is an alias; one that is not name-like stays.
+  assert.equal(
+    clean('SELECT CASE WHEN i.ssot__A__c = 1 THEN 2 END total FROM ssot__Individual__dlm i'),
+    'SELECT CASE WHEN i.A__c = 1 THEN 2 END total FROM ds2_Individual__dlm i',
+  );
+});
+
+test('a name-like column alias without AS is refused, not kept as a user name', () => {
+  for (const text of [
+    'SELECT -i.ssot__A__c ssot__B__c FROM ssot__Individual__dlm i',
+    'SELECT IF(ssot__A__c, 1, 2) ssot__B__c FROM ssot__Individual__dlm',
+    'SELECT COUNT(*) OVER (PARTITION BY ssot__A__c) cnt__c FROM ssot__Individual__dlm',
+    'SELECT CAST(i.ssot__Id__c AS STRING) id__c FROM ssot__Individual__dlm i',
+  ]) {
+    const [first] = refused(text);
+    assert.match(first.reason, /without AS/u, text);
+  }
+});
+
+test('names are read without regard to case: another case of a rule part is refused', () => {
+  for (const [text, names] of [
+    [
+      'SELECT I.SSOT__ID__C AS x__c FROM SSOT__INDIVIDUAL__DLM I',
+      ['SSOT__ID__C', 'SSOT__INDIVIDUAL__DLM'],
+    ],
+    ['SELECT i.Ssot__Id__C AS x__c FROM ssot__Individual__dlm i', ['Ssot__Id__C']],
+    ['SELECT i.SSOT__Id__c AS x__c FROM ssot__Individual__dlm i', ['SSOT__Id__c']],
+    // The column of a table that is not placed stays in the source spelling, so it is refused too.
+    [
+      'SELECT i.ssot__Id__c AS x__c FROM ssot__Individual__DLM i',
+      ['ssot__Individual__DLM', 'ssot__Id__c'],
+    ],
+    ['SELECT o.kq_Id__c AS x__c FROM Order__dlm o', ['kq_Id__c']],
+    ['SELECT u.Id__c AS x__c FROM unifiedssotIndividual__dlm u', ['unifiedssotIndividual__dlm']],
+  ])
+    assert.deepEqual(
+      refused(text).map((entry) => entry.name),
+      names,
+      text,
+    );
+  // The prefix of a data space in another case.
+  assert.deepEqual(
+    refused('SELECT o.Amount__c AS x__c FROM DS2_Order__dlm o', to('default', SPACE)).map(
+      (entry) => entry.name,
+    ),
+    ['DS2_Order__dlm'],
+  );
+  // The leftover check reads the case-insensitive spelling too.
+  const namer = sqlNamer(to(SPACE));
+  assert.match(namer.leftover('SSOT__Id__c'), /still spelled/u);
+  assert.match(sqlNamer(to('default', 'third')).leftover('DS2_Order__dlm'), /still spelled/u);
+  // Lower-case table and field bodies with the rule parts in their case are placed.
+  assert.equal(
+    clean('SELECT i.ssot__ID__c AS x__c FROM ssot__INDIVIDUAL__dlm i'),
+    'SELECT i.ID__c AS x__c FROM ds2_INDIVIDUAL__dlm i',
+  );
+});
+
+test('a parenthesis after JOIN is a subquery or a table group, not a table function', () => {
+  assert.equal(
+    clean(
+      'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i JOIN (SELECT ssot__Id__c FROM ssot__Account__dlm) a ON a.ssot__Id__c = i.ssot__Id__c',
+    ),
+    'SELECT i.Id__c FROM ds2_Individual__dlm i JOIN (SELECT Id__c FROM ds2_Account__dlm) a ON a.Id__c = i.Id__c',
+  );
+  // The subquery has its own scope: its column is placed by its own table.
+  assert.equal(
+    clean(
+      'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i WHERE EXISTS (SELECT 1 FROM Order__dlm o JOIN (SELECT ssot__Name__c FROM ssot__Account__dlm) a ON 1=1)',
+    ),
+    'SELECT i.Id__c FROM ds2_Individual__dlm i WHERE EXISTS (SELECT 1 FROM ds2_Order__dlm o JOIN (SELECT Name__c FROM ds2_Account__dlm) a ON 1=1)',
+  );
+  assert.equal(
+    clean(
+      'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i LEFT OUTER JOIN (ssot__Account__dlm a) ON a.ssot__Id__c = i.ssot__Id__c',
+    ),
+    'SELECT i.Id__c FROM ds2_Individual__dlm i LEFT OUTER JOIN (ds2_Account__dlm a) ON a.Id__c = i.Id__c',
+  );
+  assert.equal(
+    clean(
+      'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i CROSS JOIN (SELECT o.Cust__c FROM Order__dlm o) x',
+    ),
+    'SELECT i.Id__c FROM ds2_Individual__dlm i CROSS JOIN (SELECT o.Cust__c FROM ds2_Order__dlm o) x',
+  );
+  // LEFT(...) in a join condition stays a function.
+  assert.equal(
+    clean(
+      'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i JOIN Order__dlm o ON LEFT(o.Cust__c, 3) = i.ssot__Id__c',
+    ),
+    'SELECT i.Id__c FROM ds2_Individual__dlm i JOIN ds2_Order__dlm o ON LEFT(o.Cust__c, 3) = i.Id__c',
   );
 });
 

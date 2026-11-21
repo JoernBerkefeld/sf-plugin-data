@@ -1365,19 +1365,64 @@ export function sqlNamer(context: CrossSpaceContext): SqlNamer {
         return { reason: 'its spelling depends on the object it belongs to' };
       return { name: field };
     },
+    // SQL reads names without regard to case, so the leftover check does too.
     leftover: (name) => {
+      const lower = name.toLowerCase();
       const foreign = context.spaces.some(
         (space) =>
           space.prefix !== undefined &&
           space.name !== context.target &&
-          name.startsWith(`${space.prefix}_`) &&
-          !name.endsWith('__dll'),
+          lower.startsWith(`${space.prefix.toLowerCase()}_`) &&
+          !lower.endsWith('__dll'),
       );
-      return (context.target !== 'default' && name.includes('ssot__')) || foreign
+      return (context.target !== 'default' && lower.includes('ssot__')) || foreign
         ? `it is still spelled as in ${context.source} after the translation`
         : undefined;
     },
+    spelling: (name) => {
+      const marker = caseMarker(context, name);
+      return marker === undefined
+        ? undefined
+        : `it holds ${marker.written} where the rules read ${marker.rule}; SQL ignores the case, the rules do not, so the name is not placed: write ${marker.rule}`;
+    },
   };
+}
+
+/**
+ * The part of a name the rules read (`__c`, `__dlm`, `ssot__`, `KQ_`, `Unified`, a data space
+ * prefix) when it is written in another case, such as `SSOT__ID__C`.
+ * @param {CrossSpaceContext} context Translation context.
+ * @param {string} name Name as written.
+ * @returns {{written: string; rule: string} | undefined} The part as written and as the rules read it.
+ */
+function caseMarker(
+  context: CrossSpaceContext,
+  name: string,
+): { written: string; rule: string } | undefined {
+  const lower = name.toLowerCase();
+  const suffix = /__(?:c|dlm|cio|dll)$/iu.exec(name)?.[0];
+  if (suffix !== undefined && suffix !== suffix.toLowerCase())
+    return { written: suffix, rule: suffix.toLowerCase() };
+  for (let at = lower.indexOf('ssot__'); at !== -1; at = lower.indexOf('ssot__', at + 1))
+    if (name.slice(at, at + 6) !== 'ssot__')
+      return { written: name.slice(at, at + 6), rule: 'ssot__' };
+  if (lower.startsWith('kq_') && !name.startsWith('KQ_'))
+    return { written: name.slice(0, 3), rule: 'KQ_' };
+  if (!lower.endsWith('__dlm') && !lower.endsWith('__cio')) return undefined;
+  if (lower.startsWith('unified') && !name.startsWith('Unified'))
+    return { written: name.slice(0, 7), rule: 'Unified' };
+  if (lower.startsWith('unifiedlink') && !name.startsWith('UnifiedLink'))
+    return { written: name.slice(0, 11), rule: 'UnifiedLink' };
+  const base = name.slice(0, -5);
+  if (base.toLowerCase().endsWith('identitylink') && !base.endsWith('IdentityLink'))
+    return { written: base.slice(-12), rule: 'IdentityLink' };
+  for (const space of context.spaces) {
+    if (space.prefix === undefined) continue;
+    const prefix = `${space.prefix}_`;
+    if (lower.startsWith(prefix.toLowerCase()) && !name.startsWith(prefix))
+      return { written: name.slice(0, prefix.length), rule: prefix };
+  }
+  return undefined;
 }
 
 /** Keys of a calculated insight file that hold no names: settings and text. */

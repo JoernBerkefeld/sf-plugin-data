@@ -19,6 +19,8 @@ export type SqlNamer = {
   anyField(field: string): { name: string; rule?: CrossSpaceRule } | NotPlaced;
   /** Why a name is still in the source spelling after the rewrite, or undefined. */
   leftover(name: string): string | undefined;
+  /** Why a name of the source is not in the spelling the rules read (its case), or undefined. */
+  spelling(name: string): string | undefined;
 };
 
 /** The SQL in the target data space, with every change and every name it cannot place. */
@@ -145,8 +147,56 @@ const reservedWords = new Set([
   'YEAR',
 ]);
 
-const fieldLike = /__c$/u;
-const objectLike = /__(?:dlm|cio|dll)$/u;
+// A join word that is never a function name, so it starts a join also before a parenthesis.
+const joinOnlyWords = new Set([
+  'JOIN',
+  'INNER',
+  'OUTER',
+  'CROSS',
+  'NATURAL',
+  'FULL',
+  'SEMI',
+  'ANTI',
+]);
+// Words after which the next word is an operand, never a column alias (NULL, TRUE, FALSE and END
+// end an operand, so a word after them can be an alias).
+const operatorWords = new Set([
+  'ALL',
+  'AND',
+  'ANY',
+  'AS',
+  'BETWEEN',
+  'BY',
+  'CASE',
+  'COLLATE',
+  'DISTINCT',
+  'DIV',
+  'ELSE',
+  'ESCAPE',
+  'EXISTS',
+  'ILIKE',
+  'IN',
+  'INTERVAL',
+  'IS',
+  'LIKE',
+  'MOD',
+  'NOT',
+  'ON',
+  'OR',
+  'OVER',
+  'REGEXP',
+  'RLIKE',
+  'SIMILAR',
+  'SOME',
+  'THEN',
+  'WHEN',
+  'XOR',
+  'ZONE',
+]);
+
+// Spark and Data Cloud SQL read names without regard to case.
+const fieldLike = /__c$/iu;
+const objectLike = /__(?:dlm|cio|dll)$/iu;
 
 /**
  * Whether a name looks like a Data Cloud object or field name the rewrite must account for.
@@ -154,7 +204,7 @@ const objectLike = /__(?:dlm|cio|dll)$/u;
  * @returns {boolean} Name-like.
  */
 function nameLike(name: string): boolean {
-  return fieldLike.test(name) || objectLike.test(name) || name.includes('ssot__');
+  return fieldLike.test(name) || objectLike.test(name) || name.toLowerCase().includes('ssot__');
 }
 
 /**
@@ -449,8 +499,10 @@ class SqlAnalysis {
     deferred: Array<() => void>,
   ): void {
     let p = from;
+    // LEFT, RIGHT and LATERAL before a parenthesis are a function; the other join words never are.
     const isJoinStart = (q: number): boolean =>
-      joinWords.has(this.upper(q, to)) && !this.isPunct(q + 1, '(', to);
+      joinWords.has(this.upper(q, to)) &&
+      (joinOnlyWords.has(this.upper(q, to)) || !this.isPunct(q + 1, '(', to));
     while (p < to) {
       while (isJoinStart(p)) {
         if (this.upper(p, to) === 'LATERAL' && this.upper(p + 1, to) === 'VIEW') p++;
@@ -591,18 +643,24 @@ class SqlAnalysis {
       const last = end - 1;
       const before = last - 1;
       const hasAs = before >= begin && this.upper(before, end) === 'AS';
+      // Without AS a word is an alias only after a complete operand, not after `NOT`, `OR`, ….
+      const operand =
+        this.isPunct(before, ')', end) ||
+        ['number', 'string', 'quoted'].includes(this.tok(before).kind) ||
+        (this.tok(before).kind === 'word' && !operatorWords.has(this.upper(before, end)));
       const aliased =
         last > begin &&
         this.isName(last, end) &&
         !this.isPunct(before, '.', end) &&
-        (hasAs ||
-          (!reservedWords.has(this.upper(last, end)) &&
-            (this.isName(before, end) ||
-              this.isPunct(before, ')', end) ||
-              ['number', 'string'].includes(this.tok(before).kind))));
+        (hasAs || (!reservedWords.has(this.upper(last, end)) && operand));
       if (aliased) {
         const alias = this.nameAt(last);
-        this.keep(last, true);
+        if (!hasAs && nameLike(alias))
+          this.refuse(
+            last,
+            'it reads as a column alias without AS but looks like an object or field name, so it is not known whether it is a name to place; write AS before the alias',
+          );
+        else this.keep(last, true);
         scope.aliases.add(alias.toLowerCase());
         columns.named.set(alias.toLowerCase(), { owns: true, name: alias });
         this.expression(begin, hasAs ? before : last, scope, ctes);
@@ -843,6 +901,15 @@ export function translateSql(sql: string, label: string, namer: SqlNamer): SqlTr
         { at: `${label} line 1:1`, name: label, reason: `the SQL cannot be read: ${found}` },
       ],
     };
+  // A name the rules read in another case (`SSOT__ID__C`, `ssot__Individual__DLM`) is not placed.
+  for (const [index, token] of tokens.entries()) {
+    const name = tokenName(token);
+    if (name === undefined || found.userNames.has(index) || !nameLike(name)) continue;
+    const reason = namer.spelling(name);
+    if (reason === undefined) continue;
+    found.unresolved.set(index, reason);
+    found.edits.delete(index);
+  }
   const rewrites: CrossSpaceRewrite[] = [];
   const unresolved: CrossSpaceUnresolved[] = [];
   const parts = tokens.map((token, index) => {

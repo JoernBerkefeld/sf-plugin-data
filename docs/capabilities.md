@@ -500,8 +500,15 @@ SQL is tokenized: single-quoted texts and `--` / `/* */` comments are skipped, d
 backticks are names; a backslash before a quote in a text, a comment inside a comment, an
 unclosed text, name or comment, or unmatched parentheses refuse the file. Tables in `FROM` and
 `JOIN` are placed by the DMO rules and the ruleset list (`__dlm`), the prefix rule (`__cio`) or
-kept (`__dll`); `WITH` blocks (also `RECURSIVE`, read by the columns of their first block),
-aliases and column aliases are user names and stay. A column is placed by its table through the
+kept (`__dll`); a parenthesis after a join word (`JOIN (SELECT …) a`, `JOIN (t a)`) is a
+subquery with its own scope or a table group, `LEFT(`/`RIGHT(` stay functions; `WITH` blocks
+(also `RECURSIVE`, read by the columns of their first block), aliases and column aliases are
+user names and stay. A column alias without `AS` is read only after a complete operand (`)`, a
+number, a text, a quoted name or a word that is no operator keyword such as `NOT`, `OR`, `IS`,
+`BETWEEN`, `EXISTS`, `DIV`), and one that looks like a name is refused rather than kept.
+Name-likeness and the leftover check ignore case as SQL does; a name whose rule part (`__c`,
+`__dlm`, `__cio`, `__dll`, `ssot__`, `KQ_`, `Unified`, a data space prefix) is in another case
+is refused, not placed. A column is placed by its table through the
 table name, alias, `WITH` block or subquery (whose output columns are tracked, `*` included); a
 column without a qualifier only when every table of the query and the enclosing ones that could
 own it spells it the same way. Afterwards every word and quoted token of the result outside

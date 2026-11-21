@@ -358,9 +358,14 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
     the same way. Otherwise write the table or alias in front of it.
   - Texts in single quotes and comments never change. `WITH` block names, aliases and column
     aliases are your names and stay. Double quotes and backticks are names.
+  - Write `AS` before a column alias that looks like a name (`SUM(x) AS total__c`): without
+    `AS` it is refused, because it cannot be told apart from a column to rename.
+  - SQL ignores case, the rules do not: a name with its rule part in another case
+    (`SSOT__ID__C`, `Individual__DLM`) is refused. Write `ssot__`, `__c` and `__dlm` in lower case.
   - Salesforce accepts an insight left in the `default` spelling in another data space, then
     fails it about three minutes after activation without a message. So after the rewrite
-    every name of the SQL must be placed, and none may keep the old spelling.
+    every name of the SQL outside texts and comments must be placed, and none may keep the old
+    spelling.
   - Positions are reported per SQL file, line and column.
 - **Nothing is guessed.** A name no rule places exactly is listed, and the whole deploy is
   refused before any write (`CROSS_DATASPACE_UNRESOLVED`). For example, `ds2_Order__dlm`
