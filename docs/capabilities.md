@@ -491,9 +491,27 @@ stays), DLO (the run's data space added to its list), UI segment (name, `segment
 (name, `segmentOn`, children). A name no rule places exactly (towards `default` a
 `<prefix>_<Name>__dlm` without a selected custom DMO file, packaged DMOs, unified outputs without
 the `ssot` spelling, a foreign prefix, a data space without a prefix) is
-`CROSS_DATASPACE_UNRESOLVED`; graphs, identity resolution, transforms, calculated insights, SQL
-and other segment types and data streams are `CROSS_DATASPACE_UNSUPPORTED`; both before any
-write. Two inputs that reach the same org item once translated (same family and API name; a
+`CROSS_DATASPACE_UNRESOLVED`; DCSQL transforms, STL transforms with any node other than load,
+join and output, calculated insights, SQL and other segment types and data streams are
+`CROSS_DATASPACE_UNSUPPORTED`; both before any write. Also translated (Step 2b): data graphs
+(name by the prefix rule, `dataspaceName`, root, `projectedName`, every related object with its
+rebuilt `jsonPath`, fields and `keyQualifierName`, join `fieldName`/`parentFieldName` by the
+node's and its parent's DMO, recency, filter and top-K criteria fields; the graph-level
+generated names, fragment DMOs, join and field developer names and `referenceDeveloperName` are
+left out), identity resolution rulesets (`<prefix>_<type>_<rulesetId>` with the ID kept,
+secondary DMO, match criteria, reconciliation entities and field overrides, output owner and
+entity; DLO sources stay) and STL transforms (both names, `dataSpaceName` set to the target,
+load datasets, fields and `sampleDetails.dataspace`, output names, `fieldsMappings` and
+`dedupOrder`, join keys by the side's lineage, `outputDataObjects`; DLO names stay). For these
+three, a full-coverage check refuses the file (`CROSS_DATASPACE_UNRESOLVED`) when any `__c` or
+`__dlm` value was not looked at by the translation, or any value still holds `ssot__` towards a
+non-default space or another space's prefix, because Salesforce accepts and builds a graph left
+in the default spelling in `dataspace2` (DB entry
+`data360:dataspace-graph-ir-field-spelling-api68`). An identity resolution output whose ruleset
+is not in the same deploy is named from one `GET /ssot/identity-resolutions` (read only when a
+selected file names an output): the source ruleset that lists it, then the one target ruleset of
+the same type and its output for the same entity; none or several are
+`CROSS_DATASPACE_UNRESOLVED`, a failed read `CROSS_DATASPACE_RULESETS_READ_FAILED`. Two inputs that reach the same org item once translated (same family and API name; a
 mapping's source DLO and target DMO; a relationship's source and target fields), such as a copy
 file selected beside its original, are `DUPLICATE_IDENTITY`, also before any write. Every later
 file check, `--changed-since` snapshots included, compares against the file's own bytes and
@@ -503,7 +521,7 @@ first write (identical content reused, other content `CROSS_DATASPACE_COPY_CONFL
 mapping or relationship copy takes the name Salesforce holds it under (a mapping copy is the
 mapping as the deploy read it back, with its pair selectors, as a retrieve writes it) and is left alone when a
 differing file exists there; a DLO gets none. `--preview` reports every rewrite and the planned
-copy files and writes nothing. Proven live through the plugin on API 68, default to `dataspace2` in one run: a custom DMO (created under its `ds2_` name), its DLO (membership added), its mapping (copy file under the name Salesforce returned) and a UI segment on it; the copy files redeploy unchanged, the default originals stay unchanged, a repeat reuses the identical copies, and the reverse preview places the `ds2_` files back (DB entry `data360:plugin-cross-dataspace-deploy-2a-api68`). Graph and other refused kinds are covered by unit tests only.
+copy files and writes nothing. Proven live through the plugin on API 68, default to `dataspace2` in one run: a custom DMO (created under its `ds2_` name), its DLO (membership added), its mapping (copy file under the name Salesforce returned) and a UI segment on it; the copy files redeploy unchanged, the default originals stay unchanged, a repeat reuses the identical copies, and the reverse preview places the `ds2_` files back (DB entry `data360:plugin-cross-dataspace-deploy-2a-api68`). Step 2b, proven live through the plugin on API 68, default to `dataspace2`: a data graph written by hand on `ssot__ContactPointPhone__dlm` with `ssot__` fields was created as `ds2_CliXsPhone2b` on `ds2_ContactPointPhone__dlm` and built to ready, and the stored graph holds only copy spelling; an STL transform on DLOs was created as `ds2_CliXsCopy2b` in `dataspace2` with both DLOs added to `dataspace2` (DB entry `data360:plugin-cross-dataspace-deploy-2b-api68`). Identity resolution rulesets, ruleset pairing, join keys and STL transforms on DMOs are covered by unit tests only: a live ruleset in `dataspace2` would need new mappings onto its standard DMO copies.
 
 Native DLO retrieve and delete read one exact `__dll` detail at API 68 (or an explicit
 numeric pin of 61 and up) through the guarded GET transport without refresh, retry or

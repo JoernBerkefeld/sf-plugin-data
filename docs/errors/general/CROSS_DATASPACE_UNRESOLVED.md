@@ -16,7 +16,8 @@ With `--allow-cross-dataspace` (`-c`), deploy translates files of another data s
 
 - Custom DMOs and segments get, lose or swap the data space prefix (`Order__dlm` in `default` is `ds2_Order__dlm` in `dataspace2`).
 - A standard DMO and its copy: `ssot__Individual__dlm` is `ds2_Individual__dlm`, and its fields lose `ssot__` (`ssot__FirstName__c` is `FirstName__c`). Key qualifier fields (`KQ_`) keep their names.
-- Identity resolution outputs: `UnifiedssotIndividual<Id>__dlm` is `ds2_UnifiedIndividual<Id>__dlm` (the same for `UnifiedLink`).
+- Identity resolution outputs: `UnifiedssotIndividual<Id>__dlm` is `ds2_UnifiedIndividual<Id>__dlm` (the same for `UnifiedLink`) when their ruleset is in the same deploy. Otherwise the deploy reads the org's ruleset list once and takes the output of the one ruleset of the same type in the target data space.
+- Data graph, data transform and ruleset names get, lose or swap the prefix (`Graph` is `ds2_Graph`; ruleset `Individual_t1` is `ds2_Individual_t1`).
 
 A name that no rule places exactly is never guessed. Examples:
 
@@ -24,6 +25,8 @@ A name that no rule places exactly is never guessed. Examples:
 - A packaged DMO (`ns__Thing__dlm`), or an identity resolution output without the `ssot` spelling (such as `UnifiedIndividual__dlm`).
 - A name that already carries the prefix of another data space.
 - A data space without a prefix in the org's list of data spaces.
+- An identity resolution output when the target data space has no ruleset of that type, or several.
+- In a data graph, ruleset or transform: any object or field name the translation does not cover, or a name still in the old spelling after the translation (`ssot__…` towards another data space). Salesforce accepts a graph left in the default spelling in another data space and builds it on the default objects, so such a name is refused instead of being sent.
 
 ## Why the plugin stops
 

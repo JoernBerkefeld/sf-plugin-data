@@ -102,13 +102,16 @@ import type { PrefixType } from '../../services/data-space-prefix.js';
 import path from 'node:path';
 import {
   CrossSpaceError,
+  crossSpaceNeedsRulesets,
   crossSpaceRefusal,
   crossSpaceSource,
   fileDataSpaces,
   planCrossSpaceInputs,
   precheckCopyFiles,
+  readRulesetEntries,
   writeCopyFile,
 } from '../../services/cross-dataspace-deploy.js';
+import { crossSpaceUnsupported } from '../../services/cross-dataspace-rename.js';
 import type {
   CopyOutcome,
   CrossSpaceFile,
@@ -493,7 +496,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       char: 'c',
       default: false,
       summary:
-        'Only with more than one data space: deploy files of another data space into --dataspace. DMO, mapping, relationship, DLO (membership only), UI and Waterfall segment files are translated in memory by rule (prefix, ssot__); each translated file gets a copy file under its new name after it deployed. Other kinds and any name that cannot be placed exactly are refused before any write. With --preview it lists every rewrite.',
+        'Only with more than one data space: deploy files of another data space into --dataspace. DMO, mapping, relationship, DLO (membership only), UI and Waterfall segment, data graph, identity resolution and STL transform (load, join and output nodes only) files are translated in memory by rule (prefix, ssot__; identity resolution outputs from the ruleset list when their ruleset is not deployed with them); each translated file gets a copy file under its new name after it deployed. Other kinds and any name that cannot be placed exactly are refused before any write. With --preview it lists every rewrite.',
     }),
     'allow-dataspace-removal': Flags.boolean({
       default: false,
@@ -1172,7 +1175,12 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               fileDataSpaces(input.document as unknown as Record<string, unknown>),
             ),
           ]);
-          plan = planCrossSpaceInputs(authoredInputs, effectiveScope, await check.entries());
+          const spaces = await check.entries();
+          // The ruleset list is read once, only when a file names an identity resolution output.
+          const rulesets = crossSpaceNeedsRulesets(authoredInputs, effectiveScope, spaces)
+            ? await readRulesetEntries(openSpaceSender)
+            : undefined;
+          plan = planCrossSpaceInputs(authoredInputs, effectiveScope, spaces, rulesets);
         } catch (error) {
           return finish('blocked', dataSpaceCheckCode(error, 'TARGET_ORG_REQUIRED'), error);
         }
@@ -3027,6 +3035,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               String(input.document.definition.name),
               input.document.c__dataSpace,
               effectiveScope,
+              crossSpaceUnsupported(input.document as unknown as Record<string, unknown>) ===
+                undefined,
             );
           else if (
             input.document.kind === 'native-data-graph' &&
@@ -3037,6 +3047,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               input.document.c__dataSpace,
               effectiveScope,
               'file',
+              true,
             );
           else if (input.document.kind === 'identity-resolution') {
             const { apiName } = input.document.identity;
@@ -3049,6 +3060,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 input.document.c__dataSpace,
                 effectiveScope,
                 'file',
+                true,
               );
             // Outside default Salesforce names a ruleset <prefix>_<type>_<rulesetId>: a file name
             // without the org's prefix could not be read back after its create. Never guessed.

@@ -1,6 +1,10 @@
 import { identityResolutionName } from './path-selector.js';
 import { isDeepStrictEqual } from 'node:util';
-import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import {
+  crossSpaceSentence,
+  explainInput,
+  printableKey,
+} from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
 import { dataSpaceKey, isDataSpaceName, readSingleDataSpace } from './data-space-field.js';
 
@@ -609,6 +613,7 @@ export function identityResolutionSpace(native: unknown): string {
  * @param {string} found The data space of the file or the org ruleset.
  * @param {string} dataSpace The run's data space.
  * @param {'file' | 'org'} where Whether the file or the org ruleset names `found`.
+ * @param {boolean} [crossSpace] A deploy --allow-cross-dataspace can translate: say so.
  * @returns {IdentityResolutionError} IDENTITY_RESOLUTION_DATASPACE_MISMATCH with an explanation.
  */
 export function identityResolutionSpaceMismatch(
@@ -616,10 +621,11 @@ export function identityResolutionSpaceMismatch(
   found: string,
   dataSpace: string,
   where: 'file' | 'org',
+  crossSpace = false,
 ): IdentityResolutionError {
   return explainInput(
     new IdentityResolutionError('IDENTITY_RESOLUTION_DATASPACE_MISMATCH'),
-    `${where === 'file' ? `The file of identity resolution ruleset ${apiName} names the data space ${printableKey(found)} in ${dataSpaceKey}` : `Identity resolution ruleset ${apiName} is in the data space ${printableKey(found)} in the org`}, but the run's data space is ${printableKey(dataSpace)} (--dataspace, default "default"). Run the command with --dataspace ${printableKey(found)}${where === 'file' ? ', or correct the file' : ''}. Nothing was written.`,
+    `${where === 'file' ? `The file of identity resolution ruleset ${apiName} names the data space ${printableKey(found)} in ${dataSpaceKey}` : `Identity resolution ruleset ${apiName} is in the data space ${printableKey(found)} in the org`}, but the run's data space is ${printableKey(dataSpace)} (--dataspace, default "default"). Run the command with --dataspace ${printableKey(found)}${where === 'file' ? ', or correct the file' : ''}. Nothing was written.${crossSpace ? crossSpaceSentence(dataSpace) : ''}`,
   );
 }
 

@@ -324,22 +324,34 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
 sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.dmo-meta.json -d data360/segments/Audience.segment.json --allow-processing
 ```
 
-- **What is translated:** DMOs, mappings, relationships, UI and Waterfall segments. A DLO is
-  added to the target data space; nothing in it is renamed.
+- **What is translated:** DMOs, mappings, relationships, UI and Waterfall segments, data
+  graphs, identity resolution rulesets and STL data transforms made of load, join and output
+  nodes. A DLO is added to the target data space; nothing in it is renamed.
 - **How names change:** by fixed rules, with the prefixes from the org's list of data spaces.
   - Custom DMOs and segments get, lose or swap the prefix: `Order__dlm` becomes
     `ds2_Order__dlm`, `Audience` becomes `ds2_Audience`.
   - A standard DMO becomes its copy and its fields lose `ssot__`: `ssot__Individual__dlm`
     becomes `ds2_Individual__dlm`, `ssot__FirstName__c` becomes `FirstName__c`.
-  - Identity resolution outputs: `UnifiedssotIndividual<Id>__dlm` becomes
-    `ds2_UnifiedIndividual<Id>__dlm`.
+  - Data graphs, data transforms and rulesets get, lose or swap the prefix: `PhoneGraph`
+    becomes `ds2_PhoneGraph`, ruleset `Individual_t1` becomes `ds2_Individual_t1` (the ruleset
+    ID stays).
+  - Identity resolution outputs: when their ruleset is in the same deploy,
+    `UnifiedssotIndividual<Id>__dlm` becomes `ds2_UnifiedIndividual<Id>__dlm`. Otherwise deploy
+    reads the org's ruleset list once and takes the output of the one ruleset of the same type
+    in the target data space; none or several are refused.
+  - The names Salesforce generates for one graph (its helper DMOs and transform, join and field
+    developer names) are left out; Salesforce generates new ones.
   - A mapping keeps its DLO side; it is found by its DLO and DMO, as always.
 - **Nothing is guessed.** A name no rule places exactly is listed, and the whole deploy is
   refused before any write (`CROSS_DATASPACE_UNRESOLVED`). For example, `ds2_Order__dlm`
   towards `default` can be a standard copy or a custom DMO: select its retrieved DMO file too.
-- **Not translated yet:** data graphs, identity resolution, data transforms, calculated
-  insights, SQL segments and data streams. Under the flag they are refused before any write
-  (`CROSS_DATASPACE_UNSUPPORTED`).
+- **Graphs, rulesets and transforms are checked completely.** Salesforce accepts a graph left in
+  the `default` spelling in another data space and builds it on the `default` objects. So after
+  the translation every object and field name must be covered, and none may keep the old
+  spelling; otherwise the file is refused (`CROSS_DATASPACE_UNRESOLVED`).
+- **Not translated yet:** calculated insights, SQL segments, DCSQL transforms, STL transforms
+  with a formula, filter or other expression node, and data streams. Under the flag they are
+  refused before any write (`CROSS_DATASPACE_UNSUPPORTED`).
 - **`--preview`** lists every rename (file, place in the file, old and new name, rule) and the
   copy files it would write. It writes nothing.
 - **Copy files:** after an item has deployed, deploy writes its translated file under the new

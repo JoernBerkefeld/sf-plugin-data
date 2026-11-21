@@ -187,6 +187,17 @@ A graph belongs to one data space, named in `c__dataSpace`. See
   ([`DATA_GRAPH_PREFIX_MISMATCH`](../errors/data-graph/DATA_GRAPH_PREFIX_MISMATCH.md)); for an
   existing one deploy and retrieve only warn. See
   [Name prefixes](../../README.md#name-prefixes-only-if-you-have-more-than-one-data-space).
+- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a graph
+  file of another data space. Its name gets the target prefix (`PhoneGraph` becomes
+  `ds2_PhoneGraph`); the root, every related object, field, join field and criteria field follow
+  the DMO rules (`ssot__ContactPointPhone__dlm` with `ssot__TelephoneNumber__c` becomes
+  `ds2_ContactPointPhone__dlm` with `TelephoneNumber__c`). An identity resolution output is
+  placed by its ruleset. The generated names (helper DMOs, transform, join and field developer
+  names) are left out. Salesforce accepts a graph left in the `default` spelling in another
+  data space, so a name the translation does not cover, or one still in the old spelling, refuses
+  the file before any write
+  ([`CROSS_DATASPACE_UNRESOLVED`](../errors/general/CROSS_DATASPACE_UNRESOLVED.md)). After the
+  deploy the translated file is written under the new name. See [Deploy from another data space](../../README.md#deploy-from-another-data-space-only-if-you-have-more-than-one-data-space).
 
 ## Error codes
 

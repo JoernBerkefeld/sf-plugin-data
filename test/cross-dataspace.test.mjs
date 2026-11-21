@@ -371,9 +371,11 @@ test('translateDocument: UI criteria names and Waterfall children; compared valu
 
 test('translateDocument refuses every kind it does not cover yet', () => {
   for (const document of [
-    { kind: 'native-data-graph', c__dataSpace: 'default', definition: { name: 'G' } },
-    { kind: 'identity-resolution', c__dataSpace: 'default', identity: { apiName: 'R' } },
-    { kind: 'data-transform', c__dataSpace: 'default', definition: { name: 'T' } },
+    {
+      kind: 'data-transform',
+      c__dataSpace: 'default',
+      definition: { name: 'T', definition: { type: 'DCSQL' } },
+    },
     { kind: 'calculated-insight', identity: { dataSpace: 'default', apiName: 'C__cio' } },
     { kind: 'data-stream', c__dataSpace: ['default'] },
     segmentFile({ spec: { ...segmentFile().spec, segmentType: 'DBT' } }),
@@ -786,7 +788,7 @@ test('under the flag unsupported kinds and unplaceable names refuse the deploy b
     assert.deepEqual(unresolved.calls, []);
   }));
 
-test('a graph, transform or insight file of another data space is refused as not supported yet', async () =>
+test('a SQL or expression transform file of another data space is refused as not supported yet', async () =>
   withSpaces(async () => {
     const command = Object.create(Deploy.prototype);
     command.parse = async () => ({
@@ -804,15 +806,18 @@ test('a graph, transform or insight file of another data space is refused as not
     for (const document of [
       {
         schemaVersion: 1,
-        kind: 'native-data-graph',
+        kind: 'data-transform',
         c__dataSpace: 'default',
-        definition: { name: 'G' },
+        definition: { name: 'T', definition: { type: 'DCSQL' } },
       },
       {
         schemaVersion: 1,
         kind: 'data-transform',
         c__dataSpace: 'default',
-        definition: { name: 'T' },
+        definition: {
+          name: 'T',
+          definition: { type: 'STL', nodes: { F: { action: 'filter' } } },
+        },
       },
     ]) {
       command.resolveInputs = async () => [{ path: '/project/data360/x/file.json', document }];
@@ -823,7 +828,7 @@ test('a graph, transform or insight file of another data space is refused as not
       assert.equal(result.diagnostics.errors[0].code, 'CROSS_DATASPACE_UNSUPPORTED');
       assert.match(
         result.diagnostics.errors[0].message,
-        /cannot be translated into another data space yet/u,
+        /cannot be translated yet|expressions come in a later step/u,
       );
     }
   }));

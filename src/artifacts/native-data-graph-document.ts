@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import {
+  crossSpaceSentence,
+  explainInput,
+  printableKey,
+} from '../services/operation-diagnostic.js';
 import type { DocumentMode } from './verbatim-document.js';
 import { dataSpaceKey, isDataSpaceName, readSingleDataSpace } from './data-space-field.js';
 import {
@@ -548,6 +552,7 @@ export function nativeDataGraphSpace(value: unknown): string {
  * @param {string} found The data space of the file or the org graph.
  * @param {string} dataSpace The run's data space.
  * @param {'file' | 'org'} where Whether the file or the org graph names `found`.
+ * @param {boolean} [crossSpace] A deploy --allow-cross-dataspace can translate: say so.
  * @returns {DataGraphError} DATA_GRAPH_DATASPACE_MISMATCH with an explanation.
  */
 export function nativeDataGraphSpaceMismatch(
@@ -555,10 +560,11 @@ export function nativeDataGraphSpaceMismatch(
   found: string,
   dataSpace: string,
   where: 'file' | 'org',
+  crossSpace = false,
 ): DataGraphError {
   return explainInput(
     new DataGraphError('DATA_GRAPH_DATASPACE_MISMATCH'),
-    `${where === 'file' ? `The file of data graph ${name} names the data space ${printableKey(found)} in ${dataSpaceKey}` : `Data graph ${name} is in the data space ${printableKey(found)} in the org`}, but the run's data space is ${printableKey(dataSpace)} (--dataspace, default "default"). Graph names are unique in the org, so run the command with --dataspace ${printableKey(found)}${where === 'file' ? ', or correct the file' : ''}. Nothing was written.`,
+    `${where === 'file' ? `The file of data graph ${name} names the data space ${printableKey(found)} in ${dataSpaceKey}` : `Data graph ${name} is in the data space ${printableKey(found)} in the org`}, but the run's data space is ${printableKey(dataSpace)} (--dataspace, default "default"). Graph names are unique in the org, so run the command with --dataspace ${printableKey(found)}${where === 'file' ? ', or correct the file' : ''}. Nothing was written.${crossSpace ? crossSpaceSentence(dataSpace) : ''}`,
   );
 }
 

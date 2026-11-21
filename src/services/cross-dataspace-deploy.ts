@@ -8,13 +8,30 @@ import {
   validateNativeDmoDocument,
 } from '../artifacts/native-dmo-document.js';
 import { serializeSegmentFiles } from '../artifacts/segment-document.js';
+import { validateNativeDataGraphDocument } from '../artifacts/native-data-graph-document.js';
+import {
+  serializeIdentityResolutionDocument,
+  validateIdentityResolutionDocument,
+} from '../artifacts/identity-resolution-document.js';
+import {
+  serializeDataTransformDocument,
+  validateDataTransformDocument,
+} from '../artifacts/data-transform-document.js';
+import { writeDataGraphDocument } from '../artifacts/write-data-graph.js';
+import { writeIdentityResolutionDocument } from '../artifacts/write-identity-resolution.js';
+import { writeDataTransformDocument } from '../artifacts/write-data-transform.js';
+import { dataTransformArtifactPath } from './retrieve-data-transform.js';
 import { writeNativeDmoDocument } from '../artifacts/write-native-dmo.js';
 import { writeNativeMappingDocument } from '../artifacts/write-native-mapping.js';
 import { writeNativeRelationshipDocument } from '../artifacts/write-native-relationship.js';
 import { writeSegmentDocument } from '../artifacts/write-segment.js';
-import type { OrgDataSpace } from './data-space-check.js';
-import type { CrossSpaceRewrite, CrossSpaceUnresolved } from './cross-dataspace-rename.js';
-import { customDmosOf, translateDocument } from './cross-dataspace-rename.js';
+import type { DataSpaceSender, OrgDataSpace } from './data-space-check.js';
+import type {
+  CrossSpaceRewrite,
+  CrossSpaceUnresolved,
+  RulesetEntry,
+} from './cross-dataspace-rename.js';
+import { customDmosOf, translateDmoName, translateDocument } from './cross-dataspace-rename.js';
 import { explainInput } from './operation-diagnostic.js';
 
 /** One file of another data space, translated into the run's data space. */
@@ -88,20 +105,152 @@ function familyOf(document: Record<string, unknown>): string {
 }
 
 /**
+ * The name of the item a file describes: `definition.name` for a data graph or transform,
+ * `identity.apiName` otherwise.
+ * @param {Record<string, unknown>} document Admitted file.
+ * @returns {string} Name.
+ */
+function documentName(document: Record<string, unknown>): string {
+  return document.kind === 'native-data-graph' || document.kind === 'data-transform'
+    ? String((document.definition as { name?: unknown }).name)
+    : (document.identity as { apiName: string }).apiName;
+}
+
+/**
+ * Every string of a value, for the scan of names before translation.
+ * @param {unknown} value Value.
+ * @param {string[]} into Receives the strings.
+ * @returns {string[]} The strings.
+ */
+function stringsOf(value: unknown, into: string[] = []): string[] {
+  if (typeof value === 'string') into.push(value);
+  else if (Array.isArray(value)) for (const entry of value) stringsOf(entry, into);
+  else if (value && typeof value === 'object')
+    for (const entry of Object.values(value)) stringsOf(entry, into);
+  return into;
+}
+
+/**
+ * Whether a selected file of another data space names an identity resolution output (by the
+ * rule's spelling): only then does the deploy read the ruleset list, once.
+ * @param {readonly DeployInput[]} inputs The admitted selection.
+ * @param {string} run The run's data space.
+ * @param {readonly OrgDataSpace[]} spaces The org's data spaces.
+ * @returns {boolean} Whether the ruleset list is needed.
+ */
+export function crossSpaceNeedsRulesets(
+  inputs: readonly DeployInput[],
+  run: string,
+  spaces: readonly OrgDataSpace[],
+): boolean {
+  return inputs.some((input) => {
+    const document = input.document as unknown as Record<string, unknown>;
+    const from = crossSpaceSource(document, run);
+    if (from === undefined) return false;
+    const context = { source: from, target: run, spaces };
+    return stringsOf(document).some((value) => {
+      if (!value.endsWith('__dlm')) return false;
+      const placed = translateDmoName(context, value);
+      return !('reason' in placed) && placed.rule === 'unified-output';
+    });
+  });
+}
+
+const rulesetsRead = 'CROSS_DATASPACE_RULESETS_READ_FAILED';
+
+/**
+ * The refusal when the ruleset list cannot be read.
+ * @returns {CrossSpaceError} CROSS_DATASPACE_RULESETS_READ_FAILED with an explanation.
+ */
+function rulesetsReadFailed(): CrossSpaceError {
+  return explainInput(
+    new CrossSpaceError(rulesetsRead),
+    'A file names an identity resolution output, and the identity resolution ruleset list that places it could not be read. Nothing was sent; rerun the deploy.',
+  );
+}
+
+/**
+ * A nonempty text value, or undefined.
+ * @param {unknown} value Candidate.
+ * @returns {string | undefined} The text.
+ */
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+/** The route of the identity resolution ruleset list (every data space at once, API 68). */
+const rulesetsRoute = '/services/data/v68.0/ssot/identity-resolutions';
+
+/**
+ * Read the org's identity resolution rulesets with one `GET /ssot/identity-resolutions`: each
+ * one's name, data space, type and the unified and link output of each reconciliation entity.
+ * The list answers every data space at once (live API 68). An entry without a name, data space or
+ * type is left out; a malformed answer is CROSS_DATASPACE_RULESETS_READ_FAILED.
+ * @param {DataSpaceSender} open Opens the command's shared bound sender.
+ * @returns {Promise<RulesetEntry[]>} Rulesets.
+ */
+export async function readRulesetEntries(open: DataSpaceSender): Promise<RulesetEntry[]> {
+  const sender = await open();
+  let response: unknown;
+  try {
+    response = await sender.request('GET', rulesetsRoute);
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 'AUTHENTICATION_FAILED') throw error;
+    throw rulesetsReadFailed();
+  }
+  const entries = (response as { identityResolutions?: unknown } | null)?.identityResolutions;
+  if (!Array.isArray(entries)) throw rulesetsReadFailed();
+  const rulesets: RulesetEntry[] = [];
+  for (const entry of entries as Array<Record<string, unknown> | null>) {
+    const apiName = text(entry?.objectApiName);
+    const dataSpace = text(entry?.dataSpaceName);
+    const configurationType = text(entry?.configurationType);
+    if (!apiName || !dataSpace || !configurationType) continue;
+    const rules = Array.isArray(entry?.reconciliationRules)
+      ? (entry.reconciliationRules as Array<Record<string, unknown> | null>)
+      : [];
+    rulesets.push({
+      apiName,
+      dataSpace,
+      configurationType,
+      outputs: rules.flatMap((rule) => {
+        const entity = text(rule?.entityName);
+        return entity
+          ? [{ entity, unified: text(rule?.unifiedDmoName), link: text(rule?.linkDmoName) }]
+          : [];
+      }),
+    });
+  }
+  return rulesets;
+}
+
+/**
  * Translate every selected file of another data space into the run's data space, in memory. The
  * files on disk never change; each translated input still checks the file's own bytes.
  * @param {readonly DeployInput[]} inputs The admitted selection.
  * @param {string} run The run's data space.
  * @param {readonly OrgDataSpace[]} spaces The org's data spaces with their prefixes.
+ * @param {readonly RulesetEntry[]} [rulesets] The ruleset list, read when a file names an
+ * identity resolution output (crossSpaceNeedsRulesets).
  * @returns {CrossSpacePlan} The translated selection and its report.
  */
 export function planCrossSpaceInputs(
   inputs: readonly DeployInput[],
   run: string,
   spaces: readonly OrgDataSpace[],
+  rulesets?: readonly RulesetEntry[],
 ): CrossSpacePlan {
   const documents = inputs.map((input) => input.document as unknown as Record<string, unknown>);
   const customDmos = customDmosOf(documents);
+  // Rulesets this deploy translates too: their outputs keep the rule names (the ID is kept).
+  const selectedRulesets = new Set(
+    documents
+      .filter(
+        (document) =>
+          document.kind === 'identity-resolution' && crossSpaceSource(document, run) !== undefined,
+      )
+      .map((document) => (document.identity as { apiName: string }).apiName),
+  );
   const files: CrossSpaceFile[] = [];
   const unsupported: CrossSpaceRefusedFile[] = [];
   const translated = inputs.map((input, index) => {
@@ -109,7 +258,14 @@ export function planCrossSpaceInputs(
     const from = crossSpaceSource(document, run);
     if (from === undefined) return input;
     const family = familyOf(document);
-    const result = translateDocument(document, { source: from, target: run, spaces, customDmos });
+    const result = translateDocument(document, {
+      source: from,
+      target: run,
+      spaces,
+      customDmos,
+      selectedRulesets,
+      ...(rulesets ? { rulesets } : {}),
+    });
     if ('unsupported' in result) {
       unsupported.push({ path: input.path, family, from, reason: result.unsupported });
       return input;
@@ -169,7 +325,7 @@ export function crossSpaceRefusal(
  */
 function targetKeys(input: DeployInput): string[] {
   const document = input.document as unknown as Record<string, unknown>;
-  const keys = [`${familyOf(document)}:${(document.identity as { apiName: string }).apiName}`];
+  const keys = [`${familyOf(document)}:${documentName(document)}`];
   const spec = document.spec as Record<string, string>;
   if (document.kind === 'mapping')
     keys.push(
@@ -222,14 +378,42 @@ function projectRootOf(file: string): string {
 type PlannedCopy = { path: string; bytes: Buffer };
 
 /**
- * The copy file of a translated DMO or segment, as retrieve would write it.
+ * The copy file of a translated DMO, segment, data graph, ruleset or transform, as retrieve would
+ * write it.
  * @param {DeployInput} input Translated input.
  * @returns {PlannedCopy | undefined} Path and bytes; undefined for another family.
  */
 function plannedCopy(input: DeployInput): PlannedCopy | undefined {
   const document = input.document as unknown as Record<string, unknown>;
   const root = projectRootOf(input.path);
-  const apiName = (document.identity as { apiName: string }).apiName;
+  const apiName = documentName(document);
+  if (document.kind === 'native-data-graph')
+    return {
+      path: path.join(root, 'data360', 'dataGraphs', `${apiName}.native-dataGraph.json`),
+      bytes: Buffer.from(
+        `${JSON.stringify(validateNativeDataGraphDocument(document, 'retrieve'), undefined, 2)}\n`,
+      ),
+    };
+  if (document.kind === 'identity-resolution')
+    return {
+      path: path.join(root, 'data360', 'identityResolution', `${apiName}.identityResolution.json`),
+      bytes: Buffer.from(
+        serializeIdentityResolutionDocument(
+          validateIdentityResolutionDocument(document, 'retrieve'),
+          'retrieve',
+        ),
+      ),
+    };
+  if (document.kind === 'data-transform')
+    return {
+      path: path.join(root, dataTransformArtifactPath(apiName)),
+      bytes: Buffer.from(
+        serializeDataTransformDocument(
+          validateDataTransformDocument(document, 'retrieve'),
+          'retrieve',
+        ),
+      ),
+    };
   if (document.kind === 'dmo')
     return {
       path: path.join(root, 'data360', 'dmo', `${apiName}.dmo-meta.json`),
@@ -246,7 +430,8 @@ function plannedCopy(input: DeployInput): PlannedCopy | undefined {
 }
 
 /**
- * Check, before any write, that the copy file of a translated DMO or segment can be written: a
+ * Check, before any write, that the copy file of a translated item named before the write (DMO,
+ * segment, data graph, ruleset, transform) can be written: a
  * new path, or an existing file with exactly the same content (reused). Mapping and
  * relationship copies are named by Salesforce, so they are checked when they are written.
  * @param {readonly DeployInput[]} inputs Translated inputs.
@@ -367,7 +552,13 @@ export async function writeCopyFile(
           ? await writeNativeMappingDocument(named, root, false)
           : document.kind === 'relationship'
             ? await writeNativeRelationshipDocument(named, root, false)
-            : await writeSegmentDocument(named, root, false);
+            : document.kind === 'native-data-graph'
+              ? await writeDataGraphDocument(named, root, false)
+              : document.kind === 'identity-resolution'
+                ? await writeIdentityResolutionDocument(named, root, false)
+                : document.kind === 'data-transform'
+                  ? await writeDataTransformDocument(named, root, false)
+                  : await writeSegmentDocument(named, root, false);
     return {
       source: input.path,
       path: receipt.path,

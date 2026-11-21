@@ -1,5 +1,9 @@
 import { dataTransformName } from './path-selector.js';
-import { explainInput, printableKey } from '../services/operation-diagnostic.js';
+import {
+  crossSpaceSentence,
+  explainInput,
+  printableKey,
+} from '../services/operation-diagnostic.js';
 import { foldEnums } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
 import { dataSpaceKey, isDataSpaceName, readSingleDataSpace } from './data-space-field.js';
@@ -160,16 +164,18 @@ export function dataTransformSpace(input: Record<string, unknown>): string | und
  * @param {string} name Transform name.
  * @param {string} fileSpace The file's c__dataSpace.
  * @param {string} dataSpace The run's data space.
+ * @param {boolean} [crossSpace] A deploy of a file --allow-cross-dataspace can translate: say so.
  * @returns {DataTransformError} TRANSFORM_DATASPACE_MISMATCH with an explanation.
  */
 export function dataTransformSpaceMismatch(
   name: string,
   fileSpace: string,
   dataSpace: string,
+  crossSpace = false,
 ): DataTransformError {
   return explainInput(
     new DataTransformError('TRANSFORM_DATASPACE_MISMATCH'),
-    `Data transform ${name} is in the data space ${printableKey(fileSpace)} (${dataSpaceKey}, or the org's transform; one without any data space is handled in default), but the run's data space is ${printableKey(dataSpace)}. Run the command with --dataspace ${printableKey(fileSpace)}.`,
+    `Data transform ${name} is in the data space ${printableKey(fileSpace)} (${dataSpaceKey}, or the org's transform; one without any data space is handled in default), but the run's data space is ${printableKey(dataSpace)}. Run the command with --dataspace ${printableKey(fileSpace)}.${crossSpace ? crossSpaceSentence(dataSpace) : ''}`,
   );
 }
 
