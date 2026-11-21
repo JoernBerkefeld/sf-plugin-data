@@ -346,7 +346,11 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
   name, for example `data360/dmo/ds2_Order__dlm.dmo-meta.json`. Your original files never change.
   - A copy goes only to a new path. An existing file with the same content is reused; one with
     other content stops the deploy before any write (`CROSS_DATASPACE_COPY_CONFLICT`).
-  - A mapping or relationship copy takes the name Salesforce gave it.
+  - A mapping or relationship copy takes the name Salesforce gave it. A mapping copy holds the
+    mapping as Salesforce stores it, the same file a retrieve of the target data space writes.
+  - A copy file selected beside its original (for example `-d data360` after an earlier `-c`
+    run) would deploy the same item twice; the deploy is refused before any write
+    (`DUPLICATE_IDENTITY`) and names both files.
   - A DLO gets no copy file; the output shows its new data space.
 
 Each type page has a "Data spaces" section with its own rules. The

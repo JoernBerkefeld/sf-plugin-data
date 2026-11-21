@@ -53,6 +53,7 @@ import { createMappingClient } from '../../transport/mapping-rest.js';
 import { openBoundSsot } from '../../transport/bound-ssot.js';
 import type { BoundSsot } from '../../transport/bound-ssot.js';
 import { NativeMappingError } from '../../artifacts/native-mapping-document.js';
+import type { NativeMappingDocument } from '../../artifacts/native-mapping-document.js';
 import {
   preflightRelationship,
   executeRelationship,
@@ -113,7 +114,7 @@ import type {
   CrossSpaceFile,
   CrossSpacePlan,
 } from '../../services/cross-dataspace-deploy.js';
-import { verifyDloInputDigest } from '../../artifacts/read-deploy-input.js';
+import { authoredDocument, verifyDloInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { DloDeployInput } from '../../artifacts/read-deploy-input.js';
 import {
   calculatedInsightReadContext,
@@ -854,8 +855,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       return this.ssotSender(checkTarget, '68.0');
     };
     let crossPlan: CrossSpacePlan | undefined;
-    // The name Salesforce holds for each mapping (also an unchanged one), for its copy file.
-    const mappingTargetNames = new Map<string, string>();
+    // The mapping as Salesforce holds it (also an unchanged one), read back, for its copy file.
+    const mappingTargets = new Map<string, NativeMappingDocument>();
     const plugin = {
       name: packageMetadata.name,
       version: packageMetadata.version,
@@ -1531,7 +1532,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     (changes) => mappingChanges.set(input.path, changes),
                     effectiveScope,
                     (apiName) => mappingNames.set(input.path, apiName),
-                    (apiName) => mappingTargetNames.set(input.path, apiName),
+                    (_apiName, document) => mappingTargets.set(input.path, document),
                   )
                 : kind === 'dlo'
                   ? await (this.executeDlo ?? executeDloDeploy)(
@@ -1707,7 +1708,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                   (input) =>
                     input.path === captured.path &&
                     input.inputDigest === captured.inputDigest &&
-                    JSON.stringify(input.document) === JSON.stringify(captured.document),
+                    // A translated DLO (-c) still binds to the file's own document.
+                    JSON.stringify(authoredDocument(input)) === JSON.stringify(captured.document),
                 ),
             )
           )
@@ -3227,11 +3229,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             continue;
           const copy = await writeCopyFile(
             input,
-            input.document.kind === 'mapping'
-              ? mappingTargetNames.get(input.path)
-              : input.document.kind === 'relationship'
-                ? item.targetApiName
-                : undefined,
+            input.document.kind === 'relationship' ? item.targetApiName : undefined,
+            mappingTargets.get(input.path),
           );
           if (copy) copies.push(copy);
         }

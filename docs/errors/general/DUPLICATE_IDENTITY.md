@@ -14,6 +14,8 @@ The selection contains two different files whose content names the same componen
 
 Both members of a calculated insight or Segment pair at their canonical paths count as one component and do not trigger this code.
 
+With `--allow-cross-dataspace` the check runs again after the files of another data space are translated, before anything is sent: a file and the copy file an earlier `-c` deploy wrote for it reach the same component once translated (same family and API name, for a mapping the same source data lake object and target data model object, for a relationship the same source and target fields). The message names both files.
+
 ## Why the plugin stops
 
 With two candidate definitions the plugin cannot know which one you mean. Picking one would deploy content you may not have intended.

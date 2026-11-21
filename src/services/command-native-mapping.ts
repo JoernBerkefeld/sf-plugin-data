@@ -1,5 +1,6 @@
 import { operationDiagnostic } from './operation-diagnostic.js';
 import { NativeMappingError } from '../artifacts/native-mapping-document.js';
+import type { NativeMappingDocument } from '../artifacts/native-mapping-document.js';
 import { deployNativeMapping, preflightNativeMapping } from './native-mapping.js';
 import type { MappingDependencies } from './native-mapping.js';
 import type { MappingClient } from '../transport/mapping-rest.js';
@@ -90,7 +91,8 @@ export async function preflightMapping(
  * @param {Function} [onUpdated] Receive independently confirmed changes without changing JSON.
  * @param {string} requestScope The run's data space.
  * @param {Function} [onResolvedName] Receive the independently verified target name for presentation.
- * @param {Function} [onOrgName] Receive the name the org holds the mapping under, also when unchanged.
+ * @param {Function} [onOrgName] Receive the name the org holds the mapping under, also when
+ * unchanged, with the document the deploy confirmed by reading it back.
  * @returns {Promise<object>} Payload-free execution outcome.
  */
 export async function executeMapping(
@@ -100,7 +102,7 @@ export async function executeMapping(
   onUpdated: Parameters<typeof deployNativeMapping>[3],
   requestScope: string,
   onResolvedName?: (apiName: string) => void,
-  onOrgName?: (apiName: string) => void,
+  onOrgName?: (apiName: string, document: NativeMappingDocument) => void,
 ) {
   const ledger = new WriteLedger();
   const guarded: MappingClient = {
@@ -119,7 +121,7 @@ export async function executeMapping(
   try {
     const result = await deployNativeMapping(value, guarded, dependencies, onUpdated, requestScope);
     if (result.operation !== 'noop') onResolvedName?.(result.document.identity.apiName);
-    onOrgName?.(result.document.identity.apiName);
+    onOrgName?.(result.document.identity.apiName, result.document);
     return {
       outcome:
         result.operation === 'noop'

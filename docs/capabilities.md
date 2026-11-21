@@ -493,11 +493,15 @@ stays), DLO (the run's data space added to its list), UI segment (name, `segment
 the `ssot` spelling, a foreign prefix, a data space without a prefix) is
 `CROSS_DATASPACE_UNRESOLVED`; graphs, identity resolution, transforms, calculated insights, SQL
 and other segment types and data streams are `CROSS_DATASPACE_UNSUPPORTED`; both before any
-write. Every later file check compares against the file's own bytes and document, never the
-translation. After the stages, every translated item that deployed gets a copy file written
+write. Two inputs that reach the same org item once translated (same family and API name; a
+mapping's source DLO and target DMO; a relationship's source and target fields), such as a copy
+file selected beside its original, are `DUPLICATE_IDENTITY`, also before any write. Every later
+file check, `--changed-since` snapshots included, compares against the file's own bytes and
+document, never the translation. After the stages, every translated item that deployed gets a copy file written
 like retrieve writes it, only to a new path: DMO and segment copy paths are checked before the
 first write (identical content reused, other content `CROSS_DATASPACE_COPY_CONFLICT`); a
-mapping or relationship copy takes the name Salesforce holds it under and is left alone when a
+mapping or relationship copy takes the name Salesforce holds it under (a mapping copy is the
+mapping as the deploy read it back, with its pair selectors, as a retrieve writes it) and is left alone when a
 differing file exists there; a DLO gets none. `--preview` reports every rewrite and the planned
 copy files and writes nothing. Proven live through the plugin on API 68, default to `dataspace2` in one run: a custom DMO (created under its `ds2_` name), its DLO (membership added), its mapping (copy file under the name Salesforce returned) and a UI segment on it; the copy files redeploy unchanged, the default originals stay unchanged, a repeat reuses the identical copies, and the reverse preview places the `ds2_` files back (DB entry `data360:plugin-cross-dataspace-deploy-2a-api68`). Graph and other refused kinds are covered by unit tests only.
 

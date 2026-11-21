@@ -13,9 +13,14 @@ import {
   translateSegmentName,
 } from '../lib/services/cross-dataspace-rename.js';
 import { dataSpaceDirectory } from '../lib/services/data-space-check.js';
-import { captureDeployInputDigest, readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
+import {
+  captureDeployInputDigest,
+  readDeployInputs,
+  verifyDloInputDigest,
+} from '../lib/artifacts/read-deploy-input.js';
 import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
 import { writeNativeMappingDocument } from '../lib/artifacts/write-native-mapping.js';
+import { writeNativeRelationshipDocument } from '../lib/artifacts/write-native-relationship.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
 import { writeDloDocument } from '../lib/artifacts/write-dlo.js';
 import { preflightNativeDmo } from '../lib/services/native-dmo.js';
@@ -467,9 +472,11 @@ const deploy = async (documents, flags = {}, prepare, named = true) => {
         ? writeNativeDmoDocument
         : document.kind === 'mapping'
           ? writeNativeMappingDocument
-          : document.kind === 'dlo'
-            ? writeDloDocument
-            : writeSegmentDocument;
+          : document.kind === 'relationship'
+            ? writeNativeRelationshipDocument
+            : document.kind === 'dlo'
+              ? writeDloDocument
+              : writeSegmentDocument;
     const receipt = await writer(document, cwd, false);
     files.push(receipt.path);
   }
@@ -493,6 +500,24 @@ const deploy = async (documents, flags = {}, prepare, named = true) => {
   command.jsonEnabled = () => false;
   command.log = (line) => logs.push(line);
   command.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: files });
+  // --changed-since: the Git selection admits exactly these files, as read now.
+  command.selectGitInputs = async () => {
+    const captured = await readDeployInputs({ cwd, sourceDir: files });
+    calls.push('git');
+    return {
+      paths: files,
+      capturedInputs: captured,
+      dlos: captured.filter((input) => input.document.kind === 'dlo'),
+      segments: captured.filter((input) => input.document.kind === 'segment'),
+      provenance: {
+        repositoryRoot: cwd,
+        requestedRef: 'main',
+        referenceCommit: 'a'.repeat(40),
+        headCommit: 'b'.repeat(40),
+        mergeBase: 'c'.repeat(40),
+      },
+    };
+  };
   command.createSsotSender = () => ({ request: async () => assert.fail('no bound sender') });
   command.createDmoClient = () => ({});
   command.createDloClient = () => ({});
@@ -507,7 +532,29 @@ const deploy = async (documents, flags = {}, prepare, named = true) => {
       calls.push(
         `${step}:${document.kind}:${document.identity.apiName}:${JSON.stringify(document.c__dataSpace)}`,
       );
-      if (named && step === 'execute' && document.kind === 'mapping') rest[5]?.('Org_Mapping_ds2');
+      // The mapping as Salesforce holds it: its own name and pair selectors, plus a pair it
+      // generated (KQ_), never the selectors of the source org's file.
+      if (named && step === 'execute' && document.kind === 'mapping')
+        rest[5]?.('Org_Mapping_ds2', {
+          ...document,
+          identity: { apiName: 'Org_Mapping_ds2' },
+          spec: {
+            sourceEntityDeveloperName: document.spec.sourceEntityDeveloperName,
+            targetEntityDeveloperName: document.spec.targetEntityDeveloperName,
+            fieldMappings: [
+              ...document.spec.fieldMappings.map((pair, index) => ({
+                sourceFieldDeveloperName: pair.sourceFieldDeveloperName,
+                targetFieldDeveloperName: pair.targetFieldDeveloperName,
+                developerName: `OrgPair${index}`,
+              })),
+              {
+                sourceFieldDeveloperName: 'Generated__c',
+                targetFieldDeveloperName: 'KQ_Generated__c',
+                developerName: 'OrgGenerated',
+              },
+            ],
+          },
+        });
       return step === 'preflight'
         ? { family: document.kind, outcome: 'create', target: 'absent', diagnostics: [] }
         : { outcome: 'created', mutation: 'confirmed-created', diagnostics: [] };
@@ -519,6 +566,7 @@ const deploy = async (documents, flags = {}, prepare, named = true) => {
   command.preflightDlo = record('preflight');
   command.executeDlo = record('execute');
   command.captureInput = captureDeployInputDigest;
+  command.verifyDloInput = verifyDloInputDigest;
   command.verifySegmentInput = async () => {};
   command.preflightSegment = async (document) => {
     calls.push(`preflight:segment:${document.identity.apiName}:${document.c__dataSpace}`);
@@ -803,4 +851,127 @@ test('a segment file of another data space without the flag names the flag', asy
     const { result } = await deploy([segmentFile()], { 'allow-cross-dataspace': false });
     assert.equal(result.diagnostics.errors[0].code, 'SEGMENT_DATASPACE_MISMATCH');
     assert.match(result.diagnostics.errors[0].message, /add --allow-cross-dataspace \(-c\)/u);
+  }));
+
+test('--changed-since -c: a DLO, DMO and segment of another data space deploy on the batch route', async () =>
+  withSpaces(async () => {
+    const { result, calls } = await deploy([dloFile(), dmoFile(), segmentFile()], {
+      'changed-since': 'main',
+    });
+    assert.equal(result.status, 'success', JSON.stringify(result.result.items));
+    assert.equal(result.result.selection.changedSince, 'main');
+    assert.deepEqual(
+      calls.filter((call) => call === 'git' || call.startsWith('execute')).toSorted(),
+      [
+        `execute:dlo:CliSource__dll:["default","${SPACE}"]`,
+        `execute:dmo:ds2_CliOrder__dlm:"${SPACE}"`,
+        'execute:segment:ds2_CliAudience',
+        'git',
+      ],
+    );
+  }));
+
+test('--changed-since -c: a mapping of another data space deploys on the native route', async () =>
+  withSpaces(async () => {
+    const { result, calls, cwd } = await deploy([mappingFile('CliTarget__dlm')], {
+      'changed-since': 'main',
+    });
+    assert.equal(result.status, 'success', JSON.stringify(result.result.items));
+    assert.deepEqual(
+      calls.filter((call) => call === 'git' || call.startsWith('execute')),
+      ['git', `execute:mapping:Source_Map:"${SPACE}"`],
+    );
+    assert.ok('mapping/Org_Mapping_ds2.mapping-meta.json' in (await tree(cwd)));
+  }));
+
+test('a mapping copy is the mapping Salesforce holds: its selectors, never the source file ones', async () =>
+  withSpaces(async () => {
+    const authored = mappingFile('CliTarget__dlm');
+    authored.spec.fieldMappings = authored.spec.fieldMappings.map((pair, index) => ({
+      ...pair,
+      developerName: `SourcePair${index}`,
+    }));
+    authored.spec.label = 'Cli Map';
+    const { result, cwd } = await deploy([authored]);
+    assert.equal(result.status, 'success', JSON.stringify(result.result.items));
+    const files = await tree(cwd);
+    assert.deepEqual(JSON.parse(files['mapping/Org_Mapping_ds2.mapping-meta.json']), {
+      schemaVersion: 1,
+      kind: 'mapping',
+      c__dataSpace: SPACE,
+      identity: { apiName: 'Org_Mapping_ds2' },
+      spec: {
+        sourceEntityDeveloperName: 'CliSource__dll',
+        targetEntityDeveloperName: 'ds2_CliTarget__dlm',
+        // The generated pair Salesforce added is left out, as retrieve does.
+        fieldMappings: [
+          {
+            sourceFieldDeveloperName: 'ssot__Keep__c',
+            targetFieldDeveloperName: 'FirstName__c',
+            developerName: 'OrgPair0',
+          },
+          {
+            sourceFieldDeveloperName: 'Id__c',
+            targetFieldDeveloperName: 'KQ_Id__c',
+            developerName: 'OrgPair1',
+          },
+        ],
+        label: 'Cli Map',
+      },
+    });
+    assert.deepEqual(JSON.parse(files['mapping/Source_Map.mapping-meta.json']), authored);
+  }));
+
+const relationshipFile = (overrides) => ({
+  schemaVersion: 1,
+  kind: 'relationship',
+  c__dataSpace: 'default',
+  identity: { apiName: 'Rel' },
+  spec: {
+    sourceObjectName: 'CliOrder__dlm',
+    sourceFieldName: 'Person__c',
+    targetObjectName: 'ssot__Individual__dlm',
+    targetFieldName: 'ssot__Id__c',
+    cardinality: 'ManyToOne',
+    relationshipOwner: 'Source',
+  },
+  ...overrides,
+});
+
+test('a file selected beside its translated copy is DUPLICATE_IDENTITY before any write', async () =>
+  withSpaces(async () => {
+    const dmo = await deploy([dmoFile(), dmoFile('ds2_CliOrder__dlm', SPACE)]);
+    assert.equal(dmo.result.status, 'blocked');
+    assert.equal(dmo.result.diagnostics.errors[0].code, 'DUPLICATE_IDENTITY');
+    assert.match(dmo.result.diagnostics.errors[0].message, /CliOrder__dlm\.dmo-meta\.json and /u);
+    assert.deepEqual(dmo.calls, []);
+    // A mapping copy has the org's name: the same DLO and translated DMO make it the same item.
+    const copy = {
+      ...mappingFile('ds2_CliTarget__dlm'),
+      c__dataSpace: SPACE,
+      identity: { apiName: 'Org_Mapping_ds2' },
+    };
+    copy.spec.fieldMappings = [
+      { sourceFieldDeveloperName: 'Id__c', targetFieldDeveloperName: 'KQ_Id__c' },
+    ];
+    const mapping = await deploy([mappingFile('CliTarget__dlm'), copy], { preview: true });
+    assert.equal(mapping.result.status, 'blocked');
+    assert.equal(mapping.result.diagnostics.errors[0].code, 'DUPLICATE_IDENTITY');
+    assert.deepEqual(mapping.calls, []);
+    const both = await deploy([
+      relationshipFile(),
+      relationshipFile({
+        c__dataSpace: SPACE,
+        identity: { apiName: 'Org_Rel' },
+        spec: {
+          ...relationshipFile().spec,
+          sourceObjectName: 'ds2_CliOrder__dlm',
+          targetObjectName: 'ds2_Individual__dlm',
+          targetFieldName: 'Id__c',
+        },
+      }),
+    ]);
+    assert.equal(both.result.status, 'blocked');
+    assert.equal(both.result.diagnostics.errors[0].code, 'DUPLICATE_IDENTITY');
+    assert.deepEqual(both.calls, []);
   }));

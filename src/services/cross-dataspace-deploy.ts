@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { DeployInput } from '../artifacts/read-deploy-input.js';
+import type { NativeMappingDocument } from '../artifacts/native-mapping-document.js';
 import { translatedDeployInput } from '../artifacts/read-deploy-input.js';
 import {
   leanNativeDmoDocument,
@@ -156,6 +157,55 @@ export function crossSpaceRefusal(
       new CrossSpaceError('CROSS_DATASPACE_UNRESOLVED'),
       `These names cannot be placed in ${run} exactly, so nothing was sent: ${unresolved.join('; ')}.`,
     );
+  return duplicateTargets(plan, run, shown);
+}
+
+/**
+ * The keys under which an input reaches an org item: family and API name, and for a mapping its
+ * source DLO and target DMO, for a relationship both its sides (their org names differ from the
+ * file's).
+ * @param {DeployInput} input Input, translated or not.
+ * @returns {string[]} Lowercase target keys.
+ */
+function targetKeys(input: DeployInput): string[] {
+  const document = input.document as unknown as Record<string, unknown>;
+  const keys = [`${familyOf(document)}:${(document.identity as { apiName: string }).apiName}`];
+  const spec = document.spec as Record<string, string>;
+  if (document.kind === 'mapping')
+    keys.push(
+      `mapping-binding:${spec.sourceEntityDeveloperName}:${spec.targetEntityDeveloperName}`,
+    );
+  if (document.kind === 'relationship')
+    keys.push(
+      `relationship-binding:${spec.sourceObjectName}.${spec.sourceFieldName}:${spec.targetObjectName}.${spec.targetFieldName}`,
+    );
+  return keys.map((key) => key.toLowerCase());
+}
+
+/**
+ * Refuse two inputs that reach the same org item once translated (a copy file selected beside
+ * its original), before any write: both would deploy over each other.
+ * @param {CrossSpacePlan} plan Translated selection.
+ * @param {string} run The run's data space.
+ * @param {(file: string) => string} shown How a file path is shown.
+ * @returns {CrossSpaceError | undefined} DUPLICATE_IDENTITY with both files named.
+ */
+function duplicateTargets(
+  plan: CrossSpacePlan,
+  run: string,
+  shown: (file: string) => string,
+): CrossSpaceError | undefined {
+  const seen = new Map<string, string>();
+  for (const input of plan.inputs)
+    for (const key of targetKeys(input)) {
+      const prior = seen.get(key);
+      if (prior !== undefined && prior !== input.path)
+        return explainInput(
+          new CrossSpaceError('DUPLICATE_IDENTITY'),
+          `${shown(prior)} and ${shown(input.path)} describe the same ${familyOf(input.document as unknown as Record<string, unknown>)} once translated into ${run}, so nothing was sent. Select only one of them, for example leave out the copy file of an earlier --allow-cross-dataspace deploy, then rerun.`,
+        );
+      seen.set(key, input.path);
+    }
   return undefined;
 }
 
@@ -230,6 +280,44 @@ export async function precheckCopyFiles(
   return planned;
 }
 
+/**
+ * The key of one mapping pair: its source and target field.
+ * @param {{sourceFieldDeveloperName: string, targetFieldDeveloperName: string}} pair Pair.
+ * @param {string} pair.sourceFieldDeveloperName DLO field.
+ * @param {string} pair.targetFieldDeveloperName DMO field.
+ * @returns {string} Pair key.
+ */
+function pairKey(pair: {
+  sourceFieldDeveloperName: string;
+  targetFieldDeveloperName: string;
+}): string {
+  return `${pair.sourceFieldDeveloperName}:${pair.targetFieldDeveloperName}`;
+}
+
+/**
+ * The copy file of a deployed mapping as a retrieve of the target writes it: the mapping as read
+ * back (its name and the pair selectors Salesforce holds), with the deployed pairs only (no pair
+ * Salesforce generated) and the label the file set, unless that equals the name.
+ * @param {NativeMappingDocument} deployed Translated mapping that was deployed.
+ * @param {NativeMappingDocument} org The mapping as the deploy read it back.
+ * @returns {NativeMappingDocument} Copy document.
+ */
+function mappingCopy(
+  deployed: NativeMappingDocument,
+  org: NativeMappingDocument,
+): NativeMappingDocument {
+  const authored = new Set(deployed.spec.fieldMappings.map((pair) => pairKey(pair)));
+  const label = deployed.spec.label;
+  return {
+    ...org,
+    spec: {
+      ...org.spec,
+      fieldMappings: org.spec.fieldMappings.filter((pair) => authored.has(pairKey(pair))),
+      ...(label === undefined || label === org.identity.apiName ? {} : { label }),
+    },
+  };
+}
+
 /** What happened to one copy file. */
 export type CopyOutcome = {
   source: string;
@@ -243,22 +331,28 @@ export type CopyOutcome = {
  * same content is reused, one with other content is left alone and reported. A DLO gets no copy
  * (only its data space list changed in the org).
  * @param {DeployInput} input Translated input.
- * @param {string} [orgName] The name Salesforce returned, for a mapping or relationship.
+ * @param {string} [orgName] The name Salesforce returned, for a relationship.
+ * @param {NativeMappingDocument} [orgMapping] For a mapping, the document the deploy read back.
  * @returns {Promise<CopyOutcome | undefined>} Outcome; undefined for a DLO.
  */
 export async function writeCopyFile(
   input: DeployInput,
   orgName?: string,
+  orgMapping?: NativeMappingDocument,
 ): Promise<CopyOutcome | undefined> {
   const document = input.document as unknown as Record<string, unknown>;
   const root = projectRootOf(input.path);
   if (document.kind === 'dlo') return undefined;
   const named =
-    document.kind === 'mapping' || document.kind === 'relationship'
-      ? orgName === undefined
+    document.kind === 'mapping'
+      ? orgMapping === undefined
         ? undefined
-        : { ...document, identity: { ...(document.identity as object), apiName: orgName } }
-      : document;
+        : mappingCopy(document as unknown as NativeMappingDocument, orgMapping)
+      : document.kind === 'relationship'
+        ? orgName === undefined
+          ? undefined
+          : { ...document, identity: { ...(document.identity as object), apiName: orgName } }
+        : document;
   if (!named)
     return {
       source: input.path,
