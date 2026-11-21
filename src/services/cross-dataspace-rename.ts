@@ -182,6 +182,9 @@ export function translateDmoName(context: CrossSpaceContext, name: string): Plac
   }
   const rest = base.slice(source.length + 1);
   if (!rest || rest.includes('__')) return { reason: 'no rule places this DMO name' };
+  // A custom DMO file selected beside it is the evidence, also for a custom ds2_Unified… name.
+  if (target === undefined && context.customDmos?.has(name))
+    return { name: toTarget(rest), rule: 'dmo-prefix', kind: 'custom' };
   if (rest.startsWith('UnifiedLink') || rest.startsWith('Unified')) {
     const link = rest.startsWith('UnifiedLink');
     const entity = rest.slice((link ? 'UnifiedLink' : 'Unified').length);
@@ -196,8 +199,6 @@ export function translateDmoName(context: CrossSpaceContext, name: string): Plac
     };
   }
   if (target !== undefined) return { name: toTarget(rest), rule: 'dmo-prefix', kind: 'prefixed' };
-  if (context.customDmos?.has(name))
-    return { name: toTarget(rest), rule: 'dmo-prefix', kind: 'custom' };
   return {
     reason: `in default it is either the standard DMO ssot__${rest}__dlm or ${rest}__dlm, or a custom DMO ${rest}__dlm; select its DMO file (a custom DMO's fields show creationType Custom), or deploy it into another data space`,
   };
@@ -676,15 +677,20 @@ export function crossSpaceUnsupported(document: Record<string, unknown>): string
 }
 
 /**
- * The DMOs of a non-default data space that a selected DMO file shows to be custom: a field with
- * creationType Custom and none with Standard (as retrieve writes them).
+ * The DMOs of a non-default data space that a selected DMO file of that same data space shows to
+ * be custom: a field with creationType Custom and none with Standard (as retrieve writes them). A
+ * DMO file of another data space is no evidence.
  * @param {ReadonlyArray<Record<string, unknown>>} documents Admitted files.
+ * @param {string} source The data space of the files being translated.
  * @returns {Set<string>} DMO names.
  */
-export function customDmosOf(documents: ReadonlyArray<Record<string, unknown>>): Set<string> {
+export function customDmosOf(
+  documents: ReadonlyArray<Record<string, unknown>>,
+  source: string,
+): Set<string> {
   const names = new Set<string>();
   for (const document of documents) {
-    if (document.kind !== 'dmo') continue;
+    if (document.kind !== 'dmo' || document.c__dataSpace !== source) continue;
     const fields = (document.spec as { fields?: unknown } | undefined)?.fields;
     const name = (document.identity as { apiName?: unknown } | undefined)?.apiName;
     if (!Array.isArray(fields) || typeof name !== 'string') continue;

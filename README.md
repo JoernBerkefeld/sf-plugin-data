@@ -360,6 +360,8 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
     other content stops the deploy before any write (`CROSS_DATASPACE_COPY_CONFLICT`).
   - A mapping or relationship copy takes the name Salesforce gave it. A mapping copy holds the
     mapping as Salesforce stores it, the same file a retrieve of the target data space writes.
+    That name is known only after the deploy, so another file already at that path does not stop
+    the deploy: the copy is reported as not written, in the output and in the `--json` warnings.
   - A copy file selected beside its original (for example `-d data360` after an earlier `-c`
     run) would deploy the same item twice; the deploy is refused before any write
     (`DUPLICATE_IDENTITY`) and names both files.

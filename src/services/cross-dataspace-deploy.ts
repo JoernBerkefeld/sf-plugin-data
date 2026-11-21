@@ -241,7 +241,16 @@ export function planCrossSpaceInputs(
   rulesets?: readonly RulesetEntry[],
 ): CrossSpacePlan {
   const documents = inputs.map((input) => input.document as unknown as Record<string, unknown>);
-  const customDmos = customDmosOf(documents);
+  // Custom DMO evidence per source data space: only DMO files of that data space count.
+  const customDmos = new Map<string, Set<string>>();
+  const customDmosFrom = (source: string): Set<string> => {
+    let found = customDmos.get(source);
+    if (!found) {
+      found = customDmosOf(documents, source);
+      customDmos.set(source, found);
+    }
+    return found;
+  };
   // Rulesets this deploy translates too: their outputs keep the rule names (the ID is kept).
   const selectedRulesets = new Set(
     documents
@@ -262,7 +271,7 @@ export function planCrossSpaceInputs(
       source: from,
       target: run,
       spaces,
-      customDmos,
+      customDmos: customDmosFrom(from),
       selectedRulesets,
       ...(rulesets ? { rulesets } : {}),
     });

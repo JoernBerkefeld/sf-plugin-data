@@ -13,6 +13,7 @@ import {
   translateSegmentName,
 } from '../lib/services/cross-dataspace-rename.js';
 import { dataSpaceDirectory } from '../lib/services/data-space-check.js';
+import { planCrossSpaceInputs } from '../lib/services/cross-dataspace-deploy.js';
 import {
   captureDeployInputDigest,
   readDeployInputs,
@@ -390,31 +391,72 @@ test('translateDocument refuses every kind it does not cover yet', () => {
 test('a custom DMO file is evidence only with Custom fields and no Standard one', () => {
   assert.deepEqual(
     [
-      ...customDmosOf([
-        dmoFile('ds2_A__dlm', SPACE),
-        dmoFile('ds2_B__dlm', SPACE, [
-          {
-            name: 'Id__c',
-            label: 'Id',
-            dataType: 'Text',
-            isPrimaryKey: true,
-            creationType: 'Standard',
-          },
-          {
-            name: 'X__c',
-            label: 'X',
-            dataType: 'Text',
-            isPrimaryKey: false,
-            creationType: 'Custom',
-          },
-        ]),
-        dmoFile('ds2_C__dlm', SPACE, [
-          { name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true },
-        ]),
-      ]),
+      ...customDmosOf(
+        [
+          dmoFile('ds2_A__dlm', SPACE),
+          dmoFile('ds2_B__dlm', SPACE, [
+            {
+              name: 'Id__c',
+              label: 'Id',
+              dataType: 'Text',
+              isPrimaryKey: true,
+              creationType: 'Standard',
+            },
+            {
+              name: 'X__c',
+              label: 'X',
+              dataType: 'Text',
+              isPrimaryKey: false,
+              creationType: 'Custom',
+            },
+          ]),
+          dmoFile('ds2_C__dlm', SPACE, [
+            { name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true },
+          ]),
+          // A custom DMO file of another data space is no evidence for this one.
+          dmoFile('ds2_D__dlm', 'third'),
+        ],
+        SPACE,
+      ),
     ],
     ['ds2_A__dlm'],
   );
+});
+
+test('towards default a custom ds2_Unified DMO keeps its custom translation, not the output rule', () => {
+  const custom = translateDmoName(
+    to('default', SPACE, ['ds2_UnifiedOrders__dlm']),
+    'ds2_UnifiedOrders__dlm',
+  );
+  assert.deepEqual(custom, { name: 'UnifiedOrders__dlm', rule: 'dmo-prefix', kind: 'custom' });
+  // Without the evidence it is an identity resolution output by rule.
+  assert.equal(
+    translateDmoName(to('default', SPACE), 'ds2_UnifiedOrders__dlm').name,
+    'UnifiedssotOrders__dlm',
+  );
+});
+
+test('only DMO files of the translated file own data space are custom DMO evidence', () => {
+  const standard = [
+    { name: 'Id__c', label: 'Id', dataType: 'Text', isPrimaryKey: true, creationType: 'Standard' },
+  ];
+  const inputs = [
+    { path: '/p/data360/dmo/a.json', document: dmoFile('ds2_Shared__dlm', SPACE, standard) },
+    // A custom DMO of the same name in another data space says nothing about dataspace2's one.
+    { path: '/p/data360/dmo/b.json', document: dmoFile('ds2_Shared__dlm', 'third') },
+  ];
+  const plan = planCrossSpaceInputs(inputs, 'default', spaces);
+  assert.deepEqual(
+    plan.files[0].unresolved.map((entry) => entry.at),
+    ['identity.apiName'],
+  );
+  // The same file with dataspace2 evidence of its own is placed.
+  const own = planCrossSpaceInputs(
+    [{ path: '/p/data360/dmo/a.json', document: dmoFile('ds2_Shared__dlm', SPACE) }],
+    'default',
+    spaces,
+  );
+  assert.deepEqual(own.files[0].unresolved, []);
 });
 
 test('without the flag a file of another data space is refused and the message names the flag', async () => {
@@ -756,6 +798,31 @@ test('a DLO gets only the membership change and no copy; a mapping copy takes th
     assert.deepEqual(
       unnamed.result.result.crossDataSpace.copies.map((entry) => entry.outcome),
       ['not-written'],
+    );
+    assert.ok(
+      unnamed.result.diagnostics.warnings.some((line) =>
+        line.startsWith('Copy file not written for '),
+      ),
+      JSON.stringify(unnamed.result.diagnostics.warnings),
+    );
+    // Another file at the copy path: the mapping still deploys, the copy is reported as not written.
+    const clash = await deploy([mappingFile('CliTarget__dlm')], {}, async (cwd) => {
+      await writeNativeMappingDocument(
+        { ...mappingFile('Other__dlm'), identity: { apiName: 'Org_Mapping_ds2' } },
+        cwd,
+        false,
+      );
+    });
+    assert.equal(clash.result.status, 'success', JSON.stringify(clash.result.diagnostics));
+    assert.deepEqual(
+      clash.result.result.crossDataSpace.copies.map((entry) => entry.outcome),
+      ['not-written'],
+    );
+    assert.ok(
+      clash.result.diagnostics.warnings.some((line) =>
+        /Copy file not written for .*already exists with other content/u.test(line),
+      ),
+      JSON.stringify(clash.result.diagnostics.warnings),
     );
   }));
 

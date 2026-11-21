@@ -3245,6 +3245,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             mappingTargets.get(input.path),
           );
           if (copy) copies.push(copy);
+          // A copy that was not written does not fail the deploy; --json still shows it.
+          if (copy?.outcome === 'not-written')
+            envelope.diagnostics.warnings.push(
+              `Copy file not written for ${shown(copy.source)}: ${copy.reason ?? 'unknown reason'}.`,
+            );
         }
         envelope.result.crossDataSpace.copies = copies;
       }
