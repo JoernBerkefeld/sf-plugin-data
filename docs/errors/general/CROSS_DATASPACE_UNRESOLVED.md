@@ -32,6 +32,7 @@ A name that no rule places exactly is never guessed. Examples:
   - A column without a table in front when the tables of the query would spell it differently (for example a custom DMO and an identity resolution output towards `default`). Write the table or alias in front of it.
   - A name in a place the rewrite does not read (for example a function name), or a name still in the old spelling after the rewrite.
   - A column alias without `AS` that looks like a name (`SUM(x) total__c`): write `SUM(x) AS total__c`.
+  - A table alias that looks like a name (`FROM ssot__Individual__dlm ssot__Individual__dlm`): use a short alias such as `i`.
   - A name whose rule part is in another case (`SSOT__ID__C`, `Individual__DLM`): SQL ignores the case, the rules do not. Write `ssot__`, `__c`, `__dlm` in lower case.
   - SQL the plugin cannot read exactly: a backslash before a quote in a text, a comment inside a comment, or parentheses that do not match.
   - SQL holding an HTML entity (`&#39;`, `&lt;`, `&quot;`, …) outside texts and comments: an older plugin version wrote the model SQL of a DBT segment HTML-encoded, as Salesforce returns it. Retrieve the segment again.

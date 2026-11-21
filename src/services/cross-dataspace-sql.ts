@@ -554,7 +554,14 @@ class SqlAnalysis {
         !['ON', 'USING', 'TABLESAMPLE'].includes(this.upper(p, to))
       ) {
         source.qualifiers.unshift(this.nameAt(p).toLowerCase());
-        this.keep(p, true);
+        // An alias that looks like a name (`FROM ssot__Individual__dlm ssot__Individual__dlm`)
+        // cannot be told apart from the table name it qualifies: refused, not kept.
+        if (nameLike(this.nameAt(p)))
+          this.refuse(
+            p,
+            'a table alias that looks like an object or field name cannot be told apart from a name to place; use a short alias such as i',
+          );
+        else this.keep(p, true);
         p++;
         if (this.isPunct(p, '(', to)) {
           const close = this.match.get(p)!;

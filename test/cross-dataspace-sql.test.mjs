@@ -465,6 +465,21 @@ test('SQL holding an HTML entity outside texts and comments is refused, not tran
   );
 });
 
+test('a table alias that looks like a name is refused, with or without AS', () => {
+  for (const text of [
+    'SELECT ssot__Individual__dlm.ssot__Id__c AS x__c FROM ssot__Individual__dlm ssot__Individual__dlm',
+    'SELECT ssot__Individual__dlm.ssot__Id__c AS x__c FROM ssot__Individual__dlm AS ssot__Individual__dlm',
+    'SELECT ssot__Account__dlm.ssot__Id__c AS x__c FROM ssot__Individual__dlm ssot__Account__dlm',
+    'SELECT a.x__c AS y__c FROM ssot__Individual__dlm AS x__c',
+  ]) {
+    const entries = refused(text);
+    assert.ok(
+      entries.some((entry) => /table alias/u.test(entry.reason)),
+      text,
+    );
+  }
+});
+
 test('a parenthesis after JOIN is a subquery or a table group, not a table function', () => {
   assert.equal(
     clean(
