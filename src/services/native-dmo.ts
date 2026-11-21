@@ -142,6 +142,9 @@ export { isGeneratedDmoField } from '../artifacts/native-dmo-document.js';
 const standardCopyHint =
   "A standard DMO's copy in another data space is created by its first mapping, not by a DMO file. Deploy a mapping onto the copy instead of the DMO file.";
 
+const plainCopyHint =
+  'The plugin cannot create the copy of a standard DMO whose name has no ssot__ prefix yet. Map a DLO onto it in the data space, in Salesforce.';
+
 /**
  * Project an authored field to native input: bare name, read-only keys dropped, the rest as written.
  * Data type and optional keys are not restricted here; the API decides.
@@ -397,10 +400,17 @@ export async function preflightNativeDmo(
         origin = candidate;
         break;
       }
-    if (origin !== undefined)
+    const copy = `${apiName} is the copy of the standard DMO ${origin} in the data space ${requestScope}, and it does not exist there yet.`;
+    if (origin?.startsWith('ssot__'))
       throw explainInput(
         withHint(new NativeDmoError('UNSUPPORTED_DMO_TARGET'), standardCopyHint),
-        `${apiName} is the copy of the standard DMO ${origin} in the data space ${requestScope}, and it does not exist there yet. A standard DMO's copy is created by its first mapping: deploy a mapping onto ${apiName} instead of the DMO file.`,
+        `${copy} A standard DMO's copy is created by its first mapping: deploy a mapping onto ${apiName} instead of the DMO file.`,
+      );
+    // A mapping file derives only the ssot__ spelling of a copy, so it cannot create this one.
+    if (origin !== undefined)
+      throw explainInput(
+        withHint(new NativeDmoError('UNSUPPORTED_DMO_TARGET'), plainCopyHint),
+        `${copy} The plugin cannot create this copy yet, neither from a DMO file nor from a mapping file. It is created in Salesforce by mapping a DLO onto it in the data space ${requestScope}.`,
       );
     return {
       operation: 'create',

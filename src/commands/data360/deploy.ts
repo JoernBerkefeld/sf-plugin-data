@@ -98,11 +98,12 @@ import {
   prefixRuleCoversRead,
 } from '../../services/data-space-prefix.js';
 import type { PrefixType } from '../../services/data-space-prefix.js';
-import { createCalculatedInsightClient } from '../../transport/calculated-insight-rest.js';
-import { ConnectError } from '../../transport/connect-client.js';
 import { verifyDloInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { DloDeployInput } from '../../artifacts/read-deploy-input.js';
-import { calculatedInsightReadContext } from '../../services/native-calculated-insight.js';
+import {
+  calculatedInsightReadContext,
+  readCalculatedInsight,
+} from '../../services/native-calculated-insight.js';
 import type { CalculatedInsightReadContext } from '../../services/native-calculated-insight.js';
 import { preflightCalculatedInsightDeploy } from '../../services/preflight-calculated-insight-deploy.js';
 import type { CalculatedInsightPreview } from '../../services/preflight-calculated-insight-deploy.js';
@@ -184,18 +185,6 @@ import {
  * @param {string} [aliasOrUsername] Explicit target or configured default when omitted.
  * @returns {Promise<object | undefined>} Command-owned target connection or absent optional auth.
  */
-/**
- * Whether a read failure is Salesforce's not-found answer for a DMO, insight or transform.
- * @param {unknown} error Read failure.
- * @returns {boolean} Whether the component is absent.
- */
-function prefixTargetAbsent(error: unknown): boolean {
-  return (
-    (error instanceof NativeDmoError && error.code === 'DMO_HTTP_ERROR' && error.status === 404) ||
-    (error instanceof ConnectError && error.statusCode === 404)
-  );
-}
-
 const resolveTargetOrg = async (
   aliasOrUsername?: string,
 ): Promise<Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'> | undefined> => {
@@ -666,8 +655,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
 
   /**
    * Read one component whose name breaks the data space prefix rule, to tell a create from an
-   * update before the first write of the run. Salesforce's own not-found answer is absence; any
-   * other failure stops the run. Tests replace this seam.
+   * update before the first write of the run, the way each type's own stage tells them apart: a
+   * DMO's GET 404, an insight's 404 with a Salesforce error code, a transform's name missing from
+   * the complete inventory (ignoring case), a graph's exact not-found answer. Any other failure
+   * stops the run.
    * @param {PrefixType} type Kind of component.
    * @param {string} name Its name.
    * @param {string} space The run's data space.
@@ -686,8 +677,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         : await (this.resolveTargetOrg ?? resolveTargetOrg)(targetOrg as string | undefined);
     const target = org?.getUsername();
     if (!org || !target) throw new DataSpaceError('TARGET_ORG_REQUIRED');
-    try {
-      if (type === 'dmo')
+    if (type === 'dmo')
+      try {
         return {
           native: await (this.createDmoClient ?? createDmoClient)(
             target,
@@ -696,39 +687,50 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             this.ssotSender(target, '68.0'),
           ).get(name),
         };
-      const connection = org.getConnection('68.0');
-      if (type === 'calculated-insight')
-        return { native: await createCalculatedInsightClient(connection, '68.0', space).get(name) };
-      if (type === 'data-transform')
-        return {
-          native: await (this.createDataTransformClient ?? createDataTransformClient)(
-            connection,
-            '68.0',
-            space,
-          ).get(name),
-        };
-      const context = await (this.nativeGraphContext ?? nativeDataGraphReadContext)(
+      } catch (error) {
+        if (
+          error instanceof NativeDmoError &&
+          error.code === 'DMO_HTTP_ERROR' &&
+          error.status === 404
+        )
+          return undefined;
+        throw error;
+      }
+    const connection = org.getConnection('68.0');
+    if (type === 'calculated-insight') {
+      const read = await readCalculatedInsight(
+        (this.calculatedInsightContext ?? calculatedInsightReadContext)(connection, space),
+        name,
+      );
+      return read.state === 'absent' ? undefined : { native: read.raw };
+    }
+    if (type === 'data-transform') {
+      const client = (this.createDataTransformClient ?? createDataTransformClient)(
         connection,
+        '68.0',
         space,
       );
-      const read = await context.get(name);
-      if (read.status === 200) return { native: read.body };
-      // The item route's exact not-found answer (live API 68; HTTP 400, not 404).
-      if (
-        read.status === 400 &&
-        isDeepStrictEqual(read.body, [
-          { errorCode: 'INTERNAL_ERROR', message: `Data Graph not found with name ${name}` },
-        ])
-      )
-        return undefined;
-      throw retainConnectDiagnostic(
-        new Error('Data graph read failed'),
-        getConnectDiagnostic(read),
+      const targetId = await (this.resolveDataTransformTarget ?? resolveDataTransformTargetId)(
+        client,
+        name,
       );
-    } catch (error) {
-      if (prefixTargetAbsent(error)) return undefined;
-      throw error;
+      return targetId === undefined ? undefined : { native: await client.get(targetId) };
     }
+    const context = await (this.nativeGraphContext ?? nativeDataGraphReadContext)(
+      connection,
+      space,
+    );
+    const read = await context.get(name);
+    if (read.status === 200) return { native: read.body };
+    // The item route's exact not-found answer (live API 68; HTTP 400, not 404).
+    if (
+      read.status === 400 &&
+      isDeepStrictEqual(read.body, [
+        { errorCode: 'INTERNAL_ERROR', message: `Data Graph not found with name ${name}` },
+      ])
+    )
+      return undefined;
+    throw retainConnectDiagnostic(new Error('Data graph read failed'), getConnectDiagnostic(read));
   }
 
   /**

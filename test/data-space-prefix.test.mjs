@@ -4,7 +4,9 @@ import test from 'node:test';
 import Deploy from '../lib/commands/data360/deploy.js';
 import Retrieve from '../lib/commands/data360/retrieve.js';
 import { NativeDmoError, standardCopyOrigins } from '../lib/artifacts/native-dmo-document.js';
+import { ConnectError } from '../lib/transport/connect-client.js';
 import { preflightNativeDmo } from '../lib/services/native-dmo.js';
+import { hintOf } from '../lib/services/operation-diagnostic.js';
 import {
   prefixMismatch,
   prefixMismatchWarning,
@@ -135,13 +137,33 @@ test('a ds2_ DMO is the copy of ssot__<Name>__dlm or of <Name>__dlm, whichever i
     ),
     (error) =>
       error.code === 'UNSUPPORTED_DMO_TARGET' &&
-      /copy of the standard DMO StaticCurrencyRates_Home__dlm/u.test(error.message),
+      /copy of the standard DMO StaticCurrencyRates_Home__dlm/u.test(error.message) &&
+      // A mapping file derives only the ssot__ spelling: the mapping route is not promised.
+      /The plugin cannot create this copy yet, neither from a DMO file nor from a mapping file\. It is created in Salesforce by mapping a DLO onto it in the data space dataspace2\./u.test(
+        error.message,
+      ) &&
+      !/deploy a mapping/iu.test(error.message) &&
+      !/deploy a mapping/iu.test(hintOf(error).hint ?? ''),
   );
   assert.deepEqual(reads, [
     'ds2_StaticCurrencyRates_Home__dlm',
     'ssot__StaticCurrencyRates_Home__dlm',
     'StaticCurrencyRates_Home__dlm',
   ]);
+  // The copy of an ssot__ DMO still names the mapping route.
+  await assert.rejects(
+    preflightNativeDmo(
+      file('ds2_ContactPointPhone__dlm'),
+      org({ ssot__ContactPointPhone__dlm: 'Standard' }),
+      SPACE,
+      { dataSpacePrefix: 'ds2' },
+    ),
+    (error) =>
+      error.code === 'UNSUPPORTED_DMO_TARGET' &&
+      /deploy a mapping onto ds2_ContactPointPhone__dlm instead of the DMO file\./u.test(
+        error.message,
+      ),
+  );
   // A custom ds2_ DMO (neither candidate is Standard in default) is created as custom.
   const plan = await preflightNativeDmo(
     file('ds2_Order__dlm'),
@@ -392,4 +414,185 @@ test('retrieve warns for every retrieved custom component that breaks the prefix
     none,
   );
   assert.deepEqual(none, []);
+});
+
+test('deploy update of an existing insight, transform or graph without the prefix warns', async () => {
+  const restore = dataSpaceDirectory.read;
+  dataSpaceDirectory.read = async () => spaces;
+  try {
+    for (const [input, name, native, code] of [
+      [insight('Spend__cio'), 'Spend__cio', { creationType: 'Custom' }, 'CI_PREFIX_MISMATCH'],
+      [transform('Copy'), 'Copy', { creationType: 'CUSTOM' }, 'TRANSFORM_PREFIX_MISMATCH'],
+      [graph('Graph'), 'Graph', { name: 'Graph' }, 'DATA_GRAPH_PREFIX_MISMATCH'],
+    ]) {
+      // The warning is made before any write; each family's own stage is stopped later.
+      const { result, calls } = await deploy([dmo('ds2_First__dlm'), input], { [name]: native });
+      assert.equal(
+        calls[0],
+        `read:${input.document.kind === 'native-data-graph' ? 'data-graph' : input.document.kind}:${name}:${SPACE}`,
+      );
+      assert.notEqual(result.diagnostics.errors[0]?.code, code);
+      assert.equal(result.diagnostics.warnings.length, 1, code);
+      assert.match(result.diagnostics.warnings[0], new RegExp(`^${code}: `, 'u'));
+    }
+    // A generated transform (creationType SYSTEM) is not the user's: no warning.
+    const system = await deploy([dmo('ds2_First__dlm'), transform('Dg_Graph_1')], {
+      Dg_Graph_1: { creationType: 'SYSTEM' },
+    });
+    assert.equal(system.calls[0], `read:data-transform:Dg_Graph_1:${SPACE}`);
+    assert.deepEqual(system.result.diagnostics.warnings, []);
+  } finally {
+    dataSpaceDirectory.read = restore;
+  }
+});
+
+/**
+ * Deploy whose prefix-check read runs for real against fake clients.
+ * @param {Record<string, unknown>} seams Client seams.
+ * @returns {object} Command.
+ */
+const reader = (seams) => {
+  const command = Object.create(Deploy.prototype);
+  command.ssotSender = () => ({});
+  Object.assign(command, seams);
+  return command;
+};
+const org = { getConnection: () => ({}), getUsername: () => 'target' };
+const failure = new Error('connection reset');
+const dmoReader = (get) => reader({ createDmoClient: () => ({ get }) });
+const graphReader = (read) =>
+  reader({ nativeGraphContext: async () => ({ get: async () => read }) });
+
+test('the prefix check reads a DMO by its GET: 404 is absent, any other failure stops the run', async () => {
+  assert.equal(
+    await dmoReader(async () => {
+      throw new NativeDmoError('DMO_HTTP_ERROR', 404);
+    }).readPrefixTarget('dmo', 'Order__dlm', SPACE, org),
+    undefined,
+  );
+  const present = { name: 'Order__dlm', creationType: 'Custom', fields: [] };
+  assert.deepEqual(
+    await dmoReader(async () => present).readPrefixTarget('dmo', 'Order__dlm', SPACE, org),
+    { native: present },
+  );
+  for (const error of [new NativeDmoError('DMO_HTTP_ERROR', 500), failure])
+    await assert.rejects(
+      dmoReader(async () => {
+        throw error;
+      }).readPrefixTarget('dmo', 'Order__dlm', SPACE, org),
+      (thrown) => thrown === error,
+    );
+});
+
+test('the prefix check reads an insight like its stage: only a 404 with a Salesforce code is absent', async () => {
+  const ciReader = (get) => reader({ calculatedInsightContext: () => ({ dataSpace: SPACE, get }) });
+  for (const nativeCode of ['ITEM_NOT_FOUND', 'ENTITY_IS_DELETED'])
+    assert.equal(
+      await ciReader(async () => {
+        throw new ConnectError('REQUEST_FAILED', 404, nativeCode);
+      }).readPrefixTarget('calculated-insight', 'Spend__cio', SPACE, org),
+      undefined,
+    );
+  const present = { apiName: 'Spend__cio', creationType: 'Custom' };
+  assert.deepEqual(
+    await ciReader(async () => present).readPrefixTarget(
+      'calculated-insight',
+      'Spend__cio',
+      SPACE,
+      org,
+    ),
+    { native: present },
+  );
+  // A bare 404 (no Salesforce code) or any other failure is a read failure, never absence.
+  for (const error of [
+    new ConnectError('REQUEST_FAILED', 404),
+    new ConnectError('REQUEST_FAILED', 500),
+    failure,
+  ])
+    await assert.rejects(
+      ciReader(async () => {
+        throw error;
+      }).readPrefixTarget('calculated-insight', 'Spend__cio', SPACE, org),
+      (thrown) => thrown.code === 'CI_RUNTIME_UNKNOWN',
+    );
+});
+
+test('the prefix check finds a transform like its stage: by the complete inventory, ignoring case', async () => {
+  const id = '1dtAAAAAAAAAAAAAAA';
+  const gets = [];
+  const transformReader = (rows, list) =>
+    reader({
+      createDataTransformClient: () => ({
+        list: list ?? (async () => ({ totalSize: rows.length, dataTransforms: rows })),
+        get: async (nameOrId) => {
+          gets.push(nameOrId);
+          // A GET by name would answer 404: the inventory, never the GET, decides absence.
+          if (nameOrId !== id) throw new ConnectError('REQUEST_FAILED', 404, 'ITEM_NOT_FOUND');
+          return { id, name: 'copy', creationType: 'Custom' };
+        },
+      }),
+    });
+  assert.equal(
+    await transformReader([{ id, name: 'Other' }]).readPrefixTarget(
+      'data-transform',
+      'Copy',
+      SPACE,
+      org,
+    ),
+    undefined,
+  );
+  assert.deepEqual(gets, []);
+  assert.deepEqual(
+    await transformReader([{ id, name: 'copy' }]).readPrefixTarget(
+      'data-transform',
+      'Copy',
+      SPACE,
+      org,
+    ),
+    { native: { id, name: 'copy', creationType: 'Custom' } },
+  );
+  assert.deepEqual(gets, [id]);
+  // An inventory read failure stops the run.
+  await assert.rejects(
+    transformReader([], async () => {
+      throw failure;
+    }).readPrefixTarget('data-transform', 'Copy', SPACE, org),
+    (thrown) => thrown === failure,
+  );
+  await assert.rejects(
+    transformReader([], async () => ({ totalSize: 1, dataTransforms: [] })).readPrefixTarget(
+      'data-transform',
+      'Copy',
+      SPACE,
+      org,
+    ),
+    (thrown) => thrown.code === 'INCOMPLETE_TRANSFORM_INVENTORY',
+  );
+});
+
+test('the prefix check reads a graph: only its exact not-found answer is absent', async () => {
+  assert.equal(
+    await graphReader({
+      status: 400,
+      body: [{ errorCode: 'INTERNAL_ERROR', message: 'Data Graph not found with name Graph' }],
+    }).readPrefixTarget('data-graph', 'Graph', SPACE, org),
+    undefined,
+  );
+  assert.deepEqual(
+    await graphReader({ status: 200, body: { name: 'Graph' } }).readPrefixTarget(
+      'data-graph',
+      'Graph',
+      SPACE,
+      org,
+    ),
+    { native: { name: 'Graph' } },
+  );
+  for (const read of [
+    { status: 404, body: [] },
+    { status: 400, body: [{ errorCode: 'INTERNAL_ERROR', message: 'Something else' }] },
+  ])
+    await assert.rejects(
+      graphReader(read).readPrefixTarget('data-graph', 'Graph', SPACE, org),
+      /Data graph read failed/u,
+    );
 });

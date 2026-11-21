@@ -318,6 +318,9 @@ sfmc.guide [Data Spaces page](https://sfmc.guide/next/data-spaces/).
   deploy the mapping instead (see [mapping.md](mapping.md)). A `ds2_<Name>__dlm` file counts
   as a copy when `ssot__<Name>__dlm` or `<Name>__dlm` is a standard DMO of `default` (such as
   `StaticCurrencyRates_Home__dlm`); otherwise it is a custom DMO and is created as one.
+- A mapping deploy creates only the copy of an `ssot__<Name>__dlm` DMO. The plugin cannot
+  create the copy of a standard DMO without `ssot__` (`ds2_StaticCurrencyRates_Home__dlm`)
+  yet: it is created in Salesforce by mapping a DLO onto it in the data space.
 - Only if you have more than one data space: the name of a custom DMO carries its data
   space's prefix (`ds2_Order__dlm` in `dataspace2`), and in `default` no other space's prefix.
   Deploy refuses a new DMO that breaks this before any write

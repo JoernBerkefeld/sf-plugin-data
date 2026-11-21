@@ -464,12 +464,14 @@ Data space name prefixes of the org-unique families (2026-11-21): custom DMOs (c
 `Custom`, no namespace), calculated insights and data transforms (creationType `Custom`) and
 data graphs carry the prefix of their data space; in `default` no other space's prefix. The
 prefixes come from the command's one `GET /ssot/data-spaces`. Deploy checks every selected file
-locally before the first write of the run and reads only a name that breaks the rule: absent is
+locally before the first write of the run and reads only a name that breaks the rule, the way
+the type's own stage does (a transform by the complete inventory, ignoring case): absent is
 refused (`DMO_PREFIX_MISMATCH`, `CI_PREFIX_MISMATCH`, `TRANSFORM_PREFIX_MISMATCH`,
 `DATA_GRAPH_PREFIX_MISMATCH`), present is a warning and the deploy goes ahead. Retrieve warns
 per item. An org with only `default` reads nothing more. A new `<prefix>_<Name>__dlm` DMO file
 is refused as a standard copy when `ssot__<Name>__dlm` or `<Name>__dlm` reads as a Standard DMO
-of `default`, and is created as a custom DMO otherwise. Proven live through the plugin on API 68 in
+of `default`, and is created as a custom DMO otherwise; a copy of a `<Name>__dlm` standard DMO is
+not created by a mapping file either (only the `ssot__` spelling is). Proven live through the plugin on API 68 in
 `dataspace2` and `default` (DMO and calculated insight draft probes; DB entry
 `data360:plugin-dataspace-prefix-rule-acceptance-api68`); transforms and graphs are covered by
 unit tests only.

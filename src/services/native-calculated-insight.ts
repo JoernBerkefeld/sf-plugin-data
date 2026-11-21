@@ -110,7 +110,7 @@ export async function acquireCalculatedInsight(
  * @param {string} apiName Exact name ending in __cio.
  * @returns {Promise<{state: 'absent'} | {state: 'present'; raw: unknown}>} Absent, or the GET.
  */
-async function readCalculatedInsight(
+export async function readCalculatedInsight(
   context: Pick<CalculatedInsightReadContext, 'get'>,
   apiName: string,
 ): Promise<{ state: 'absent' } | { state: 'present'; raw: unknown }> {

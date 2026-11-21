@@ -17,7 +17,7 @@ The plugin sorts every existing DMO by what it writes on it:
 
 A whole-DMO delete is sent for every DMO, standard ones included, and Salesforce decides. This code means a deploy would create a new DMO with a namespaced name, or the org answered a DMO read without a name, so the plugin cannot tell what it would write to.
 
-It also means a DMO file names the copy of a standard DMO in another data space (`<prefix>_<Name>__dlm` of `ssot__<Name>__dlm`) that does not exist there yet. Such a copy is created by its first mapping, never by a DMO file; a create from the file would make a custom DMO of that name. For this cause the message names the copy and its standard DMO, and the hint says to deploy a mapping onto the copy instead.
+It also means a DMO file names the copy of a standard DMO in another data space (`<prefix>_<Name>__dlm` of `ssot__<Name>__dlm`) that does not exist there yet. Such a copy is created by its first mapping, never by a DMO file; a create from the file would make a custom DMO of that name. For this cause the message names the copy and its standard DMO, and the hint says to deploy a mapping onto the copy instead. The copy of a standard DMO without `ssot__` (`<prefix>_<Name>__dlm` of `<Name>__dlm`, such as `StaticCurrencyRates_Home__dlm`) cannot be created by the plugin yet, not even by a mapping file; the message says so, and the copy is created in Salesforce by mapping a DLO onto it in the data space.
 
 ## Why the plugin stops
 
@@ -28,7 +28,7 @@ Salesforce does not allow a new DMO name with a namespace. A read without a name
 1. Check the API name of the DMO in the org and in the file.
 2. To create a new DMO, use a name without a namespace prefix.
 3. If the org answers a DMO read without a name, read the DMO again later; report it if it persists.
-4. For a standard DMO copy that does not exist yet, deploy a mapping onto the copy instead of the DMO file.
+4. For a standard DMO copy that does not exist yet, deploy a mapping onto the copy instead of the DMO file. For the copy of a standard DMO without `ssot__`, map a DLO onto it in the data space in Salesforce.
 
 ## Example output
 

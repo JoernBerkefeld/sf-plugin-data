@@ -280,7 +280,9 @@ and an unknown data space stops it before any read or write.
   `ds2_<type>_<rulesetId>`. Files carry these names, and the plugin adds or removes no prefix.
 - **First mapping onto a standard DMO copy.** The copy exists only once something is mapped
   onto it in that data space. Deploy the mapping, not a DMO file, to create it; the plugin
-  sends the mapping the way Salesforce takes it.
+  sends the mapping the way Salesforce takes it. This works for the copy of an `ssot__` DMO;
+  the copy of a standard DMO without `ssot__` (`ds2_StaticCurrencyRates_Home__dlm`) the plugin
+  cannot create yet: map a DLO onto it in the data space in Salesforce.
 
 ### Name prefixes (only if you have more than one data space)
 
