@@ -14,6 +14,7 @@ import {
 import os from 'node:os';
 import path from 'node:path';
 import {
+  carriesDefinition,
   joinSegmentFiles,
   serializeSegmentFiles,
   validateSegmentDocument,
@@ -118,6 +119,32 @@ test('any SQL shape, several models and any model name are kept as written', () 
     const response = raw();
     response.segments[0].includeDbt.models = models;
     assert.deepEqual(projectSegment(response, 'Audience').candidate.spec.models, models);
+  }
+});
+
+test('the HTML-escaped model SQL of a GET is decoded for the file and every comparison', () => {
+  const plain =
+    "SELECT p.Id__c FROM Person__dlm p WHERE p.Name__c LIKE 'A%' AND p.Age__c < 3 AND p.Code__c <> \"x\" AND p.Text__c = '&lt;'";
+  const response = raw();
+  response.segments[0].includeDbt.models = [
+    {
+      name: 'Audience',
+      sql: 'SELECT p.Id__c FROM Person__dlm p WHERE p.Name__c LIKE &#39;A%&#39; AND p.Age__c &lt; 3 AND p.Code__c &lt;&gt; &quot;x&quot; AND p.Text__c = &#39;&amp;lt;&#39;',
+    },
+  ];
+  for (const mode of ['deploy', 'retrieve']) {
+    const projected = projectSegment(response, 'Audience', mode).candidate;
+    assert.equal(projected.spec.models[0].sql, plain, mode);
+    const desired = candidate();
+    desired.spec.models = [{ name: 'Audience', sql: plain }];
+    // The readback of a create or update with the plain SQL carries the file's definition.
+    assert.equal(carriesDefinition(projected, validateSegmentDocument(desired)), true, mode);
+    // Retrieve writes the plain SQL into the model's .sql file.
+    assert.deepEqual(
+      serializeSegmentFiles(projected).files.map((file) => file.text),
+      [plain],
+      mode,
+    );
   }
 });
 

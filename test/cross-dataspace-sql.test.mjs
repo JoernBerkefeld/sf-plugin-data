@@ -423,6 +423,48 @@ test('names are read without regard to case: another case of a rule part is refu
   );
 });
 
+test('SQL holding an HTML entity outside texts and comments is refused, not translated', () => {
+  for (const [text, at, name] of [
+    [
+      'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i WHERE i.ssot__Type__c = &#39;ssot__Account__dlm&#39;',
+      'X.sql line 1:75',
+      '&#39;',
+    ],
+    [
+      'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i WHERE i.ssot__A__c &LT; 3',
+      'X.sql line 1:70',
+      '&LT;',
+    ],
+    [
+      'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i WHERE i.ssot__A__c = &#x27;a&#x27;',
+      'X.sql line 1:72',
+      '&#x27;',
+    ],
+    [
+      'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i WHERE i.ssot__A__c = &quot;x&quot;',
+      'X.sql line 1:72',
+      '&quot;',
+    ],
+  ]) {
+    const result = sql(text);
+    assert.equal(result.sql, text);
+    assert.deepEqual(result.rewrites, []);
+    assert.deepEqual(
+      result.unresolved.map((entry) => [entry.at, entry.name]),
+      [[at, name]],
+      text,
+    );
+    assert.match(result.unresolved[0].reason, /retrieve the segment again/u);
+  }
+  // In a text or a comment it is text.
+  assert.equal(
+    clean(
+      "SELECT i.ssot__Id__c FROM ssot__Individual__dlm i -- a &amp; b\nWHERE i.ssot__A__c = '&#39;'",
+    ),
+    "SELECT i.Id__c FROM ds2_Individual__dlm i -- a &amp; b\nWHERE i.A__c = '&#39;'",
+  );
+});
+
 test('a parenthesis after JOIN is a subquery or a table group, not a table function', () => {
   assert.equal(
     clean(

@@ -34,6 +34,7 @@ A name that no rule places exactly is never guessed. Examples:
   - A column alias without `AS` that looks like a name (`SUM(x) total__c`): write `SUM(x) AS total__c`.
   - A name whose rule part is in another case (`SSOT__ID__C`, `Individual__DLM`): SQL ignores the case, the rules do not. Write `ssot__`, `__c`, `__dlm` in lower case.
   - SQL the plugin cannot read exactly: a backslash before a quote in a text, a comment inside a comment, or parentheses that do not match.
+  - SQL holding an HTML entity (`&#39;`, `&lt;`, `&quot;`, …) outside texts and comments: an older plugin version wrote the model SQL of a DBT segment HTML-encoded, as Salesforce returns it. Retrieve the segment again.
   - Salesforce accepts an insight left in the `default` spelling in another data space, and about three minutes after activation it ends in `ERROR` without a message. So every name outside texts and comments must be placed.
 - In a data graph, ruleset or transform: any object or field name the translation does not cover, also inside a compound value such as `R.FirstName__c`, or a name still in the old spelling after the translation (`ssot__…` towards another data space). In a transform, a field written with the qualifier of a join side is placed by that side; a qualifier that names no side of the join is refused. Salesforce accepts a graph left in the default spelling in another data space and builds it on the default objects, so such a name is refused instead of being sent.
 

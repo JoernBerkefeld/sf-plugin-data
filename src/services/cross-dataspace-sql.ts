@@ -194,6 +194,9 @@ const operatorWords = new Set([
   'ZONE',
 ]);
 
+// An HTML character reference as Salesforce writes it into returned SQL.
+const htmlEntity = /&(?:#\d+|#x[\da-f]+|quot|amp|lt|gt|apos);/iu;
+
 // Spark and Data Cloud SQL read names without regard to case.
 const fieldLike = /__c$/iu;
 const objectLike = /__(?:dlm|cio|dll)$/iu;
@@ -892,6 +895,30 @@ export function translateSql(sql: string, label: string, namer: SqlNamer): SqlTr
       ],
     };
   const at = (token: SqlToken): string => `${label} line ${token.line}:${token.column}`;
+  // `&#39;` outside a text reads as `&`, `#`, `39`, `;`: the `;` would split the statement and a
+  // name meant as text would be renamed. Such SQL is an HTML-escaped copy, not SQL to translate.
+  const code = tokens.map((token) =>
+    ['string', 'comment', 'quoted'].includes(token.kind)
+      ? ' '.repeat(token.text.length)
+      : token.text,
+  );
+  const entity = htmlEntity.exec(code.join(''));
+  if (entity) {
+    let offset = 0;
+    const token = tokens.find((entry, index) => (offset += code[index].length) > entity.index)!;
+    return {
+      sql,
+      rewrites: [],
+      unresolved: [
+        {
+          at: at(token),
+          name: entity[0],
+          reason:
+            'the SQL holds an HTML entity outside texts and comments, as an older plugin version wrote the model SQL of a DBT segment from Salesforce; retrieve the segment again and deploy the retrieved file',
+        },
+      ],
+    };
+  }
   const found = new SqlAnalysis(tokens, namer).run();
   if (typeof found === 'string')
     return {

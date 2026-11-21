@@ -1120,6 +1120,56 @@ test('a projection refusal of the readback ends the poll as SEGMENT_CREATE_UNCON
   );
 });
 
+test('a create whose readback holds the model SQL HTML-escaped is confirmed', async () => {
+  const desired = document();
+  desired.spec.models = [
+    {
+      name: 'Audience',
+      sql: "SELECT Person__dlm.Id__c FROM Person__dlm WHERE Person__dlm.Name__c LIKE 'A%'",
+    },
+  ];
+  const escaped = {
+    models: [
+      {
+        name: 'Audience',
+        sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE Person__dlm.Name__c LIKE &#39;A%&#39;',
+      },
+    ],
+  };
+  let acquisitions = 0;
+  const full = () => ({
+    ...runtime(desired, 'ACTIVE'),
+    includeDbt: escaped,
+    segmentOnId: 'target-local',
+    segmentMembershipDmo: { historyTable: 'history', latestTable: 'latest' },
+  });
+  const result = await executeSegmentDeploy(
+    desired,
+    { ...connection, getApiVersion: () => '68.0' },
+    '68.0',
+    'default',
+    {
+      allowProcessing: true,
+      verifyInput: async () => {},
+      bind: async () => [{ targetId: 'target-local', identity: desired.spec.segmentOn }],
+      acquire: async () =>
+        ++acquisitions <= 2
+          ? absent()
+          : { candidate: desired, blockers: [], expectations: { runtime: full() } },
+      create: async () => ({
+        ...runtime(desired, 'PROCESSING'),
+        includeDbt: escaped,
+        segmentOnId: 'target-local',
+      }),
+      read: async () => ({ segments: [full()] }),
+      now: () => 0,
+      delay: async () => {},
+    },
+  );
+  assert.equal(result.outcome, 'created', JSON.stringify(result.diagnostics));
+  assert.equal(result.mutation, 'confirmed-created');
+});
+
 test('a create of a segment with an empty description is confirmed although the GET omits it', async () => {
   const desired = document();
   desired.spec.description = '';
