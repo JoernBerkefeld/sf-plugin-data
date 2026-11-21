@@ -13,9 +13,11 @@ import type { OrgDataSpace } from './data-space-check.js';
  * - `segment-prefix`: a segment name gets, loses or swaps its data space prefix.
  * - `name-prefix`: a data graph, data transform or ruleset name gets, loses or swaps its data space prefix.
  * - `ruleset-read`: an identity resolution output named by the target data space's ruleset of the
- *   same type, from the one ruleset list read (its ruleset is not in this deploy).
- * - `generated`: a name Salesforce generates for one graph (its helper DMOs, transform and join
- *   and field names), left out; Salesforce generates new ones.
+ *   same type, from the one ruleset list read (its ruleset is not in this deploy). This also places
+ *   the outputs of the oldest `default` ruleset, which carry no suffix (`UnifiedIndividual__dlm`).
+ * - `generated`: a name Salesforce generates for one graph: its helper DMOs, transform and join and
+ *   field names are left out (Salesforce generates new ones); a node developer name is rebuilt as
+ *   Salesforce builds it, `<graph>_<object without __dlm>`.
  */
 export type CrossSpaceRule =
   | 'data-space'
@@ -85,6 +87,8 @@ const dmoSuffix = '__dlm';
 // Link fields named the same in every data space (live API 68, entry data360:dataspace2-graph-and-unified-fields-api68).
 const unifiedFieldsWithoutSsot = new Set(['UnifiedRecordId__c', 'SourceRecordId__c']);
 const nameValue = /^[A-Za-z][A-Za-z0-9_]*__(?:c|dlm)$/u;
+// A field named with the qualifier of a join side (`R.FirstName__c`).
+const qualifiedField = /^([A-Za-z][A-Za-z0-9_]*)\.([A-Za-z][A-Za-z0-9_]*__c)$/u;
 
 /**
  * The prefix of a data space, or a reason when a non-default one has none in the org's list.
@@ -128,8 +132,8 @@ function foreignPrefix(context: CrossSpaceContext, name: string, own?: string): 
 /**
  * Place a DMO name of the source data space in the target data space by rule. Never guesses: a
  * namespaced DMO, an identity resolution output without the `ssot` spelling (such as
- * `UnifiedIndividual__dlm`, paired by ruleset reads later), and a `<prefix>_<Name>__dlm` name
- * towards `default` that no selected custom DMO file explains are not placed.
+ * `UnifiedIndividual__dlm`; only the ruleset list pairs it, see pairedByRulesets), and a
+ * `<prefix>_<Name>__dlm` name towards `default` that no selected custom DMO file explains are not placed.
  * @param {CrossSpaceContext} context Translation context.
  * @param {string} name DMO name in the source data space.
  * @returns {Placed | NotPlaced} Target name and rule, or why it cannot be placed.
@@ -164,7 +168,7 @@ export function translateDmoName(context: CrossSpaceContext, name: string): Plac
     if (/^Unified[A-Z]/u.test(base) || base.endsWith('IdentityLink'))
       return {
         reason:
-          'it looks like an identity resolution output without the ssot spelling; such outputs are paired by their rulesets, which this deploy does not read',
+          'it looks like an identity resolution output without the ssot spelling (the oldest ruleset of default); no rule names it in another data space, only the ruleset list pairs it',
       };
     const owner = foreignPrefix(context, base);
     if (owner !== undefined)
@@ -314,16 +318,17 @@ export function translateRulesetName(context: CrossSpaceContext, name: string): 
  * Name an identity resolution output in the target data space from the ruleset list: the source
  * ruleset that lists the output, then the one ruleset of the same type in the target data space
  * and its output for the same entity. An output of a ruleset this deploy translates too keeps its
- * rule name (the ruleset ID is kept). None or several rulesets are not placed, with their names.
+ * rule name (the ruleset ID is kept); an output without a rule name (the oldest `default`
+ * ruleset's, no suffix) is then not placed. None or several rulesets are not placed, with their names.
  * @param {CrossSpaceContext} context Translation context with the ruleset list.
  * @param {string} name Output DMO name in the source data space.
- * @param {Placed} byRule The name the rule gives it.
+ * @param {Placed} [byRule] The name the rule gives it; none for an output without the `ssot` spelling.
  * @returns {Placed | NotPlaced} Target name, or why it cannot be placed.
  */
 function pairUnifiedOutput(
   context: CrossSpaceContext,
   name: string,
-  byRule: Placed,
+  byRule?: Placed,
 ): Placed | NotPlaced {
   const rulesets = context.rulesets ?? [];
   const hits = rulesets.flatMap((ruleset) =>
@@ -342,7 +347,12 @@ function pairUnifiedOutput(
       reason: `the rulesets ${hits.map((hit) => hit.ruleset.apiName).join(', ')} of ${context.source} all list it`,
     };
   const [{ ruleset, output, link }] = hits;
-  if (context.selectedRulesets?.has(ruleset.apiName)) return byRule;
+  if (context.selectedRulesets?.has(ruleset.apiName))
+    return (
+      byRule ?? {
+        reason: `it is an output of the ruleset ${ruleset.apiName}, which is in this deploy too; an output without a suffix (the oldest ruleset of ${context.source}) has no rule name in ${context.target}, so deploy the ruleset first and then the files that use its outputs`,
+      }
+    );
   const entity = translateDmoName(context, output.entity);
   if ('reason' in entity)
     return { reason: `its entity ${output.entity} cannot be placed: ${entity.reason}` };
@@ -364,6 +374,36 @@ function pairUnifiedOutput(
       reason: `the ruleset ${targets[0].apiName} of ${context.target} names no ${link ? 'link' : 'unified'} output for ${entity.name}`,
     };
   return { name: paired, rule: 'ruleset-read', kind: 'unified' };
+}
+
+/**
+ * Whether a DMO name of `default` is an identity resolution output without the `ssot` spelling:
+ * the oldest ruleset's outputs carry no suffix (`UnifiedIndividual__dlm`,
+ * `IndividualIdentityLink__dlm`). No rule names them elsewhere; only the ruleset list pairs them.
+ * @param {CrossSpaceContext} context Translation context.
+ * @param {string} name DMO name.
+ * @returns {boolean} Whether it is such an output.
+ */
+function unsuffixedOutput(context: CrossSpaceContext, name: string): boolean {
+  if (context.source !== 'default' || !name.endsWith(dmoSuffix)) return false;
+  const base = name.slice(0, -dmoSuffix.length);
+  return (
+    !base.includes('__') &&
+    !/^Unified(?:Link)?ssot/u.test(base) &&
+    (/^Unified[A-Z]/u.test(base) || base.endsWith('IdentityLink'))
+  );
+}
+
+/**
+ * Whether a DMO name is placed from the org's ruleset list: an identity resolution output by
+ * rule, or one of the oldest `default` ruleset without the `ssot` spelling.
+ * @param {CrossSpaceContext} context Translation context.
+ * @param {string} name DMO name in the source data space.
+ * @returns {boolean} Whether the ruleset list is needed for it.
+ */
+export function pairedByRulesets(context: CrossSpaceContext, name: string): boolean {
+  const placed = translateDmoName(context, name);
+  return 'reason' in placed ? unsuffixedOutput(context, name) : placed.rule === 'unified-output';
 }
 
 /** Collects the rewrites and unplaced names of one file. */
@@ -453,8 +493,12 @@ class Recorder {
    */
   public dmo(at: string, name: string): Placed | undefined {
     let placed = translateDmoName(this.context, name);
-    if (!('reason' in placed) && placed.rule === 'unified-output' && this.context.rulesets)
-      placed = pairUnifiedOutput(this.context, name, placed);
+    if (this.context.rulesets) {
+      if (!('reason' in placed) && placed.rule === 'unified-output')
+        placed = pairUnifiedOutput(this.context, name, placed);
+      else if ('reason' in placed && unsuffixedOutput(this.context, name))
+        placed = pairUnifiedOutput(this.context, name);
+    }
     this.visited.add(at);
     if ('reason' in placed) {
       this.unresolved.push({ at, name, reason: placed.reason });
@@ -492,28 +536,53 @@ class Recorder {
    * Place a field whose DMO may be unknown (a transform node after a join): towards another data
    * space every field drops `ssot__` whatever its DMO; otherwise the field must keep its name in
    * this direction whatever its DMO, or it is not placed.
+   * A qualified field (`R.FirstName__c`, the qualifier of a join side) keeps its qualifier.
    * @param {string} at JSON path.
    * @param {Placed | 'dlo' | undefined} owner The placed DMO, `dlo` for a DLO, or undefined when unknown.
-   * @param {string} field Source field name.
-   * @returns {string} Target field name.
+   * @param {string} field Source field name (without the qualifier).
+   * @param {string} [qualifier] The join side qualifier written before the field.
+   * @returns {string} Target value.
    */
-  public lineageField(at: string, owner: Placed | 'dlo' | undefined, field: string): string {
-    if (owner === 'dlo') {
-      this.keep(at);
-      return field;
+  public lineageField(
+    at: string,
+    owner: Placed | 'dlo' | undefined,
+    field: string,
+    qualifier?: string,
+  ): string {
+    const placed = this.placeLineage(owner, field);
+    const whole = qualifier === undefined ? field : `${qualifier}.${field}`;
+    if ('reason' in placed) {
+      this.visited.add(at);
+      this.unresolved.push({ at, name: whole, reason: placed.reason });
+      return whole;
     }
-    if (owner) return this.field(at, owner, field);
-    this.visited.add(at);
-    if (this.context.source === 'default')
-      return this.field(at, { name: '', kind: 'custom' }, field);
+    return this.change(
+      at,
+      whole,
+      qualifier === undefined ? placed.name : `${qualifier}.${placed.name}`,
+      placed.rule,
+    );
+  }
+
+  /**
+   * The target spelling of a field by its lineage, without recording it.
+   * @param {Placed | 'dlo' | undefined} owner The placed DMO, `dlo` for a DLO, or undefined when unknown.
+   * @param {string} field Source field name.
+   * @returns {{name: string; rule?: CrossSpaceRule} | NotPlaced} Target field name, or why not.
+   */
+  private placeLineage(
+    owner: Placed | 'dlo' | undefined,
+    field: string,
+  ): { name: string; rule?: CrossSpaceRule } | NotPlaced {
+    if (owner === 'dlo') return { name: field };
+    if (owner) return translateFieldName(this.context, owner.kind, field);
+    if (this.context.source === 'default') return translateFieldName(this.context, 'custom', field);
     if (!fieldNeverChanges(this.context, field))
-      this.unresolved.push({
-        at,
-        name: field,
+      return {
         reason:
           'the object this field belongs to is not known here, so its spelling cannot be placed',
-      });
-    return field;
+      };
+    return { name: field };
   }
 }
 
@@ -713,26 +782,16 @@ const graphGeneratedKeys = [
 ];
 
 /**
- * A graph node developer name that carries the source data space's prefix takes the target's;
- * any other keeps its name (Salesforce replaces node developer names on create).
- * @param {CrossSpaceContext} context Translation context.
- * @param {string} name Node developer name.
- * @returns {Placed | NotPlaced} Target name.
- */
-function nodeDevelopmentName(context: CrossSpaceContext, name: string): Placed | NotPlaced {
-  const source = prefixOf(context, context.source);
-  if (typeof source !== 'string' || !name.startsWith(`${source}_`)) return { name, kind: 'custom' };
-  return translateUniqueName(context, name);
-}
-
-/**
  * Translate one data graph node and the nodes below it: its object, joins, fields, criteria and
- * top-K order. The node's JSON path is rebuilt from the translated object names; generated names
- * (fragment DMO, join and field developer names) and the reference name Salesforce sets are left out.
+ * top-K order. The node's JSON path is rebuilt from the translated object names, and its developer
+ * name as Salesforce builds it, `<graph>_<object without __dlm>` (live API 68: a create replaces
+ * an authored one with that, and a retrieve reads it back so); other generated names (fragment
+ * DMO, join and field developer names) and the reference name Salesforce sets are left out.
  * @param {Record<string, unknown>} node Node, changed in place.
  * @param {string} at JSON path of the node.
  * @param {Placed | undefined} parent The parent node's placed DMO.
  * @param {string | undefined} parentJsonPath The parent's translated jsonPath (undefined for the root).
+ * @param {string | undefined} graph The graph's target name, or undefined when it was not placed.
  * @param {Recorder} recorder Collects changes.
  * @param {CrossSpaceContext} context Translation context.
  * @returns {Placed | undefined} The node's placed DMO.
@@ -742,6 +801,7 @@ function translateGraphNode(
   at: string,
   parent: Placed | undefined,
   parentJsonPath: string | undefined,
+  graph: string | undefined,
   recorder: Recorder,
   context: CrossSpaceContext,
 ): Placed | undefined {
@@ -750,15 +810,20 @@ function translateGraphNode(
   if (typeof node.projectedName === 'string')
     node.projectedName =
       recorder.dmo(`${at}.projectedName`, node.projectedName)?.name ?? node.projectedName;
+  const jsonPath = parentJsonPath === undefined ? '$' : `${parentJsonPath}.${String(node.name)}`;
   if (typeof node.jsonPath === 'string')
-    node.jsonPath = recorder.change(
-      `${at}.jsonPath`,
-      node.jsonPath,
-      parentJsonPath === undefined ? '$' : `${parentJsonPath}.${String(node.name)}`,
-      owner?.rule,
-    );
-  if (typeof node.devName === 'string')
-    node.devName = recorder.named(`${at}.devName`, node.devName, nodeDevelopmentName);
+    node.jsonPath = recorder.change(`${at}.jsonPath`, node.jsonPath, jsonPath, owner?.rule);
+  if (typeof node.devName === 'string') {
+    // Not placed (its object or the graph name is already refused): it is kept as it is.
+    if (owner && graph !== undefined)
+      node.devName = recorder.change(
+        `${at}.devName`,
+        node.devName,
+        `${graph}_${owner.name.slice(0, -dmoSuffix.length)}`,
+        'generated',
+      );
+    else recorder.keep(`${at}.devName`);
+  }
   recorder.leaveOut(node, 'fragmentDMOName', `${at}.fragmentDMOName`);
   recorder.leaveOut(node, 'referenceDeveloperName', `${at}.referenceDeveloperName`);
   for (const [index, field] of ((node.fields as Array<Record<string, unknown>>) ?? []).entries()) {
@@ -799,7 +864,8 @@ function translateGraphNode(
       child,
       `${at}.relatedObjects[${index}]`,
       owner,
-      String(node.jsonPath),
+      jsonPath,
+      graph,
       recorder,
       context,
     );
@@ -819,6 +885,7 @@ function translateGraph(
   context: CrossSpaceContext,
 ): void {
   const definition = copy.definition as Record<string, unknown>;
+  const graph = translateUniqueName(context, String(definition.name));
   definition.name = recorder.named('definition.name', String(definition.name), translateUniqueName);
   if (typeof definition.dataspaceName === 'string')
     definition.dataspaceName = recorder.change(
@@ -834,6 +901,7 @@ function translateGraph(
     'definition.sourceObject',
     undefined,
     undefined,
+    'reason' in graph ? undefined : graph.name,
     recorder,
     context,
   );
@@ -958,18 +1026,42 @@ function transformObject(
 }
 
 /**
- * Translate every field name in a value (a string or a list of them) by its lineage.
+ * Translate every field name in a value (a string or a list of them) by its lineage. A field
+ * written with a join side's qualifier (`R.FirstName__c`) is placed by that side's lineage; a
+ * qualifier that names no side of the join the value comes from is not placed.
  * @param {unknown} value Field name or list.
  * @param {string} at JSON path.
  * @param {Lineage} lineage Whose fields they are.
  * @param {Recorder} recorder Collects changes.
+ * @param {Map<string, Lineage>} [qualifiers] The qualifiers of the join the value comes from.
  * @returns {unknown} Translated value.
  */
-function lineageFields(value: unknown, at: string, lineage: Lineage, recorder: Recorder): unknown {
-  if (typeof value === 'string')
-    return nameValue.test(value) ? recorder.lineageField(at, lineage, value) : value;
+function lineageFields(
+  value: unknown,
+  at: string,
+  lineage: Lineage,
+  recorder: Recorder,
+  qualifiers?: ReadonlyMap<string, Lineage>,
+): unknown {
+  if (typeof value === 'string') {
+    if (nameValue.test(value)) return recorder.lineageField(at, lineage, value);
+    const qualified = qualifiedField.exec(value);
+    if (!qualified) return value;
+    const [, qualifier, field] = qualified;
+    if (qualifiers?.has(qualifier))
+      return recorder.lineageField(at, qualifiers.get(qualifier), field, qualifier);
+    recorder.visited.add(at);
+    recorder.unresolved.push({
+      at,
+      name: value,
+      reason: `the qualifier ${qualifier} names no side of the join this value comes from, so the object of its field is not known and its spelling cannot be placed`,
+    });
+    return value;
+  }
   if (Array.isArray(value))
-    return value.map((entry, index) => lineageFields(entry, `${at}[${index}]`, lineage, recorder));
+    return value.map((entry, index) =>
+      lineageFields(entry, `${at}[${index}]`, lineage, recorder, qualifiers),
+    );
   return value;
 }
 
@@ -1036,6 +1128,27 @@ function translateStl(
     const sources = sourcesOf(node);
     return sources.length === 1 ? lineageOf(sources[0], seen) : undefined;
   };
+  // The qualifiers of the nearest join above a node (`leftQualifier`, `rightQualifier`), each with
+  // the lineage of its side.
+  const qualifiersOf = (
+    key: string,
+    seen = new Set<string>(),
+  ): ReadonlyMap<string, Lineage> | undefined => {
+    const node = nodes[key];
+    if (!node || seen.has(key)) return undefined;
+    seen.add(key);
+    const sources = sourcesOf(node);
+    if (node.action !== 'join')
+      return sources.length === 1 ? qualifiersOf(sources[0], seen) : undefined;
+    const parameters = (node.parameters ?? {}) as Record<string, unknown>;
+    const found = new Map<string, Lineage>();
+    for (const [side, name] of ['leftQualifier', 'rightQualifier'].entries()) {
+      const qualifier = parameters[name];
+      if (typeof qualifier === 'string' && qualifier)
+        found.set(qualifier, lineageOf(sources[side] ?? ''));
+    }
+    return found;
+  };
   for (const [key, node] of Object.entries(nodes)) {
     const nodeAt = `${at}.nodes.${key}.parameters`;
     const parameters = (node.parameters ?? {}) as Record<string, unknown>;
@@ -1048,10 +1161,12 @@ function translateStl(
           `${nodeAt}.${name}`,
           side === undefined ? undefined : lineageOf(sources[side] ?? ''),
           recorder,
+          side === undefined ? undefined : qualifiersOf(sources[side] ?? ''),
         );
       }
     if (node.action !== 'outputD360') continue;
     const input = sources.length === 1 ? lineageOf(sources[0]) : undefined;
+    const qualifiers = sources.length === 1 ? qualifiersOf(sources[0]) : undefined;
     const output =
       typeof parameters.name === 'string'
         ? transformObject(`${nodeAt}.name`, parameters.name, recorder)
@@ -1065,6 +1180,7 @@ function translateStl(
         `${nodeAt}.fieldsMappings[${index}].sourceField`,
         input,
         recorder,
+        qualifiers,
       );
       pair.targetField = lineageFields(
         pair.targetField,
@@ -1141,9 +1257,10 @@ function translateTransform(
 /**
  * The full-coverage check of a translated graph, ruleset or transform: Salesforce accepts a graph
  * left in the source spelling in another data space (live API 68), so a missed reference would
- * not fail. Every name-like value (`…__c`, `…__dlm`) the translation did not look at, and every
- * value still in the source spelling (`ssot__` towards a non-default data space, another data
- * space's prefix), is a name that cannot be placed. Labels and descriptions are text.
+ * not fail. Every value with a name-like part (`…__c`, `…__dlm`, also inside `R.FirstName__c`)
+ * the translation did not look at, and every value with a part still in the source spelling
+ * (`ssot__` towards a non-default data space, another data space's prefix), is a name that
+ * cannot be placed. Labels and descriptions are text.
  * @param {unknown} value Translated document or part of it.
  * @param {string} at JSON path.
  * @param {Recorder} recorder The translation's record.
@@ -1170,15 +1287,20 @@ function coverageGaps(
     return;
   }
   if (typeof value !== 'string' || reported.has(at)) return;
-  const foreign = context.spaces.some(
-    (space) =>
-      space.prefix !== undefined &&
-      space.name !== context.target &&
-      value.startsWith(`${space.prefix}_`) &&
-      !value.endsWith('__dll'),
+  // A compound value (`R.FirstName__c`, an expression) is checked token by token.
+  const tokens = value.split(/[^A-Za-z0-9_]+/u).filter(Boolean);
+  const foreign = tokens.some((token) =>
+    context.spaces.some(
+      (space) =>
+        space.prefix !== undefined &&
+        space.name !== context.target &&
+        token.startsWith(`${space.prefix}_`) &&
+        !token.endsWith('__dll'),
+    ),
   );
   const leftover = (context.target !== 'default' && value.includes('ssot__')) || foreign;
-  if (!leftover && (recorder.visited.has(at) || !nameValue.test(value))) return;
+  if (!leftover && (recorder.visited.has(at) || !tokens.some((token) => nameValue.test(token))))
+    return;
   reported.add(at);
   recorder.unresolved.push({
     at,

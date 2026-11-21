@@ -338,9 +338,13 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
   - Identity resolution outputs: when their ruleset is in the same deploy,
     `UnifiedssotIndividual<Id>__dlm` becomes `ds2_UnifiedIndividual<Id>__dlm`. Otherwise deploy
     reads the org's ruleset list once and takes the output of the one ruleset of the same type
-    in the target data space; none or several are refused.
+    in the target data space; none or several are refused. The outputs of the oldest `default`
+    ruleset have no suffix (`UnifiedIndividual__dlm`) and are always placed from that list.
   - The names Salesforce generates for one graph (its helper DMOs and transform, join and field
-    developer names) are left out; Salesforce generates new ones.
+    developer names) are left out; Salesforce generates new ones. A node developer name is
+    rebuilt as Salesforce builds it: `ds2_PhoneGraph_ds2_ContactPointPhone`.
+  - In a transform, a field after a join written with the side's qualifier (`R.FirstName__c`)
+    is placed by that side.
   - A mapping keeps its DLO side; it is found by its DLO and DMO, as always.
 - **Nothing is guessed.** A name no rule places exactly is listed, and the whole deploy is
   refused before any write (`CROSS_DATASPACE_UNRESOLVED`). For example, `ds2_Order__dlm`

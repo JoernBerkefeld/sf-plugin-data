@@ -182,7 +182,8 @@ test('a data graph between two non-default data spaces swaps the prefix, back to
   const third = translateDocument(ds2, to('third', SPACE));
   assert.deepEqual(third.unresolved, []);
   assert.equal(third.document.definition.name, 'th_CliPhoneGraph');
-  assert.equal(third.document.definition.sourceObject.devName, 'th_CliPhoneGraph_Root');
+  // A node developer name is rebuilt as Salesforce builds it: <graph>_<object without __dlm>.
+  assert.equal(third.document.definition.sourceObject.devName, 'th_CliPhoneGraph_th_CliOrder');
   assert.equal(
     third.document.definition.sourceObject.relatedObjects[0].jsonPath,
     '$.th_CliItem__dlm',
@@ -195,7 +196,63 @@ test('a data graph between two non-default data spaces swaps the prefix, back to
   assert.deepEqual(back.unresolved, []);
   assert.equal(back.document.definition.name, 'CliPhoneGraph');
   assert.equal(back.document.definition.primaryObjectName, 'CliOrder__dlm');
-  assert.equal(back.document.definition.sourceObject.devName, 'CliPhoneGraph_Root');
+  assert.equal(back.document.definition.sourceObject.devName, 'CliPhoneGraph_CliOrder');
+});
+
+test('a retrieved node developer name is rebuilt for the target graph, in both directions', () => {
+  // As retrieve writes it: <graph>_<object without __dlm> on every node.
+  const retrieved = graphFile();
+  retrieved.definition.sourceObject.devName = 'CliPhoneGraph_ssot__ContactPointPhone';
+  retrieved.definition.sourceObject.relatedObjects[0].devName = 'CliPhoneGraph_ssot__Individual';
+  const there = translateDocument(retrieved, to(SPACE));
+  assert.deepEqual(there.unresolved, []);
+  const root = there.document.definition.sourceObject;
+  assert.equal(root.devName, 'ds2_CliPhoneGraph_ds2_ContactPointPhone');
+  assert.equal(root.relatedObjects[0].devName, 'ds2_CliPhoneGraph_ds2_Individual');
+  assert.ok(
+    there.rewrites.some(
+      (entry) =>
+        entry.at === 'definition.sourceObject.devName' &&
+        entry.from === 'CliPhoneGraph_ssot__ContactPointPhone' &&
+        entry.rule === 'generated',
+    ),
+  );
+  // Back towards default: a unified output root of dataspace2 (live shape
+  // ds2_CliXsPhone2b_ds2_ContactPointPhone) becomes <graph>_UnifiedssotIndividual<Id>.
+  const ds2 = graphFile({
+    space: SPACE,
+    name: 'ds2_CliPhoneGraph',
+    root: 'ds2_UnifiedIndividualT1__dlm',
+    child: 'ds2_UnifiedLinkIndividualT1__dlm',
+    ssot: '',
+  });
+  ds2.definition.sourceObject.devName = 'ds2_CliPhoneGraph_ds2_UnifiedIndividualT1';
+  const back = translateDocument(ds2, to('default', SPACE));
+  assert.deepEqual(back.unresolved, []);
+  assert.equal(
+    back.document.definition.sourceObject.devName,
+    'CliPhoneGraph_UnifiedssotIndividualT1',
+  );
+  // A node whose object is not placed keeps its developer name; the node itself is refused.
+  const namespaced = graphFile({ child: 'ns__Thing__dlm' });
+  namespaced.definition.sourceObject.relatedObjects[0].devName = 'CliPhoneGraph_ns__Thing';
+  const refused = translateDocument(namespaced, to(SPACE));
+  assert.equal(
+    refused.document.definition.sourceObject.relatedObjects[0].devName,
+    'CliPhoneGraph_ns__Thing',
+  );
+  assert.ok(unresolvedAt(refused).includes('definition.sourceObject.relatedObjects[0].name'));
+});
+
+test('a related node of a parent without jsonPath gets a structural path, never undefined', () => {
+  const file = graphFile();
+  delete file.definition.sourceObject.jsonPath;
+  const result = translateDocument(file, to(SPACE));
+  assert.equal(
+    result.document.definition.sourceObject.relatedObjects[0].jsonPath,
+    '$.ds2_Individual__dlm',
+  );
+  assert.equal(Object.hasOwn(result.document.definition.sourceObject, 'jsonPath'), false);
 });
 
 test('full coverage: a graph reference the translation does not cover is refused, never left', () => {
@@ -309,6 +366,86 @@ test('identity resolution outputs are paired from the ruleset list: none, one, t
   );
 });
 
+/**
+ * The oldest ruleset of default: its outputs carry no suffix and no ssot spelling.
+ * @returns {object[]} Ruleset entries.
+ */
+const oldestRuleset = () => [
+  {
+    apiName: 'Individual_Main',
+    dataSpace: 'default',
+    configurationType: 'individual',
+    outputs: [
+      {
+        entity: 'ssot__Individual__dlm',
+        unified: 'UnifiedIndividual__dlm',
+        link: 'IndividualIdentityLink__dlm',
+      },
+      {
+        entity: 'ssot__ContactPointEmail__dlm',
+        unified: 'UnifiedContactPointEmail__dlm',
+        link: 'ContactPointEmailIdentityLink__dlm',
+      },
+    ],
+  },
+];
+
+test('outputs of the oldest default ruleset without suffix are paired from the ruleset list', () => {
+  const file = () =>
+    graphFile({ root: 'UnifiedIndividual__dlm', child: 'IndividualIdentityLink__dlm' });
+  const both = [...oldestRuleset(), ...rulesets([['ds2_Individual_X9', SPACE, 'X9']])];
+  const paired = translateDocument(file(), to(SPACE, 'default', { rulesets: both }));
+  assert.deepEqual(paired.unresolved, []);
+  const root = paired.document.definition.sourceObject;
+  assert.equal(root.name, 'ds2_UnifiedIndividualX9__dlm');
+  assert.equal(root.relatedObjects[0].name, 'ds2_UnifiedLinkIndividualX9__dlm');
+  // Unified output fields lose ssot__ towards another data space.
+  assert.equal(root.fields[1].sourceFieldName, 'TelephoneNumber__c');
+  assert.ok(paired.rewrites.some((entry) => entry.rule === 'ruleset-read'));
+  // The same pattern for another entity.
+  const email = translateDocument(
+    graphFile({ root: 'UnifiedContactPointEmail__dlm', child: 'ssot__Individual__dlm' }),
+    to(SPACE, 'default', {
+      rulesets: [
+        ...oldestRuleset(),
+        {
+          apiName: 'ds2_Individual_X9',
+          dataSpace: SPACE,
+          configurationType: 'individual',
+          outputs: [
+            {
+              entity: 'ds2_ContactPointEmail__dlm',
+              unified: 'ds2_UnifiedContactPointEmailX9__dlm',
+              link: 'ds2_UnifiedLinkContactPointEmailX9__dlm',
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(email.unresolved, []);
+  assert.equal(email.document.definition.primaryObjectName, 'ds2_UnifiedContactPointEmailX9__dlm');
+  // Its ruleset in the same deploy: no rule name exists, so it is refused with the reason.
+  const same = translateDocument(
+    file(),
+    to(SPACE, 'default', { rulesets: both, selectedRulesets: new Set(['Individual_Main']) }),
+  );
+  assert.equal(same.unresolved[0].at, 'definition.sourceObject.name');
+  assert.match(same.unresolved[0].reason, /Individual_Main, which is in this deploy too/u);
+  assert.match(same.unresolved[0].reason, /deploy the ruleset first/u);
+  // No ruleset in the target data space: refused as for any other output.
+  assert.match(
+    translateDocument(file(), to(SPACE, 'default', { rulesets: oldestRuleset() })).unresolved[0]
+      .reason,
+    /dataspace2 has no ruleset of the type individual/u,
+  );
+  // Without the ruleset list it is never placed by rule.
+  assert.match(
+    translateDocument(file(), to(SPACE)).unresolved[0].reason,
+    /only the ruleset list pairs it/u,
+  );
+});
+
 const input = (document) => ({ path: '/p/data360/dataGraphs/g.native-dataGraph.json', document });
 
 test('the ruleset list is read only when a file names an output; the read is parsed per entry', async () => {
@@ -321,6 +458,9 @@ test('the ruleset list is read only when a file names an output; the read is par
     ),
     true,
   );
+  // An output of the oldest default ruleset (no suffix) needs it too.
+  for (const root of ['UnifiedIndividual__dlm', 'IndividualIdentityLink__dlm'])
+    assert.equal(crossSpaceNeedsRulesets([input(graphFile({ root }))], SPACE, spaces), true, root);
   // A file of the run's own data space never needs it.
   assert.equal(
     crossSpaceNeedsRulesets(
@@ -596,6 +736,121 @@ test('an STL transform on DMOs: load fields, output mappings and join keys by li
   assert.deepEqual(nodes.OUT1.parameters.fieldsMappings, [
     { sourceField: 'FirstName__c', targetField: 'First__c' },
   ]);
+});
+
+/**
+ * An STL transform of dataspace2 that joins a DLO load (left) with a unified output load
+ * (right, qualifier R) and writes qualified right-side fields.
+ * @param {string} sourceField The output mapping's source field.
+ * @param {object} [join] Extra join parameters.
+ * @returns {object} Transform file.
+ */
+const joinedTransform = (sourceField, join = {}) => {
+  const file = transformFile({
+    LOAD1: {
+      action: 'load',
+      parameters: {
+        dataset: { name: 'ds2_UnifiedIndividualB__dlm', type: 'dataModelObject' },
+        fields: ['UnifiedRecordId__c', 'FirstName__c'],
+        sampleDetails: { dataspace: SPACE, sortBy: [], type: 'TopN' },
+      },
+      sources: [],
+    },
+    JOIN0: {
+      action: 'join',
+      parameters: {
+        joinType: 'LEFT',
+        leftKeys: ['Id__c'],
+        rightKeys: ['UnifiedRecordId__c'],
+        rightQualifier: 'R',
+        ...join,
+      },
+      sources: ['LOAD0', 'LOAD1'],
+    },
+    OUT1: {
+      action: 'outputD360',
+      parameters: {
+        name: 'CliOut__dll',
+        type: 'dataLakeObject',
+        fieldsMappings: [{ sourceField, targetField: 'First__c' }],
+      },
+      sources: ['JOIN0'],
+    },
+  });
+  file.c__dataSpace = SPACE;
+  const definition = file.definition;
+  definition.name = 'ds2_CliCopy';
+  definition.dataSpaceName = SPACE;
+  definition.definition.name = 'ds2_CliCopy';
+  definition.definition.nodes.LOAD0.parameters.sampleDetails.dataspace = SPACE;
+  return file;
+};
+
+test('an STL field qualified by a join side is placed by that side, towards default too', () => {
+  const back = translateDocument(joinedTransform('R.FirstName__c'), to('default', SPACE));
+  assert.deepEqual(back.unresolved, []);
+  const nodes = back.document.definition.definition.nodes;
+  assert.equal(nodes.LOAD1.parameters.dataset.name, 'UnifiedssotIndividualB__dlm');
+  assert.deepEqual(nodes.LOAD1.parameters.fields, ['UnifiedRecordId__c', 'ssot__FirstName__c']);
+  assert.equal(nodes.OUT1.parameters.fieldsMappings[0].sourceField, 'R.ssot__FirstName__c');
+  assert.ok(
+    back.rewrites.some(
+      (entry) => entry.from === 'R.FirstName__c' && entry.to === 'R.ssot__FirstName__c',
+    ),
+  );
+  // And from default into dataspace2: the qualified field drops ssot__.
+  const there = translateDocument(back.document, to(SPACE));
+  assert.deepEqual(there.unresolved, []);
+  assert.equal(
+    there.document.definition.definition.nodes.OUT1.parameters.fieldsMappings[0].sourceField,
+    'R.FirstName__c',
+  );
+  // A left qualifier places by the left side (a DLO keeps its field names).
+  const left = translateDocument(
+    joinedTransform('L.Id__c', { leftQualifier: 'L' }),
+    to('default', SPACE),
+  );
+  assert.deepEqual(left.unresolved, []);
+  assert.equal(
+    left.document.definition.definition.nodes.OUT1.parameters.fieldsMappings[0].sourceField,
+    'L.Id__c',
+  );
+});
+
+test('a qualifier that names no join side, or a compound name nothing covers, is refused', () => {
+  const unknown = translateDocument(joinedTransform('X.FirstName__c'), to('default', SPACE));
+  assert.deepEqual(unresolvedAt(unknown), [
+    'definition.definition.nodes.OUT1.parameters.fieldsMappings[0].sourceField',
+  ]);
+  assert.match(unknown.unresolved[0].reason, /qualifier X names no side of the join/u);
+  // Towards dataspace2 as well.
+  const fromDefault = transformFile({
+    OUT1: {
+      action: 'outputD360',
+      parameters: {
+        name: 'CliOut__dll',
+        type: 'dataLakeObject',
+        fieldsMappings: [{ sourceField: 'R.ssot__FirstName__c', targetField: 'First__c' }],
+      },
+      sources: ['LOAD0'],
+    },
+  });
+  assert.deepEqual(unresolvedAt(translateDocument(fromDefault, to(SPACE))), [
+    'definition.definition.nodes.OUT1.parameters.fieldsMappings[0].sourceField',
+  ]);
+  // A compound value in a key the translation does not know: every name-like part counts.
+  const compound = joinedTransform('R.FirstName__c');
+  compound.definition.definition.nodes.JOIN0.parameters.condition = 'L.Id__c = R.FirstName__c';
+  const refused = translateDocument(compound, to('default', SPACE));
+  assert.deepEqual(unresolvedAt(refused), [
+    'definition.definition.nodes.JOIN0.parameters.condition',
+  ]);
+  // A compound value with another data space's prefix inside is still the source spelling.
+  const prefixed = joinedTransform('R.FirstName__c');
+  prefixed.definition.definition.nodes.JOIN0.parameters.note = 'from R.ds2_Thing';
+  const leftover = translateDocument(prefixed, to('default', SPACE));
+  assert.deepEqual(unresolvedAt(leftover), ['definition.definition.nodes.JOIN0.parameters.note']);
+  assert.match(leftover.unresolved[0].reason, /still spelled as in dataspace2/u);
 });
 
 test('an STL transform with an expression node, or a SQL transform, is refused as not supported yet', () => {

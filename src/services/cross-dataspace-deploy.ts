@@ -31,7 +31,7 @@ import type {
   CrossSpaceUnresolved,
   RulesetEntry,
 } from './cross-dataspace-rename.js';
-import { customDmosOf, translateDmoName, translateDocument } from './cross-dataspace-rename.js';
+import { customDmosOf, pairedByRulesets, translateDocument } from './cross-dataspace-rename.js';
 import { explainInput } from './operation-diagnostic.js';
 
 /** One file of another data space, translated into the run's data space. */
@@ -132,7 +132,8 @@ function stringsOf(value: unknown, into: string[] = []): string[] {
 
 /**
  * Whether a selected file of another data space names an identity resolution output (by the
- * rule's spelling): only then does the deploy read the ruleset list, once.
+ * rule's spelling, or an output of the oldest default ruleset without suffix such as
+ * `UnifiedIndividual__dlm`): only then does the deploy read the ruleset list, once.
  * @param {readonly DeployInput[]} inputs The admitted selection.
  * @param {string} run The run's data space.
  * @param {readonly OrgDataSpace[]} spaces The org's data spaces.
@@ -148,11 +149,9 @@ export function crossSpaceNeedsRulesets(
     const from = crossSpaceSource(document, run);
     if (from === undefined) return false;
     const context = { source: from, target: run, spaces };
-    return stringsOf(document).some((value) => {
-      if (!value.endsWith('__dlm')) return false;
-      const placed = translateDmoName(context, value);
-      return !('reason' in placed) && placed.rule === 'unified-output';
-    });
+    return stringsOf(document).some(
+      (value) => value.endsWith('__dlm') && pairedByRulesets(context, value),
+    );
   });
 }
 
