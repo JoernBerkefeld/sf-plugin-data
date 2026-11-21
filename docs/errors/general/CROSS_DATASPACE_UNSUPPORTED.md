@@ -1,6 +1,6 @@
 # `CROSS_DATASPACE_UNSUPPORTED`
 
-> --allow-cross-dataspace cannot translate this kind of file yet (insights, SQL segments, SQL transforms, STL transforms with expression nodes, streams). Nothing was sent. Deploy those in their own data space.
+> --allow-cross-dataspace cannot translate this kind of file yet (DCSQL transforms, STL transforms with expression nodes, streams). Nothing was sent. Deploy those in their own data space.
 
 |              |                                                          |
 | ------------ | -------------------------------------------------------- |
@@ -16,7 +16,8 @@ This only matters when your org has more than one data space.
 
 - DMOs, mappings and relationships.
 - DLOs: the run's data space is added to the DLO's data spaces.
-- UI and Waterfall segments.
+- UI, Waterfall and SQL (DBT) segments.
+- Calculated insights, classic and SQL Insights Builder (`DC_SQL`).
 - Data graphs.
 - Identity resolution rulesets.
 - STL data transforms made only of load, join and output nodes.
@@ -24,7 +25,8 @@ This only matters when your org has more than one data space.
 Other kinds are not translated yet:
 
 - STL data transforms with a formula, filter or other expression node.
-- DCSQL data transforms, calculated insights, SQL (DBT) segments and segments of other types: they hold SQL.
+- DCSQL data transforms.
+- Segments of other types.
 - Data streams.
 
 ## Why the plugin stops
@@ -42,7 +44,7 @@ A half-translated selection would deploy some components into the run's data spa
 Deploy preview: blocked (CROSS_DATASPACE_UNSUPPORTED). No deployment executed.
 Data space: dataspace2.
 CROSS_DATASPACE_UNSUPPORTED: --allow-cross-dataspace cannot deploy these files into dataspace2 yet: data360/dataTransforms/Enrich.dataTransform.json (the STL node FORMULA0 (formula) is a formula, filter or other expression node; expressions come in a later step, only load, join and output nodes can be translated now). Nothing was sent. Deploy them with --dataspace default, or leave them out of this deploy.
-Hint: --allow-cross-dataspace cannot translate this kind of file yet (insights, SQL segments, SQL transforms, STL transforms with expression nodes, streams). Nothing was sent. Deploy those in their own data space.
+Hint: --allow-cross-dataspace cannot translate this kind of file yet (DCSQL transforms, STL transforms with expression nodes, streams). Nothing was sent. Deploy those in their own data space.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/CROSS_DATASPACE_UNSUPPORTED.md
 ```
 

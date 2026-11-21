@@ -17,12 +17,14 @@ import { planCrossSpaceInputs } from '../lib/services/cross-dataspace-deploy.js'
 import {
   captureDeployInputDigest,
   readDeployInputs,
+  verifyCalculatedInsightInputDigest,
   verifyDloInputDigest,
 } from '../lib/artifacts/read-deploy-input.js';
 import { writeNativeDmoDocument } from '../lib/artifacts/write-native-dmo.js';
 import { writeNativeMappingDocument } from '../lib/artifacts/write-native-mapping.js';
 import { writeNativeRelationshipDocument } from '../lib/artifacts/write-native-relationship.js';
 import { writeSegmentDocument } from '../lib/artifacts/write-segment.js';
+import { writeNativeCalculatedInsightDocument } from '../lib/artifacts/write-native-calculated-insight.js';
 import { writeDloDocument } from '../lib/artifacts/write-dlo.js';
 import { preflightNativeDmo } from '../lib/services/native-dmo.js';
 import { preflightNativeMapping } from '../lib/services/native-mapping.js';
@@ -377,9 +379,8 @@ test('translateDocument refuses every kind it does not cover yet', () => {
       c__dataSpace: 'default',
       definition: { name: 'T', definition: { type: 'DCSQL' } },
     },
-    { kind: 'calculated-insight', identity: { dataSpace: 'default', apiName: 'C__cio' } },
     { kind: 'data-stream', c__dataSpace: ['default'] },
-    segmentFile({ spec: { ...segmentFile().spec, segmentType: 'DBT' } }),
+    segmentFile({ spec: { ...segmentFile().spec, segmentType: 'Dynamic' } }),
   ])
     assert.match(
       translateDocument(document, to(SPACE)).unsupported,
@@ -520,7 +521,9 @@ const deploy = async (documents, flags = {}, prepare, named = true) => {
             ? writeNativeRelationshipDocument
             : document.kind === 'dlo'
               ? writeDloDocument
-              : writeSegmentDocument;
+              : document.kind === undefined
+                ? writeNativeCalculatedInsightDocument
+                : writeSegmentDocument;
     const receipt = await writer(document, cwd, false);
     files.push(receipt.path);
   }
@@ -609,6 +612,16 @@ const deploy = async (documents, flags = {}, prepare, named = true) => {
   command.executeMapping = record('execute');
   command.preflightDlo = record('preflight');
   command.executeDlo = record('execute');
+  command.preflightCalculatedInsight = async (native) => {
+    calls.push(`preflight:calculated-insight:${native.apiName}:${native.dataSpace}`);
+    return { family: 'calculated-insight', outcome: 'create', target: 'absent', diagnostics: [] };
+  };
+  command.executeCalculatedInsight = async (native) => {
+    calls.push(`execute:calculated-insight:${native.apiName}:${native.expression}`);
+    return { outcome: 'created', mutation: 'confirmed-created', diagnostics: [] };
+  };
+  command.verifyCalculatedInsightInput = verifyCalculatedInsightInputDigest;
+  command.calculatedInsightContext = () => ({ check: () => {} });
   command.captureInput = captureDeployInputDigest;
   command.verifyDloInput = verifyDloInputDigest;
   command.verifySegmentInput = async () => {};
@@ -1046,4 +1059,123 @@ test('a file selected beside its translated copy is DUPLICATE_IDENTITY before an
     assert.equal(both.result.status, 'blocked');
     assert.equal(both.result.diagnostics.errors[0].code, 'DUPLICATE_IDENTITY');
     assert.deepEqual(both.calls, []);
+  }));
+
+// Step 3a: a calculated insight (JSON and SQL) and a DBT segment (JSON and a SQL file per model).
+const insightFile = (expression) => ({
+  apiName: 'CliSpend__cio',
+  dataSpace: 'default',
+  definitionType: 'CALCULATED_METRIC',
+  displayName: 'Cli Spend',
+  publishScheduleInterval: 'NOT_SCHEDULED',
+  queryDialect: 'ANSI_SQL',
+  expression,
+});
+const dbtSegmentFile = () => ({
+  ...segmentFile(),
+  identity: { apiName: 'CliSql' },
+  spec: {
+    displayName: 'Cli SQL',
+    description: '',
+    segmentType: 'DBT',
+    segmentOn: { kind: 'dmo', apiName: 'ssot__Individual__dlm' },
+    models: [
+      {
+        name: 'Audience',
+        sql: 'SELECT ssot__Individual__dlm.ssot__Id__c FROM ssot__Individual__dlm',
+      },
+    ],
+    lookbackPeriod: 'P90D',
+  },
+});
+
+test('--preview -c lists the SQL rewrites of an insight and a DBT segment with file and line', async () =>
+  withSpaces(async () => {
+    const { result, calls, logs, cwd } = await deploy(
+      [
+        insightFile('SELECT COUNT(i.ssot__Id__c) AS cnt__c\nFROM ssot__Individual__dlm i'),
+        dbtSegmentFile(),
+      ],
+      { preview: true },
+    );
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.ok(
+      calls.includes(`preflight:calculated-insight:ds2_CliSpend__cio:${SPACE}`),
+      calls.join(','),
+    );
+    assert.ok(calls.every((call) => !call.startsWith('execute')));
+    for (const line of [
+      '  CliSpend__cio.calculatedInsight-meta.sql line 1:16: ssot__Id__c -> Id__c (field-ssot).',
+      '  CliSpend__cio.calculatedInsight-meta.sql line 2:6: ssot__Individual__dlm -> ds2_Individual__dlm (standard-copy).',
+      '  CliSql.segment.Audience.sql line 1:30: ssot__Id__c -> Id__c (field-ssot).',
+    ])
+      assert.ok(logs.includes(line), `${line}\n${logs.join('\n')}`);
+    assert.deepEqual(
+      result.result.crossDataSpace.plannedCopies
+        .map((file) => path.relative(cwd, file).replaceAll('\\', '/'))
+        .toSorted(),
+      [
+        'data360/calculatedInsights/ds2_CliSpend__cio.calculatedInsight-meta.json',
+        'data360/calculatedInsights/ds2_CliSpend__cio.calculatedInsight-meta.sql',
+        'data360/segments/ds2_CliSql.segment.Audience.sql',
+        'data360/segments/ds2_CliSql.segment.json',
+      ],
+    );
+    assert.equal(Object.keys(await tree(cwd)).length, 4, 'preview writes nothing');
+  }));
+
+test('deploy -c sends the translated insight SQL and writes its JSON and SQL copy files', async () =>
+  withSpaces(async () => {
+    const { result, calls, cwd } = await deploy([
+      insightFile('SELECT COUNT(i.ssot__Id__c) AS cnt__c FROM ssot__Individual__dlm i'),
+      dbtSegmentFile(),
+    ]);
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.ok(
+      calls.includes(
+        'execute:calculated-insight:ds2_CliSpend__cio:SELECT COUNT(i.Id__c) AS cnt__c FROM ds2_Individual__dlm i',
+      ),
+      calls.join(','),
+    );
+    const files = await tree(cwd);
+    assert.equal(
+      files['calculatedInsights/ds2_CliSpend__cio.calculatedInsight-meta.sql'],
+      'SELECT COUNT(i.Id__c) AS cnt__c FROM ds2_Individual__dlm i\n',
+    );
+    assert.equal(
+      JSON.parse(files['calculatedInsights/ds2_CliSpend__cio.calculatedInsight-meta.json'])
+        .c__dataSpace,
+      SPACE,
+    );
+    assert.equal(
+      files['calculatedInsights/CliSpend__cio.calculatedInsight-meta.sql'],
+      'SELECT COUNT(i.ssot__Id__c) AS cnt__c FROM ssot__Individual__dlm i\n',
+      'the original is not changed',
+    );
+    assert.equal(
+      files['segments/ds2_CliSql.segment.Audience.sql'],
+      'SELECT ds2_Individual__dlm.Id__c FROM ds2_Individual__dlm',
+    );
+  }));
+
+test('an insight whose SQL holds a name it cannot place is refused before any write', async () =>
+  withSpaces(async () => {
+    const { result, calls } = await deploy([
+      insightFile('SELECT COUNT(x.ssot__Id__c) AS cnt__c FROM ssot__Individual__dlm i'),
+    ]);
+    assert.equal(result.diagnostics.errors[0].code, 'CROSS_DATASPACE_UNRESOLVED');
+    assert.match(
+      result.diagnostics.errors[0].message,
+      /CliSpend__cio\.calculatedInsight-meta\.sql line 1:16 ssot__Id__c/u,
+    );
+    assert.deepEqual(calls, []);
+  }));
+
+test('an insight file of another data space without the flag names the flag', async () =>
+  withSpaces(async () => {
+    const { result } = await deploy([insightFile('SELECT 1 AS one__c')], {
+      'allow-cross-dataspace': false,
+    });
+    assert.equal(result.diagnostics.errors[0].code, 'CI_DATASPACE_MISMATCH');
+    assert.match(result.diagnostics.errors[0].message, /add --allow-cross-dataspace \(-c\)/u);
   }));

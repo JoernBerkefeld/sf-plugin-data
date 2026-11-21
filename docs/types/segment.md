@@ -181,7 +181,10 @@ A segment belongs to one data space, named as a string in `c__dataSpace`. Its DM
 - **Retrieve** keeps the segments of the run's data space; a selected segment of another data space is a failed item that names both data spaces (`SEGMENT_DATASPACE_MISMATCH`).
 - **Deploy, delete and publish** refuse a segment file, or an org segment, of another data space (`SEGMENT_DATASPACE_MISMATCH`) before any write. A `segmentOn` DMO or Waterfall child of another data space is `SEGMENT_DEPENDENCY_OTHER_DATASPACE`. In SQL and UI criteria use the names of that data space (`ds2_Individual__dlm`, `FirstName__c`); a DBT segment takes its `segmentOn` DMO from the SQL `FROM`.
 - **Members export** (`--dataspace`) reads the segment and runs the detail query in the run's data space.
-- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a UI or Waterfall segment file of another data space. Its name, its DMO, the DMO and field names in its criteria and its Waterfall children are renamed by rule (`Audience` to `ds2_Audience`, `ssot__Individual__dlm` to `ds2_Individual__dlm`); compared values stay. SQL (DBT) segments are refused (`CROSS_DATASPACE_UNSUPPORTED`). After the deploy the translated file is written under the new name. See [Deploy from another data space](../../README.md#deploy-from-another-data-space-only-if-you-have-more-than-one-data-space).
+- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a UI, Waterfall or SQL (DBT) segment file of another data space.
+  - Its name, its DMO, the DMO and field names in its criteria and its Waterfall children are renamed by rule (`Audience` to `ds2_Audience`, `ssot__Individual__dlm` to `ds2_Individual__dlm`); compared values stay.
+  - In a DBT segment, every model's SQL is renamed table by table and column by column; texts, comments and your own names (aliases, `WITH` blocks) stay. A name it cannot place exactly refuses the deploy before any write (`CROSS_DATASPACE_UNRESOLVED`), with the SQL file, line and column.
+  - After the deploy the translated JSON and SQL files are written under the new name. See [Deploy from another data space](../../README.md#deploy-from-another-data-space-only-if-you-have-more-than-one-data-space).
 
 See [Data spaces](../../README.md#data-spaces) for the general rules.
 

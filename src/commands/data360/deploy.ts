@@ -117,7 +117,11 @@ import type {
   CrossSpaceFile,
   CrossSpacePlan,
 } from '../../services/cross-dataspace-deploy.js';
-import { authoredDocument, verifyDloInputDigest } from '../../artifacts/read-deploy-input.js';
+import {
+  authoredDocument,
+  authoredNative,
+  verifyDloInputDigest,
+} from '../../artifacts/read-deploy-input.js';
 import type { DloDeployInput } from '../../artifacts/read-deploy-input.js';
 import {
   calculatedInsightReadContext,
@@ -496,7 +500,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       char: 'c',
       default: false,
       summary:
-        'Only with more than one data space: deploy files of another data space into --dataspace. DMO, mapping, relationship, DLO (membership only), UI and Waterfall segment, data graph, identity resolution and STL transform (load, join and output nodes only) files are translated in memory by rule (prefix, ssot__; identity resolution outputs from the ruleset list when their ruleset is not deployed with them); each translated file gets a copy file under its new name after it deployed. Other kinds and any name that cannot be placed exactly are refused before any write. With --preview it lists every rewrite.',
+        'Only with more than one data space: deploy files of another data space into --dataspace. DMO, mapping, relationship, DLO (membership only), UI, Waterfall and SQL (DBT) segment, calculated insight, data graph, identity resolution and STL transform (load, join and output nodes only) files are translated in memory by rule, the SQL of insights and DBT segments name by name (prefix, ssot__; identity resolution outputs from the ruleset list when their ruleset is not deployed with them); each translated file gets a copy file under its new name after it deployed. Other kinds and any name that cannot be placed exactly are refused before any write. With --preview it lists every rewrite (for SQL with its file, line and column).',
     }),
     'allow-dataspace-removal': Flags.boolean({
       default: false,
@@ -1748,7 +1752,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     input.path === captured.path &&
                     input.companionPath === captured.companionPath &&
                     input.inputDigest === captured.inputDigest &&
-                    JSON.stringify(input.native) === JSON.stringify(captured.native),
+                    // A translated insight (-c) still binds to the files' own insight.
+                    JSON.stringify(authoredNative(input)) === JSON.stringify(captured.native),
                 ),
             )
           )
@@ -3005,7 +3010,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             input.document.kind === 'calculated-insight' &&
             input.document.identity.dataSpace !== effectiveScope
           )
-            throw calculatedInsightSpaceMismatch(input.document.identity, effectiveScope);
+            throw calculatedInsightSpaceMismatch(input.document.identity, effectiveScope, true);
           else if (input.document.kind === 'segment') {
             const { apiName } = input.document.identity;
             if (input.document.c__dataSpace !== effectiveScope)

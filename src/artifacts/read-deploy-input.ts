@@ -491,17 +491,34 @@ export function authoredDocument(input: { document: unknown }): unknown {
   return authoredDocuments.has(input) ? authoredDocuments.get(input) : input.document;
 }
 
+// The same for the insight document (JSON with SQL) of a translated calculated insight.
+const authoredNatives = new WeakMap<object, unknown>();
+
 /**
- * A frozen copy of an admitted input that carries a translated document; its file checks still
- * compare against the document the file holds.
+ * The insight document the files hold: for an insight translated into another data space, the
+ * original.
+ * @param {{native: unknown}} input Admitted calculated insight input.
+ * @param {unknown} input.native Its insight document, translated or as read.
+ * @returns {unknown} The files' insight document.
+ */
+export function authoredNative(input: { native: unknown }): unknown {
+  return authoredNatives.has(input) ? authoredNatives.get(input) : input.native;
+}
+
+/**
+ * A frozen copy of an admitted input that carries a translated document (and for a calculated
+ * insight its translated insight document); its file checks still compare against what the
+ * files hold.
  * @param {T} input Admitted input.
  * @param {unknown} document Translated document.
+ * @param {unknown} [native] Translated insight document of a calculated insight.
  * @returns {T} The translated input.
  * @template T
  */
 export function translatedDeployInput<T extends { document: unknown }>(
   input: T,
   document: unknown,
+  native?: unknown,
 ): T {
   const freeze = (value: unknown): void => {
     if (!value || typeof value !== 'object' || Object.isFrozen(value)) return;
@@ -509,8 +526,15 @@ export function translatedDeployInput<T extends { document: unknown }>(
     Object.freeze(value);
   };
   freeze(document);
-  const translated = Object.freeze({ ...input, document });
+  freeze(native);
+  const translated = Object.freeze({
+    ...input,
+    document,
+    ...(native === undefined ? {} : { native }),
+  });
   authoredDocuments.set(translated, authoredDocument(input));
+  if (native !== undefined)
+    authoredNatives.set(translated, authoredNative(input as unknown as { native: unknown }));
   return translated;
 }
 
@@ -1003,7 +1027,7 @@ export async function verifyCalculatedInsightInputDigest(
     if (
       current.companionPath !== input.companionPath ||
       current.inputDigest !== input.inputDigest ||
-      JSON.stringify(current.native) !== JSON.stringify(input.native) ||
+      JSON.stringify(current.native) !== JSON.stringify(authoredNative(input)) ||
       JSON.stringify(current.document) !== JSON.stringify(authoredDocument(input))
     )
       refuse();

@@ -13,7 +13,7 @@ export const hints: Readonly<Record<string, string>> = {
   CROSS_DATASPACE_UNRESOLVED:
     "A name in a file of another data space cannot be placed in the run's data space by rule, so nothing was sent. Read which name and why, change the selection or the file, then rerun.",
   CROSS_DATASPACE_UNSUPPORTED:
-    '--allow-cross-dataspace cannot translate this kind of file yet (insights, SQL segments, SQL transforms, STL transforms with expression nodes, streams). Nothing was sent. Deploy those in their own data space.',
+    '--allow-cross-dataspace cannot translate this kind of file yet (DCSQL transforms, STL transforms with expression nodes, streams). Nothing was sent. Deploy those in their own data space.',
   DATASPACE_READ_FAILED:
     'The list of data spaces could not be read completely from the org, so nothing was read or written. Check the org session and Data Cloud access, then rerun.',
   DELETE_FAILED:

@@ -324,9 +324,10 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
 sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.dmo-meta.json -d data360/segments/Audience.segment.json --allow-processing
 ```
 
-- **What is translated:** DMOs, mappings, relationships, UI and Waterfall segments, data
-  graphs, identity resolution rulesets and STL data transforms made of load, join and output
-  nodes. A DLO is added to the target data space; nothing in it is renamed.
+- **What is translated:** DMOs, mappings, relationships, UI, Waterfall and SQL (DBT)
+  segments, calculated insights (classic and SQL Insights Builder), data graphs, identity
+  resolution rulesets and STL data transforms made of load, join and output nodes. A DLO is
+  added to the target data space; nothing in it is renamed.
 - **How names change:** by fixed rules, with the prefixes from the org's list of data spaces.
   - Custom DMOs and segments get, lose or swap the prefix: `Order__dlm` becomes
     `ds2_Order__dlm`, `Audience` becomes `ds2_Audience`.
@@ -346,6 +347,21 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
   - In a transform, a field after a join written with the side's qualifier (`R.FirstName__c`)
     is placed by that side.
   - A mapping keeps its DLO side; it is found by its DLO and DMO, as always.
+  - Calculated insights get, lose or swap the prefix: `Spend__cio` becomes `ds2_Spend__cio`.
+- **SQL is renamed name by name** (calculated insights and DBT segment models):
+  - Tables follow the rules above. A DLO (`__dll`) keeps its name. Another insight (`__cio`)
+    gets the prefix.
+  - A column follows the rules of its table, through the table name, its alias, a `WITH` block
+    or a subquery: `i.ssot__FirstName__c` on `ssot__Individual__dlm i` becomes
+    `i.FirstName__c`.
+  - A column without a table in front is renamed only when every table of the query spells it
+    the same way. Otherwise write the table or alias in front of it.
+  - Texts in single quotes and comments never change. `WITH` block names, aliases and column
+    aliases are your names and stay. Double quotes and backticks are names.
+  - Salesforce accepts an insight left in the `default` spelling in another data space, then
+    fails it about three minutes after activation without a message. So after the rewrite
+    every name of the SQL must be placed, and none may keep the old spelling.
+  - Positions are reported per SQL file, line and column.
 - **Nothing is guessed.** A name no rule places exactly is listed, and the whole deploy is
   refused before any write (`CROSS_DATASPACE_UNRESOLVED`). For example, `ds2_Order__dlm`
   towards `default` can be a standard copy or a custom DMO: select its retrieved DMO file too.
@@ -353,13 +369,14 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
   the `default` spelling in another data space and builds it on the `default` objects. So after
   the translation every object and field name must be covered, and none may keep the old
   spelling; otherwise the file is refused (`CROSS_DATASPACE_UNRESOLVED`).
-- **Not translated yet:** calculated insights, SQL segments, DCSQL transforms, STL transforms
-  with a formula, filter or other expression node, and data streams. Under the flag they are
+- **Not translated yet:** DCSQL transforms, STL transforms with a formula, filter or other
+  expression node, and data streams. Under the flag they are
   refused before any write (`CROSS_DATASPACE_UNSUPPORTED`).
 - **`--preview`** lists every rename (file, place in the file, old and new name, rule) and the
   copy files it would write. It writes nothing.
 - **Copy files:** after an item has deployed, deploy writes its translated file under the new
-  name, for example `data360/dmo/ds2_Order__dlm.dmo-meta.json`. Your original files never change.
+  name, for example `data360/dmo/ds2_Order__dlm.dmo-meta.json`, and for an insight or DBT
+  segment its SQL files beside it. Your original files never change.
   - A copy goes only to a new path. An existing file with the same content is reused; one with
     other content stops the deploy before any write (`CROSS_DATASPACE_COPY_CONFLICT`).
   - A mapping or relationship copy takes the name Salesforce gave it. A mapping copy holds the

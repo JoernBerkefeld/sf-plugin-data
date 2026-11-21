@@ -84,8 +84,13 @@ Delete takes the exact selector and works in any status, schedule or SQL.
 An insight belongs to one data space. Its JSON file names it as a string in `c__dataSpace` instead of Salesforce's `dataSpace` key; a file with `dataSpace` is refused with `LEGACY_DATASPACE_KEY`.
 
 - Retrieve lists the insights with `?dataspace=` and checks that each GET names the run's data space. An insight of another data space is a failed item that names both data spaces (`CI_IDENTITY_CHANGED`); the other selected insights still run.
-- Deploy refuses a file of another data space (`CI_DATASPACE_MISMATCH`) and sends `c__dataSpace` as `dataSpaceName` in every create and update. Publish (`--dataspace`) and delete work in the run's data space.
+- Deploy refuses a file of another data space (`CI_DATASPACE_MISMATCH`; the message names `--allow-cross-dataspace`) and sends `c__dataSpace` as `dataSpaceName` in every create and update. Publish (`--dataspace`) and delete work in the run's data space.
 - Names are what Salesforce stores (insight names are unique in the org), and the SQL is sent as written. SQL names carry no data space, so the dependencies an insight's SQL names are taken from the insight's own data space.
+- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys an insight file of another data space (classic and `DC_SQL` alike).
+  - Its name gets, loses or swaps the prefix (`Spend__cio` to `ds2_Spend__cio`), and so does a `sourceCiDevName`.
+  - Its SQL is renamed table by table and column by column: `ssot__Individual__dlm` to `ds2_Individual__dlm`, `ssot__FirstName__c` to `FirstName__c`, also through aliases, `WITH` blocks and subqueries. Texts, comments and your own names (aliases, `WITH` blocks, output columns) stay.
+  - Every name must be placed. An insight left in the `default` spelling is accepted in another data space, but about three minutes after activation it ends in `ERROR` (`CREATE_FAILED`) without a message. So a name the rewrite cannot place exactly refuses the deploy before any write (`CROSS_DATASPACE_UNRESOLVED`), with the SQL file, line and column.
+  - `--preview` lists every change; after the deploy the translated JSON and SQL files are written under the new name. See [Deploy from another data space](../../README.md#deploy-from-another-data-space-only-if-you-have-more-than-one-data-space).
 - Only if you have more than one data space: an insight's name carries its data space's prefix (`ds2_Spend__cio` in `dataspace2`), and in `default` no other space's prefix. Deploy refuses a new insight that breaks this before any write ([`CI_PREFIX_MISMATCH`](../errors/calculated-insight/CI_PREFIX_MISMATCH.md)); for an existing one deploy and retrieve only warn. See [Name prefixes](../../README.md#name-prefixes-only-if-you-have-more-than-one-data-space).
 
 See [Data spaces](../../README.md#data-spaces) for the general rules.

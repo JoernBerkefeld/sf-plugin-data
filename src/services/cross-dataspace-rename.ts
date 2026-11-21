@@ -1,4 +1,6 @@
 import type { OrgDataSpace } from './data-space-check.js';
+import type { SqlNamer } from './cross-dataspace-sql.js';
+import { translateSql } from './cross-dataspace-sql.js';
 
 /**
  * The rename rules of a cross-data-space deploy. Each one is a fixed spelling rule Salesforce
@@ -78,10 +80,12 @@ export type RulesetEntry = {
 };
 
 /** What kind of DMO a name is, as far as the fields rule needs to know. */
-type DmoKind = 'standard' | 'unified' | 'custom' | 'prefixed';
+export type DmoKind = 'standard' | 'unified' | 'custom' | 'prefixed';
 
-type Placed = { name: string; rule?: CrossSpaceRule; kind: DmoKind };
-type NotPlaced = { reason: string };
+/** A name placed in the target data space, with the rule that placed it. */
+export type Placed = { name: string; rule?: CrossSpaceRule; kind: DmoKind };
+/** Why a name cannot be placed. */
+export type NotPlaced = { reason: string };
 
 const dmoSuffix = '__dlm';
 // Link fields named the same in every data space (live API 68, entry data360:dataspace2-graph-and-unified-fields-api68).
@@ -406,6 +410,23 @@ export function pairedByRulesets(context: CrossSpaceContext, name: string): bool
   return 'reason' in placed ? unsuffixedOutput(context, name) : placed.rule === 'unified-output';
 }
 
+/**
+ * Place a DMO name as the rules and, when it was read, the ruleset list place it: an identity
+ * resolution output of a ruleset outside this deploy is paired from the ruleset list.
+ * @param {CrossSpaceContext} context Translation context.
+ * @param {string} name DMO name in the source data space.
+ * @returns {Placed | NotPlaced} Target name and rule, or why it cannot be placed.
+ */
+export function placeDmo(context: CrossSpaceContext, name: string): Placed | NotPlaced {
+  const placed = translateDmoName(context, name);
+  if (!context.rulesets) return placed;
+  if (!('reason' in placed) && placed.rule === 'unified-output')
+    return pairUnifiedOutput(context, name, placed);
+  if ('reason' in placed && unsuffixedOutput(context, name))
+    return pairUnifiedOutput(context, name);
+  return placed;
+}
+
 /** Collects the rewrites and unplaced names of one file. */
 class Recorder {
   public readonly rewrites: CrossSpaceRewrite[] = [];
@@ -492,13 +513,7 @@ class Recorder {
    * @returns {Placed | undefined} Placement, or undefined when not placed.
    */
   public dmo(at: string, name: string): Placed | undefined {
-    let placed = translateDmoName(this.context, name);
-    if (this.context.rulesets) {
-      if (!('reason' in placed) && placed.rule === 'unified-output')
-        placed = pairUnifiedOutput(this.context, name, placed);
-      else if ('reason' in placed && unsuffixedOutput(this.context, name))
-        placed = pairUnifiedOutput(this.context, name);
-    }
+    const placed = placeDmo(this.context, name);
     this.visited.add(at);
     if ('reason' in placed) {
       this.unresolved.push({ at, name, reason: placed.reason });
@@ -520,6 +535,22 @@ class Recorder {
     if (!owner) return field;
     const placed = translateFieldName(this.context, owner.kind, field);
     return this.change(at, field, placed.name, placed.rule);
+  }
+
+  /**
+   * Rewrite one SQL text by the rules (see translateSql), recording every change and every name
+   * it cannot place with its file, line and column.
+   * @param {string} at JSON path of the SQL.
+   * @param {string} sql SQL text.
+   * @param {string} file The SQL file it is read from, as positions are reported.
+   * @returns {string} The rewritten SQL.
+   */
+  public sql(at: string, sql: string, file: string): string {
+    this.visited.add(at);
+    const result = translateSql(sql, file, sqlNamer(this.context));
+    this.rewrites.push(...result.rewrites);
+    this.unresolved.push(...result.unresolved);
+    return result.sql;
   }
 
   /**
@@ -704,8 +735,8 @@ function transformUnsupported(document: Record<string, unknown>): string | undef
   return undefined;
 }
 
-/** Segment types whose names the translation can place: no SQL in the file. */
-const supportedSegmentTypes = new Set(['UI', 'Waterfall']);
+/** Segment types whose names the translation can place: criteria, child segments or SQL models. */
+const supportedSegmentTypes = new Set(['UI', 'Waterfall', 'DBT']);
 
 /**
  * Why a file of this kind cannot be translated yet, or undefined when it can.
@@ -724,7 +755,7 @@ export function crossSpaceUnsupported(document: Record<string, unknown>): string
       const type = (document.spec as { segmentType?: unknown } | undefined)?.segmentType;
       return typeof type === 'string' && supportedSegmentTypes.has(type)
         ? undefined
-        : `segments of type ${String(type)} (SQL or other criteria) cannot be translated yet; only UI and Waterfall segments can`;
+        : `segments of type ${String(type)} cannot be translated; only UI, Waterfall and SQL (DBT) segments can`;
     }
     case 'native-data-graph':
     case 'identity-resolution': {
@@ -734,7 +765,7 @@ export function crossSpaceUnsupported(document: Record<string, unknown>): string
       return transformUnsupported(document);
     }
     case 'calculated-insight': {
-      return 'calculated insights (SQL) cannot be translated into another data space yet';
+      return undefined;
     }
     case 'data-stream': {
       return 'data streams cannot be deployed into another data space with this option yet';
@@ -1312,6 +1343,105 @@ function coverageGaps(
 }
 
 /**
+ * The rule engine as the SQL rewrite uses it. A `__dlm` table is placed by the DMO rules (and the
+ * ruleset list), a `__cio` table by the prefix rule of insights, and a `__dll` table keeps its
+ * name. A column of a table the rules do not know is placed only when it never changes in this
+ * direction. A name still holding `ssot__` towards a non-default data space, or another data
+ * space's prefix, is left over.
+ * @param {CrossSpaceContext} context Translation context.
+ * @returns {SqlNamer} The namer.
+ */
+export function sqlNamer(context: CrossSpaceContext): SqlNamer {
+  return {
+    object: (name) => {
+      if (name.endsWith('__dll')) return 'dlo';
+      if (name.endsWith('__cio')) return translateUniqueName(context, name);
+      return placeDmo(context, name);
+    },
+    field: (kind, field) => translateFieldName(context, kind, field),
+    anyField: (field) => {
+      if (context.source === 'default') return translateFieldName(context, 'custom', field);
+      if (!fieldNeverChanges(context, field))
+        return { reason: 'its spelling depends on the object it belongs to' };
+      return { name: field };
+    },
+    leftover: (name) => {
+      const foreign = context.spaces.some(
+        (space) =>
+          space.prefix !== undefined &&
+          space.name !== context.target &&
+          name.startsWith(`${space.prefix}_`) &&
+          !name.endsWith('__dll'),
+      );
+      return (context.target !== 'default' && name.includes('ssot__')) || foreign
+        ? `it is still spelled as in ${context.source} after the translation`
+        : undefined;
+    },
+  };
+}
+
+/** Keys of a calculated insight file that hold no names: settings and text. */
+const insightPlainKeys = [
+  'definitionType',
+  'description',
+  'displayName',
+  'historyPublishScheduleInterval',
+  'historyPublishScheduleTimeZone',
+  'historyPublishTime',
+  'isFromPackage',
+  'publishScheduleEndDate',
+  'publishScheduleInterval',
+  'publishScheduleStartDateTime',
+  'publishScheduleTimeZone',
+  'queryDialect',
+];
+
+/**
+ * Translate one calculated insight (its JSON with the SQL joined) into the target data space: its
+ * name and a source insight by the prefix rule, its data space, and every table and column of its
+ * SQL (classic and DC_SQL alike). Salesforce accepts an insight left in the source spelling and
+ * then fails it a few minutes after activation without a message (live API 68), so every name-like
+ * value the translation does not account for is a name it cannot place.
+ * @param {Record<string, unknown>} native Insight document (not changed).
+ * @param {CrossSpaceContext} context From which data space to which one.
+ * @returns {CrossSpaceTranslation} The translated insight.
+ */
+export function translateCalculatedInsight(
+  native: Record<string, unknown>,
+  context: CrossSpaceContext,
+): CrossSpaceTranslation {
+  const recorder = new Recorder(context);
+  const copy = structuredClone(native);
+  const source = String(native.apiName);
+  copy.apiName = recorder.named('apiName', source, translateUniqueName);
+  copy.dataSpace = recorder.change(
+    'c__dataSpace',
+    String(native.dataSpace),
+    context.target,
+    'data-space',
+  );
+  recorder.keep('dataSpace');
+  if (typeof copy.sourceCiDevName === 'string' && copy.sourceCiDevName)
+    copy.sourceCiDevName = recorder.named(
+      'sourceCiDevName',
+      copy.sourceCiDevName,
+      translateUniqueName,
+    );
+  else recorder.keep('sourceCiDevName');
+  copy.expression = recorder.sql(
+    'expression',
+    String(native.expression),
+    `${source}.calculatedInsight-meta.sql`,
+  );
+  for (const key of insightPlainKeys) recorder.keep(key);
+  // The SQL had its own token-level check; the other keys are checked here.
+  const keys = { ...copy };
+  delete keys.expression;
+  coverageGaps(keys, '', recorder, context, new Set(recorder.unresolved.map((entry) => entry.at)));
+  return { document: copy, rewrites: recorder.rewrites, unresolved: recorder.unresolved };
+}
+
+/**
  * Translate one admitted file of the source data space into the target data space, in memory.
  * DMO: its name and field names. Mapping: its target DMO and target fields (the source DLO side
  * and the mapping's own name stay; the mapping is found by its binding). Relationship: both
@@ -1411,7 +1541,13 @@ export function translateDocument(
 
       break;
     }
+    case 'calculated-insight': {
+      return {
+        unsupported: 'a calculated insight is translated from its JSON and SQL together',
+      };
+    }
     default: {
+      const sourceName = identity.apiName;
       identity.apiName = recorder.segment('identity.apiName', identity.apiName);
       const segmentOn = spec.segmentOn as { apiName: string };
       const on = recorder.dmo('spec.segmentOn.apiName', segmentOn.apiName);
@@ -1428,6 +1564,15 @@ export function translateDocument(
         spec.childSegments = (spec.childSegments as string[]).map((child, index) =>
           recorder.segment(`spec.childSegments[${index}]`, child),
         );
+      if (spec.segmentType === 'DBT' && Array.isArray(spec.models))
+        for (const [index, model] of (spec.models as Array<Record<string, unknown>>).entries()) {
+          recorder.keep(`spec.models[${index}].name`);
+          model.sql = recorder.sql(
+            `spec.models[${index}].sql`,
+            String(model.sql),
+            `${sourceName}.segment.${String(model.name)}.sql`,
+          );
+        }
     }
   }
   return { document: copy, rewrites: recorder.rewrites, unresolved: recorder.unresolved };

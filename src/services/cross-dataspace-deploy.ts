@@ -8,6 +8,13 @@ import {
   validateNativeDmoDocument,
 } from '../artifacts/native-dmo-document.js';
 import { serializeSegmentFiles } from '../artifacts/segment-document.js';
+import { codeFilePath } from '../artifacts/code-fields.js';
+import {
+  calculatedInsightReference,
+  serializeNativeCalculatedInsight,
+} from '../artifacts/native-calculated-insight-document.js';
+import type { NativeCalculatedInsight } from '../artifacts/native-calculated-insight-document.js';
+import { writeNativeCalculatedInsightDocument } from '../artifacts/write-native-calculated-insight.js';
 import { validateNativeDataGraphDocument } from '../artifacts/native-data-graph-document.js';
 import {
   serializeIdentityResolutionDocument,
@@ -31,7 +38,12 @@ import type {
   CrossSpaceUnresolved,
   RulesetEntry,
 } from './cross-dataspace-rename.js';
-import { customDmosOf, pairedByRulesets, translateDocument } from './cross-dataspace-rename.js';
+import {
+  customDmosOf,
+  pairedByRulesets,
+  translateCalculatedInsight,
+  translateDocument,
+} from './cross-dataspace-rename.js';
 import { explainInput } from './operation-diagnostic.js';
 
 /** One file of another data space, translated into the run's data space. */
@@ -149,8 +161,9 @@ export function crossSpaceNeedsRulesets(
     const from = crossSpaceSource(document, run);
     if (from === undefined) return false;
     const context = { source: from, target: run, spaces };
-    return stringsOf(document).some(
-      (value) => value.endsWith('__dlm') && pairedByRulesets(context, value),
+    // A SQL text (an insight's dependencies, a segment model) is read name by name.
+    return stringsOf(document).some((value) =>
+      (value.match(/[A-Za-z0-9_]+__dlm\b/gu) ?? []).some((name) => pairedByRulesets(context, name)),
     );
   });
 }
@@ -266,14 +279,34 @@ export function planCrossSpaceInputs(
     const from = crossSpaceSource(document, run);
     if (from === undefined) return input;
     const family = familyOf(document);
-    const result = translateDocument(document, {
+    const context = {
       source: from,
       target: run,
       spaces,
       customDmos: customDmosFrom(from),
       selectedRulesets,
       ...(rulesets ? { rulesets } : {}),
-    });
+    };
+    if (document.kind === 'calculated-insight') {
+      // An insight is translated from its JSON with the SQL joined, then planned again from it.
+      const insight = translateCalculatedInsight(
+        (input as { native: Record<string, unknown> }).native,
+        context,
+      );
+      files.push({
+        path: input.path,
+        family,
+        from,
+        rewrites: insight.rewrites,
+        unresolved: insight.unresolved,
+      });
+      return translatedDeployInput(
+        input,
+        calculatedInsightReference(insight.document as NativeCalculatedInsight),
+        insight.document,
+      ) as DeployInput;
+    }
+    const result = translateDocument(document, context);
     if ('unsupported' in result) {
       unsupported.push({ path: input.path, family, from, reason: result.unsupported });
       return input;
@@ -382,58 +415,97 @@ function projectRootOf(file: string): string {
   return path.dirname(path.dirname(path.dirname(file)));
 }
 
-/** Where a copy file goes and what it holds, for a family whose name is known before the write. */
-type PlannedCopy = { path: string; bytes: Buffer };
+/** Where the files of a copy go and what they hold, for a family whose name is known before the write. */
+type PlannedCopy = Array<{ path: string; bytes: Buffer }>;
 
 /**
- * The copy file of a translated DMO, segment, data graph, ruleset or transform, as retrieve would
- * write it.
+ * The JSON file and its SQL files, as one copy.
+ * @param {string} jsonPath JSON file path.
+ * @param {{json: string; files: Array<{extension: string; name?: string; text: string}>}} serialized Serialized files.
+ * @param {string} serialized.json JSON text.
+ * @param {Array<{extension: string; name?: string; text: string}>} serialized.files Code files.
+ * @returns {PlannedCopy} Paths and bytes.
+ */
+function withCode(
+  jsonPath: string,
+  serialized: { json: string; files: Array<{ extension: string; name?: string; text: string }> },
+): PlannedCopy {
+  return [
+    { path: jsonPath, bytes: Buffer.from(serialized.json) },
+    ...serialized.files.map((file) => ({
+      path: codeFilePath(jsonPath, file),
+      bytes: Buffer.from(file.text),
+    })),
+  ];
+}
+
+/**
+ * The copy files of a translated DMO, segment (with its SQL files), calculated insight (JSON and
+ * SQL), data graph, ruleset or transform, as retrieve would write them.
  * @param {DeployInput} input Translated input.
- * @returns {PlannedCopy | undefined} Path and bytes; undefined for another family.
+ * @returns {PlannedCopy | undefined} Paths and bytes; undefined for another family.
  */
 function plannedCopy(input: DeployInput): PlannedCopy | undefined {
   const document = input.document as unknown as Record<string, unknown>;
   const root = projectRootOf(input.path);
   const apiName = documentName(document);
+  if (document.kind === 'calculated-insight')
+    return withCode(
+      path.join(root, 'data360', 'calculatedInsights', `${apiName}.calculatedInsight-meta.json`),
+      serializeNativeCalculatedInsight((input as { native: unknown }).native),
+    );
   if (document.kind === 'native-data-graph')
-    return {
-      path: path.join(root, 'data360', 'dataGraphs', `${apiName}.native-dataGraph.json`),
-      bytes: Buffer.from(
-        `${JSON.stringify(validateNativeDataGraphDocument(document, 'retrieve'), undefined, 2)}\n`,
-      ),
-    };
+    return [
+      {
+        path: path.join(root, 'data360', 'dataGraphs', `${apiName}.native-dataGraph.json`),
+        bytes: Buffer.from(
+          `${JSON.stringify(validateNativeDataGraphDocument(document, 'retrieve'), undefined, 2)}\n`,
+        ),
+      },
+    ];
   if (document.kind === 'identity-resolution')
-    return {
-      path: path.join(root, 'data360', 'identityResolution', `${apiName}.identityResolution.json`),
-      bytes: Buffer.from(
-        serializeIdentityResolutionDocument(
-          validateIdentityResolutionDocument(document, 'retrieve'),
-          'retrieve',
+    return [
+      {
+        path: path.join(
+          root,
+          'data360',
+          'identityResolution',
+          `${apiName}.identityResolution.json`,
         ),
-      ),
-    };
+        bytes: Buffer.from(
+          serializeIdentityResolutionDocument(
+            validateIdentityResolutionDocument(document, 'retrieve'),
+            'retrieve',
+          ),
+        ),
+      },
+    ];
   if (document.kind === 'data-transform')
-    return {
-      path: path.join(root, dataTransformArtifactPath(apiName)),
-      bytes: Buffer.from(
-        serializeDataTransformDocument(
-          validateDataTransformDocument(document, 'retrieve'),
-          'retrieve',
+    return [
+      {
+        path: path.join(root, dataTransformArtifactPath(apiName)),
+        bytes: Buffer.from(
+          serializeDataTransformDocument(
+            validateDataTransformDocument(document, 'retrieve'),
+            'retrieve',
+          ),
         ),
-      ),
-    };
+      },
+    ];
   if (document.kind === 'dmo')
-    return {
-      path: path.join(root, 'data360', 'dmo', `${apiName}.dmo-meta.json`),
-      bytes: Buffer.from(
-        `${JSON.stringify(leanNativeDmoDocument(validateNativeDmoDocument(document, 'retrieve')), undefined, 2)}\n`,
-      ),
-    };
+    return [
+      {
+        path: path.join(root, 'data360', 'dmo', `${apiName}.dmo-meta.json`),
+        bytes: Buffer.from(
+          `${JSON.stringify(leanNativeDmoDocument(validateNativeDmoDocument(document, 'retrieve')), undefined, 2)}\n`,
+        ),
+      },
+    ];
   if (document.kind === 'segment')
-    return {
-      path: path.join(root, 'data360', 'segments', `${apiName}.segment.json`),
-      bytes: Buffer.from(serializeSegmentFiles(document, 'retrieve').json),
-    };
+    return withCode(
+      path.join(root, 'data360', 'segments', `${apiName}.segment.json`),
+      serializeSegmentFiles(document, 'retrieve'),
+    );
   return undefined;
 }
 
@@ -451,25 +523,24 @@ export async function precheckCopyFiles(
   shown: (file: string) => string,
 ): Promise<string[]> {
   const planned: string[] = [];
-  for (const input of inputs) {
-    const copy = plannedCopy(input);
-    if (!copy) continue;
-    let existing: Buffer | undefined;
-    try {
-      existing = await readFile(copy.path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  for (const input of inputs)
+    for (const copy of plannedCopy(input) ?? []) {
+      let existing: Buffer | undefined;
+      try {
+        existing = await readFile(copy.path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      if (
+        existing !== undefined &&
+        (path.resolve(copy.path) === path.resolve(input.path) || !existing.equals(copy.bytes))
+      )
+        throw explainInput(
+          new CrossSpaceError('CROSS_DATASPACE_COPY_CONFLICT'),
+          `The translated copy of ${shown(input.path)} would be written to ${shown(copy.path)}, but that file already exists with other content. Existing files are never changed, so nothing was sent. Move or remove that file, then rerun.`,
+        );
+      planned.push(copy.path);
     }
-    if (
-      existing !== undefined &&
-      (path.resolve(copy.path) === path.resolve(input.path) || !existing.equals(copy.bytes))
-    )
-      throw explainInput(
-        new CrossSpaceError('CROSS_DATASPACE_COPY_CONFLICT'),
-        `The translated copy of ${shown(input.path)} would be written to ${shown(copy.path)}, but that file already exists with other content. Existing files are never changed, so nothing was sent. Move or remove that file, then rerun.`,
-      );
-    planned.push(copy.path);
-  }
   return planned;
 }
 
@@ -554,19 +625,25 @@ export async function writeCopyFile(
     };
   try {
     const receipt =
-      document.kind === 'dmo'
-        ? await writeNativeDmoDocument(named, root, false)
-        : document.kind === 'mapping'
-          ? await writeNativeMappingDocument(named, root, false)
-          : document.kind === 'relationship'
-            ? await writeNativeRelationshipDocument(named, root, false)
-            : document.kind === 'native-data-graph'
-              ? await writeDataGraphDocument(named, root, false)
-              : document.kind === 'identity-resolution'
-                ? await writeIdentityResolutionDocument(named, root, false)
-                : document.kind === 'data-transform'
-                  ? await writeDataTransformDocument(named, root, false)
-                  : await writeSegmentDocument(named, root, false);
+      document.kind === 'calculated-insight'
+        ? await writeNativeCalculatedInsightDocument(
+            (input as { native: unknown }).native,
+            root,
+            false,
+          )
+        : document.kind === 'dmo'
+          ? await writeNativeDmoDocument(named, root, false)
+          : document.kind === 'mapping'
+            ? await writeNativeMappingDocument(named, root, false)
+            : document.kind === 'relationship'
+              ? await writeNativeRelationshipDocument(named, root, false)
+              : document.kind === 'native-data-graph'
+                ? await writeDataGraphDocument(named, root, false)
+                : document.kind === 'identity-resolution'
+                  ? await writeIdentityResolutionDocument(named, root, false)
+                  : document.kind === 'data-transform'
+                    ? await writeDataTransformDocument(named, root, false)
+                    : await writeSegmentDocument(named, root, false);
     return {
       source: input.path,
       path: receipt.path,

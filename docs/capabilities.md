@@ -492,8 +492,26 @@ stays), DLO (the run's data space added to its list), UI segment (name, `segment
 `<prefix>_<Name>__dlm` without a selected custom DMO file, packaged DMOs, unified outputs without
 the `ssot` spelling, a foreign prefix, a data space without a prefix) is
 `CROSS_DATASPACE_UNRESOLVED`; DCSQL transforms, STL transforms with any node other than load,
-join and output, calculated insights, SQL and other segment types and data streams are
-`CROSS_DATASPACE_UNSUPPORTED`; both before any write. Also translated (Step 2b): data graphs
+join and output, segment types other than UI, Waterfall and DBT, and data streams are
+`CROSS_DATASPACE_UNSUPPORTED`; both before any write. Also translated (Step 3a): calculated
+insights (`apiName` and `sourceCiDevName` by the prefix rule, `dataSpace`, and the SQL of
+classic and `DC_SQL` insights) and DBT segments (name, `segmentOn` and every model's SQL). The
+SQL is tokenized: single-quoted texts and `--` / `/* */` comments are skipped, double quotes and
+backticks are names; a backslash before a quote in a text, a comment inside a comment, an
+unclosed text, name or comment, or unmatched parentheses refuse the file. Tables in `FROM` and
+`JOIN` are placed by the DMO rules and the ruleset list (`__dlm`), the prefix rule (`__cio`) or
+kept (`__dll`); `WITH` blocks (also `RECURSIVE`, read by the columns of their first block),
+aliases and column aliases are user names and stay. A column is placed by its table through the
+table name, alias, `WITH` block or subquery (whose output columns are tracked, `*` included); a
+column without a qualifier only when every table of the query and the enclosing ones that could
+own it spells it the same way. Afterwards every word and quoted token of the result outside
+texts and comments is checked: a name-like token (`__c`, `__dlm`, `__cio`, `__dll`, `ssot__`)
+the rewrite did not account for, or one still holding `ssot__` towards a non-default space or
+another space's prefix (user names excepted), is `CROSS_DATASPACE_UNRESOLVED`, named by SQL
+file, line and column, because Salesforce accepts a default-spelled insight in `dataspace2`
+and fails it about three minutes after activation with `ERROR` `CREATE_FAILED` and no message
+(DB entry `data360:dataspace-ci-spelling-stl-nodes-api68`). The insight and segment copy files
+include their SQL files, checked before the first write like the JSON. Also translated (Step 2b): data graphs
 (name by the prefix rule, `dataspaceName`, root, `projectedName`, every related object with its
 rebuilt `jsonPath`, fields and `keyQualifierName`, join `fieldName`/`parentFieldName` by the
 node's and its parent's DMO, recency, filter and top-K criteria fields; the graph-level

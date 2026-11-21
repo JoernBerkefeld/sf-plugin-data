@@ -3,7 +3,7 @@ import { sameProperty } from './enum-case.js';
 import { joinCodeFields, splitCodeFields } from './code-fields.js';
 import type { CodeField, CodeFile } from './code-fields.js';
 import { dataSpaceKey, readSingleDataSpace } from './data-space-field.js';
-import { explainInput } from '../services/operation-diagnostic.js';
+import { crossSpaceSentence, explainInput } from '../services/operation-diagnostic.js';
 
 /** Payload-free refusal; never include SQL or response content in diagnostics. */
 export class CalculatedInsightError extends Error {
@@ -174,15 +174,17 @@ export function serializeNativeCalculatedInsight(value: unknown): {
  * @param {string} document.apiName Its name.
  * @param {string} document.dataSpace Its data space (the file's c__dataSpace).
  * @param {string} dataSpace The run's data space.
+ * @param {boolean} [crossSpace] A deploy, which --allow-cross-dataspace can translate: say so.
  * @returns {CalculatedInsightError} CI_DATASPACE_MISMATCH with an explanation.
  */
 export function calculatedInsightSpaceMismatch(
   document: { apiName: string; dataSpace: string },
   dataSpace: string,
+  crossSpace = false,
 ): CalculatedInsightError {
   return explainInput(
     new CalculatedInsightError('CI_DATASPACE_MISMATCH'),
-    `${document.apiName} names the data space ${document.dataSpace} in ${dataSpaceKey}, but the run's data space is ${dataSpace}. Run the command with --dataspace ${document.dataSpace}, or correct the file.`,
+    `${document.apiName} names the data space ${document.dataSpace} in ${dataSpaceKey}, but the run's data space is ${dataSpace}. Run the command with --dataspace ${document.dataSpace}, or correct the file.${crossSpace ? crossSpaceSentence(dataSpace) : ''}`,
   );
 }
 
