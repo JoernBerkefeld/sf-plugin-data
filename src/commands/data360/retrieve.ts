@@ -45,6 +45,13 @@ import {
   dataSpaceCheckCode,
   dataSpaceCheckOf,
 } from '../../services/data-space-check.js';
+import {
+  prefixMismatch,
+  prefixMismatchWarning,
+  prefixRuleCoversName,
+  prefixRuleCoversRead,
+} from '../../services/data-space-prefix.js';
+import type { PrefixType } from '../../services/data-space-prefix.js';
 import { createDloClient } from '../../transport/dlo-rest.js';
 import { writeDloDocument } from '../../artifacts/write-dlo.js';
 import {
@@ -622,6 +629,37 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
   }
 
   /**
+   * Warn when a retrieved component that users make themselves (custom DMO, insight, transform,
+   * graph) breaks the prefix rule of its data space. The prefixes come from the run's one data
+   * space list read; without it, or in an org whose spaces have no prefix, nothing is reported.
+   * @param {PrefixType} type Kind of component.
+   * @param {string} name Its name.
+   * @param {unknown} native Its raw read.
+   * @param {string} space The run's data space.
+   * @param {string[]} warnings Envelope warnings.
+   * @returns {Promise<void>} Resolves once checked.
+   */
+  private async notePrefixMismatch(
+    type: PrefixType,
+    name: string,
+    native: unknown,
+    space: string,
+    warnings: string[],
+  ): Promise<void> {
+    if (!prefixRuleCoversName(type, name) || !prefixRuleCoversRead(type, native)) return;
+    let spaces;
+    try {
+      spaces = await dataSpaceCheckOf(this, async () => {
+        throw new DataSpaceError('TARGET_ORG_REQUIRED');
+      }).entries();
+    } catch {
+      return;
+    }
+    const mismatch = prefixMismatch(name, type, space, spaces);
+    if (mismatch) warnings.push(prefixMismatchWarning(mismatch));
+  }
+
+  /**
    * Report a written verbatim document: a warning naming the reason (and a calculated insight's
    * SQL file left from an earlier retrieve), plus the item marker.
    * @param {VerbatimDocument} document Written verbatim document.
@@ -951,6 +989,13 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               routes,
               ...receipt,
             });
+            await this.notePrefixMismatch(
+              'data-transform',
+              apiName,
+              nativeOf(apiName)?.native,
+              effectiveScope,
+              envelope.diagnostics.warnings,
+            );
           } catch (error_) {
             const error = await this.verbatimFallback(error_, nativeOf(apiName), {
               kind: 'data-transform',
@@ -1209,6 +1254,13 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
               routes,
               ...receipt,
             });
+            await this.notePrefixMismatch(
+              'data-graph',
+              apiName,
+              reads.nativeOf(apiName)?.native,
+              effectiveScope,
+              envelope.diagnostics.warnings,
+            );
           } catch (error_) {
             const error = await this.verbatimFallback(error_, reads.nativeOf(apiName), {
               kind: 'native-data-graph',
@@ -1553,6 +1605,14 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                 routes,
                 ...receipt,
               });
+              if (document.kind === 'dmo')
+                await this.notePrefixMismatch(
+                  'dmo',
+                  document.identity.apiName,
+                  reads.nativeOf(apiName)?.native,
+                  effectiveScope,
+                  warnings,
+                );
             } catch (error_) {
               if (
                 family === 'mapping' &&
@@ -2358,6 +2418,17 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
                   ? await this.noteVerbatim(document, receipt.path, envelope.diagnostics.warnings)
                   : {}),
               });
+              if (
+                !isVerbatimDocument(document) &&
+                (kind === 'dmo' || kind === 'calculated-insight')
+              )
+                await this.notePrefixMismatch(
+                  kind,
+                  document.identity.apiName,
+                  carriedNativeResponse('insight' in entry ? entry.insight : document)?.native,
+                  effectiveScope,
+                  envelope.diagnostics.warnings,
+                );
             } catch (error_: unknown) {
               const error = await this.verbatimFallback(
                 error_,

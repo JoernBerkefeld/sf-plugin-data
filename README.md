@@ -282,6 +282,32 @@ and an unknown data space stops it before any read or write.
   onto it in that data space. Deploy the mapping, not a DMO file, to create it; the plugin
   sends the mapping the way Salesforce takes it.
 
+### Name prefixes (only if you have more than one data space)
+
+Custom DMOs, calculated insights, data transforms and data graphs have names that are unique in
+the whole org, whatever their data space. So their names carry the prefix of their data space,
+as Salesforce does itself for segments and identity resolution rulesets. This keeps names from
+clashing between data spaces and shows at a glance where a component belongs. Examples for
+`dataspace2` with the prefix `ds2`:
+
+- Custom DMO: `ds2_Order__dlm`
+- Calculated insight: `ds2_Spend__cio`
+- Data transform: `ds2_CopyOrders`
+- Data graph: `ds2_OrderGraph`
+
+What the plugin does:
+
+- In a data space other than `default`, the name must start with that space's prefix and an
+  underscore. In `default`, it must not start with the prefix of another data space.
+- **Deploy of a new component** with a name that breaks the rule is refused before the first
+  write of the whole deploy (`DMO_PREFIX_MISMATCH`, `CI_PREFIX_MISMATCH`,
+  `TRANSFORM_PREFIX_MISMATCH`, `DATA_GRAPH_PREFIX_MISMATCH`).
+- **Deploy of an existing component** and **retrieve** only warn; the plugin never renames
+  anything in the org.
+- Only what you make yourself is checked. Standard DMOs and their copies, objects Salesforce
+  generates and packaged components are not.
+- With only the `default` data space nothing is checked and nothing extra is read.
+
 Each type page has a "Data spaces" section with its own rules. The
 [Data spaces guide on sfmc.guide](https://sfmc.guide/next/data-spaces/) explains the concept and
 the Salesforce behaviour.

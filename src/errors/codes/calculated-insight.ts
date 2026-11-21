@@ -16,6 +16,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The deploy request was sent but the plugin could not confirm the result. Do not resend; preview or retrieve the calculated insight to see its state first.',
   CI_NOT_FOUND:
     'The calculated insight does not exist in the target org. Check the API name and the target org, then rerun the retrieve.',
+  CI_PREFIX_MISMATCH:
+    "A calculated insight name does not match its data space's prefix (ds2_ in dataspace2; no other space's prefix in default). A new insight is refused, an existing one only warned about.",
   CI_PUBLICATION_UNCONFIRMED:
     'The publish request was sent but the plugin could not confirm the calculated insight is ACTIVE. Do not resend; run publish with --preview to check its state.',
   CI_PUBLISH_STARTED:

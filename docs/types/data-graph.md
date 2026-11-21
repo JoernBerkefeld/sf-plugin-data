@@ -181,6 +181,12 @@ A graph belongs to one data space, named in `c__dataSpace`. See
 - Related objects are sent as written, with the names stored in that data space
   (`ds2_Individual__dlm` for a standard DMO copy), and Salesforce decides.
 - A draft graph outside `default` is only checked for its root; its field paths are not checked.
+- Only if you have more than one data space: a graph's name carries its data space's prefix
+  (`ds2_OrderGraph` in `dataspace2`), and in `default` no other space's prefix. Deploy refuses
+  a new graph that breaks this before any write
+  ([`DATA_GRAPH_PREFIX_MISMATCH`](../errors/data-graph/DATA_GRAPH_PREFIX_MISMATCH.md)); for an
+  existing one deploy and retrieve only warn. See
+  [Name prefixes](../../README.md#name-prefixes-only-if-you-have-more-than-one-data-space).
 
 ## Error codes
 

@@ -15,7 +15,7 @@ import {
   nativeDmoWriteScope,
   normalizeNativeDmo,
   sameDmoCategory,
-  standardCopyOrigin,
+  standardCopyOrigins,
   unwrapNativeDmo,
   validateNativeDmoDocument,
 } from '../artifacts/native-dmo-document.js';
@@ -388,10 +388,16 @@ export async function preflightNativeDmo(
       throw error;
     // Standard and namespaced DMOs are never created.
     if (apiName.slice(0, -5).includes('__')) throw new NativeDmoError('UNSUPPORTED_DMO_TARGET');
-    // Nor is the copy of a standard DMO in another data space (`ds2_X__dlm` of `ssot__X__dlm`):
+    // Nor is the copy of a standard DMO in another data space (`ds2_X__dlm` of `ssot__X__dlm` or
+    // of `X__dlm`, the first candidate read as Standard in default):
     // its first mapping creates it, so a create here would make a custom DMO of that name.
-    const origin = standardCopyOrigin(apiName, requestScope, options.dataSpacePrefix);
-    if (origin !== undefined && (await isStandardOrigin(origin, client)))
+    let origin: string | undefined;
+    for (const candidate of standardCopyOrigins(apiName, requestScope, options.dataSpacePrefix))
+      if (await isStandardOrigin(candidate, client)) {
+        origin = candidate;
+        break;
+      }
+    if (origin !== undefined)
       throw explainInput(
         withHint(new NativeDmoError('UNSUPPORTED_DMO_TARGET'), standardCopyHint),
         `${apiName} is the copy of the standard DMO ${origin} in the data space ${requestScope}, and it does not exist there yet. A standard DMO's copy is created by its first mapping: deploy a mapping onto ${apiName} instead of the DMO file.`,

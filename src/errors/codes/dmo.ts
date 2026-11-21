@@ -24,6 +24,8 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce answered a DMO request with an HTTP error. Read the status and API detail in the message, fix access, name or input, then rerun.',
   DMO_PERSISTENCE_UNCONFIRMED:
     'The DMO change was sent, but reading it back did not show it. Read the DMO in the org before another attempt; the change may still have taken effect.',
+  DMO_PREFIX_MISMATCH:
+    "A custom DMO name does not match its data space's prefix (ds2_ in dataspace2; no other space's prefix in default). A new DMO is refused, an existing one only warned about.",
   DMO_REQUEST_UNCONFIRMED:
     'A DMO request ended without a readable answer from Salesforce. Check the org connection, inspect the target if a write was sent, then rerun.',
   DMO_TARGET_IDENTITY_MISMATCH:

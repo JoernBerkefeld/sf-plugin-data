@@ -175,6 +175,14 @@ export class DataSpaceCheck {
   }
 
   /**
+   * Every data space of the org with its prefix (the same single read).
+   * @returns {Promise<OrgDataSpace[]>} Data spaces.
+   */
+  public async entries(): Promise<OrgDataSpace[]> {
+    return this.spaces();
+  }
+
+  /**
    * The org's data spaces, read once.
    * @returns {Promise<OrgDataSpace[]>} Data spaces.
    */

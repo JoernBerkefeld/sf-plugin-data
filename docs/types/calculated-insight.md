@@ -86,6 +86,7 @@ An insight belongs to one data space. Its JSON file names it as a string in `c__
 - Retrieve lists the insights with `?dataspace=` and checks that each GET names the run's data space. An insight of another data space is a failed item that names both data spaces (`CI_IDENTITY_CHANGED`); the other selected insights still run.
 - Deploy refuses a file of another data space (`CI_DATASPACE_MISMATCH`) and sends `c__dataSpace` as `dataSpaceName` in every create and update. Publish (`--dataspace`) and delete work in the run's data space.
 - Names are what Salesforce stores (insight names are unique in the org), and the SQL is sent as written. SQL names carry no data space, so the dependencies an insight's SQL names are taken from the insight's own data space.
+- Only if you have more than one data space: an insight's name carries its data space's prefix (`ds2_Spend__cio` in `dataspace2`), and in `default` no other space's prefix. Deploy refuses a new insight that breaks this before any write ([`CI_PREFIX_MISMATCH`](../errors/calculated-insight/CI_PREFIX_MISMATCH.md)); for an existing one deploy and retrieve only warn. See [Name prefixes](../../README.md#name-prefixes-only-if-you-have-more-than-one-data-space).
 
 See [Data spaces](../../README.md#data-spaces) for the general rules.
 

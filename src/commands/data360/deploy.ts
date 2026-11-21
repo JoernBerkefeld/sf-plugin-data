@@ -90,6 +90,16 @@ import {
   unwrapNativeDmo,
 } from '../../artifacts/native-dmo-document.js';
 import { isDeepStrictEqual } from 'node:util';
+import {
+  prefixMismatch,
+  prefixMismatchError,
+  prefixMismatchWarning,
+  prefixRuleCoversName,
+  prefixRuleCoversRead,
+} from '../../services/data-space-prefix.js';
+import type { PrefixType } from '../../services/data-space-prefix.js';
+import { createCalculatedInsightClient } from '../../transport/calculated-insight-rest.js';
+import { ConnectError } from '../../transport/connect-client.js';
 import { verifyDloInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { DloDeployInput } from '../../artifacts/read-deploy-input.js';
 import { calculatedInsightReadContext } from '../../services/native-calculated-insight.js';
@@ -174,6 +184,18 @@ import {
  * @param {string} [aliasOrUsername] Explicit target or configured default when omitted.
  * @returns {Promise<object | undefined>} Command-owned target connection or absent optional auth.
  */
+/**
+ * Whether a read failure is Salesforce's not-found answer for a DMO, insight or transform.
+ * @param {unknown} error Read failure.
+ * @returns {boolean} Whether the component is absent.
+ */
+function prefixTargetAbsent(error: unknown): boolean {
+  return (
+    (error instanceof NativeDmoError && error.code === 'DMO_HTTP_ERROR' && error.status === 404) ||
+    (error instanceof ConnectError && error.statusCode === 404)
+  );
+}
+
 const resolveTargetOrg = async (
   aliasOrUsername?: string,
 ): Promise<Pick<Org, 'getConnection' | 'getOrgId' | 'getUsername'> | undefined> => {
@@ -643,6 +665,73 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
   }
 
   /**
+   * Read one component whose name breaks the data space prefix rule, to tell a create from an
+   * update before the first write of the run. Salesforce's own not-found answer is absence; any
+   * other failure stops the run. Tests replace this seam.
+   * @param {PrefixType} type Kind of component.
+   * @param {string} name Its name.
+   * @param {string} space The run's data space.
+   * @param {unknown} targetOrg The --target-org flag value.
+   * @returns {Promise<{native: unknown} | undefined>} The raw read, or undefined when absent.
+   */
+  protected async readPrefixTarget(
+    type: PrefixType,
+    name: string,
+    space: string,
+    targetOrg: unknown,
+  ): Promise<{ native: unknown } | undefined> {
+    const org =
+      targetOrg && typeof targetOrg === 'object'
+        ? (targetOrg as Pick<Org, 'getConnection' | 'getUsername'>)
+        : await (this.resolveTargetOrg ?? resolveTargetOrg)(targetOrg as string | undefined);
+    const target = org?.getUsername();
+    if (!org || !target) throw new DataSpaceError('TARGET_ORG_REQUIRED');
+    try {
+      if (type === 'dmo')
+        return {
+          native: await (this.createDmoClient ?? createDmoClient)(
+            target,
+            '68.0',
+            undefined,
+            this.ssotSender(target, '68.0'),
+          ).get(name),
+        };
+      const connection = org.getConnection('68.0');
+      if (type === 'calculated-insight')
+        return { native: await createCalculatedInsightClient(connection, '68.0', space).get(name) };
+      if (type === 'data-transform')
+        return {
+          native: await (this.createDataTransformClient ?? createDataTransformClient)(
+            connection,
+            '68.0',
+            space,
+          ).get(name),
+        };
+      const context = await (this.nativeGraphContext ?? nativeDataGraphReadContext)(
+        connection,
+        space,
+      );
+      const read = await context.get(name);
+      if (read.status === 200) return { native: read.body };
+      // The item route's exact not-found answer (live API 68; HTTP 400, not 404).
+      if (
+        read.status === 400 &&
+        isDeepStrictEqual(read.body, [
+          { errorCode: 'INTERNAL_ERROR', message: `Data Graph not found with name ${name}` },
+        ])
+      )
+        return undefined;
+      throw retainConnectDiagnostic(
+        new Error('Data graph read failed'),
+        getConnectDiagnostic(read),
+      );
+    } catch (error) {
+      if (prefixTargetAbsent(error)) return undefined;
+      throw error;
+    }
+  }
+
+  /**
    * Validate inputs, then admit native items in dependency order or preflight the whole remaining
    * selection before sequential execution.
    * @returns {Promise<DeployEnvelope>} Versioned preview or execution outcomes with mutation evidence.
@@ -743,6 +832,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       },
     };
     const families = new Map<string, string>();
+    // Prefix rule warnings of existing components, shown in the human output too.
+    const prefixWarnings = new Set<string>();
     const mappingNames = new Map<string, string>();
     const processingDlos = new Set<string>();
     const mappingChanges = new Map<
@@ -819,7 +910,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             `Not deleted: ${deletion.family}:${deletion.apiName} (file deleted in the Git range; deploy never deletes; delete it with sf data360 delete --changed-since ${envelope.result.selection.changedSince ?? '<ref>'} --confirm-delete after a --preview).`,
           );
         for (const warning of envelope.diagnostics.warnings)
-          if (warning.startsWith('Skipped ')) this.log(`Warning: ${warning}`);
+          if (warning.startsWith('Skipped ') || prefixWarnings.has(warning))
+            this.log(`Warning: ${warning}`);
         for (const item of envelope.result.items) {
           const family =
             families.get(item.path) ?? ('family' in item ? item.family : undefined) ?? 'dmo';
@@ -2872,6 +2964,47 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             : 'INVALID_SOURCE',
           error,
         );
+      }
+      // Names unique in the org (custom DMOs, calculated insights, transforms, graphs) carry the
+      // prefix of their data space. Every selected file is checked locally before the first
+      // write of the run; only a name that breaks the rule is read: absent is refused (a create),
+      // present is a warning (an update goes ahead). An org with only default reads nothing here.
+      try {
+        const spaces = await dataSpaceCheckOf(this, async () => {
+          throw new DataSpaceError('TARGET_ORG_REQUIRED');
+        }).entries();
+        for (const input of resolvedInputs) {
+          const { document } = input;
+          const named: { type: PrefixType; name: string } | undefined =
+            document.kind === 'dmo'
+              ? { type: 'dmo', name: document.identity.apiName }
+              : document.kind === 'calculated-insight'
+                ? { type: 'calculated-insight', name: document.identity.apiName }
+                : document.kind === 'data-transform'
+                  ? { type: 'data-transform', name: String(document.definition.name) }
+                  : document.kind === 'native-data-graph'
+                    ? { type: 'data-graph', name: String(document.definition.name) }
+                    : undefined;
+          if (!named || !prefixRuleCoversName(named.type, named.name)) continue;
+          // A DMO file of another data space is refused in its own stage, before any write.
+          if (document.kind === 'dmo' && document.c__dataSpace !== effectiveScope) continue;
+          const mismatch = prefixMismatch(named.name, named.type, effectiveScope, spaces);
+          if (!mismatch) continue;
+          const read = await this.readPrefixTarget(
+            named.type,
+            named.name,
+            effectiveScope,
+            flags['target-org'],
+          );
+          if (read === undefined) throw prefixMismatchError(mismatch);
+          if (prefixRuleCoversRead(named.type, read.native)) {
+            const warning = prefixMismatchWarning(mismatch);
+            prefixWarnings.add(warning);
+            envelope.diagnostics.warnings.push(warning);
+          }
+        }
+      } catch (error) {
+        return finish('blocked', dataSpaceCheckCode(error, 'PREFLIGHT_FAILED'), error);
       }
       // A Waterfall names child segments that must exist in the target or be selected. Its own
       // stage may follow writing stages, so the children it does not find in the selection are

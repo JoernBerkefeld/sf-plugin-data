@@ -36,6 +36,8 @@ export const hints: Readonly<Record<string, string>> = {
     'Another file in data360/dataTransforms differs only in case or trailing spaces, or holds a different transform. Rename or remove that file, then rerun the retrieve.',
   TRANSFORM_IDENTITY_MISMATCH:
     'The transform read from the org does not match the requested name or ID, for example a name that differs only in letter case. Use the name exactly as in the org, then rerun.',
+  TRANSFORM_PREFIX_MISMATCH:
+    "A data transform name does not match its data space's prefix (ds2_ in dataspace2; no other space's prefix in default). A new transform is refused, an existing one only warned about.",
   TRANSFORM_PREVIEW_LIMITATIONS:
     'This preview only read from the org. Salesforce validation did not run; create or update was chosen by name from the current list of transforms.',
   TRANSFORM_READBACK_MISMATCH:

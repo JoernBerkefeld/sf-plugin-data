@@ -315,7 +315,15 @@ sfmc.guide [Data Spaces page](https://sfmc.guide/next/data-spaces/).
   (`ds2_Individual__dlm` for `ssot__Individual__dlm` in `dataspace2`) with fields without
   `ssot__` (`FirstName__c`). Files carry these stored names and deploy sends them unchanged.
 - The copy exists only once something is mapped onto it. A DMO deploy never creates a copy;
-  deploy the mapping instead (see [mapping.md](mapping.md)).
+  deploy the mapping instead (see [mapping.md](mapping.md)). A `ds2_<Name>__dlm` file counts
+  as a copy when `ssot__<Name>__dlm` or `<Name>__dlm` is a standard DMO of `default` (such as
+  `StaticCurrencyRates_Home__dlm`); otherwise it is a custom DMO and is created as one.
+- Only if you have more than one data space: the name of a custom DMO carries its data
+  space's prefix (`ds2_Order__dlm` in `dataspace2`), and in `default` no other space's prefix.
+  Deploy refuses a new DMO that breaks this before any write
+  ([`DMO_PREFIX_MISMATCH`](../errors/dmo/DMO_PREFIX_MISMATCH.md)); for an existing one deploy
+  and retrieve only warn. Standard DMOs, their copies and generated or namespaced DMOs are not
+  checked. See [Name prefixes](../../README.md#name-prefixes-only-if-you-have-more-than-one-data-space).
 
 ## Order in a batch
 

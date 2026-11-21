@@ -153,6 +153,32 @@ export function standardCopyOrigin(
 }
 
 /**
+ * Every default-data-space name a `<prefix>_<Name>__dlm` DMO can be the standard copy of:
+ * `ssot__<Name>__dlm` (as standardCopyOrigin) and `<Name>__dlm`, for a standard DMO without
+ * `ssot__` such as `StaticCurrencyRates_Home__dlm` (live API 68: its dataspace2 copy is
+ * `ds2_StaticCurrencyRates_Home__dlm`, DB entry data360:dataspace-prefixed-unique-names-api68).
+ * The same conditions as standardCopyOrigin give an empty list. Which candidate, if any, is a
+ * Standard DMO of the default data space is for the caller's read to prove; a custom DMO of
+ * either name is no origin.
+ * @param {string} name DMO name as the file names it.
+ * @param {string} dataSpace The run's data space.
+ * @param {string} [prefix] The prefix the org's data space list names for it.
+ * @returns {string[]} The candidates, `ssot__` spelling first.
+ */
+export function standardCopyOrigins(
+  name: string,
+  dataSpace: string,
+  prefix: string | undefined,
+): string[] {
+  const first = standardCopyOrigin(name, dataSpace, prefix);
+  if (first === undefined) return [];
+  const plain = name.slice(prefix!.length + 1);
+  return nativeDmoName.test(plain) && !plain.slice(0, -'__dlm'.length).includes('__')
+    ? [first, plain]
+    : [first];
+}
+
+/**
  * The name a field of the default-spelling standard DMO has on its copy: `ssot__X__c` is
  * `X__c`, any other field (`KQ_`, unprefixed) keeps its name.
  * @param {string} name Field name on the default object.
