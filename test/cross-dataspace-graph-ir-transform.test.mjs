@@ -853,19 +853,19 @@ test('a qualifier that names no join side, or a compound name nothing covers, is
   assert.match(leftover.unresolved[0].reason, /still spelled as in dataspace2/u);
 });
 
-test('an STL transform with an expression node, or a SQL transform, is refused as not supported yet', () => {
-  const formula = transformFile({
-    CALC0: { action: 'formula', parameters: { expression: 'UPPER(Id__c)' }, sources: ['LOAD0'] },
+test('an STL transform with an unknown node, or a DCSQL definition without SQL, is refused as not supported yet', () => {
+  const unknown = transformFile({
+    CALC0: { action: 'extension', parameters: { expression: 'UPPER(Id__c)' }, sources: ['LOAD0'] },
   });
   assert.match(
-    translateDocument(formula, to(SPACE)).unsupported,
-    /STL node CALC0 \(formula\).*expressions come in a later step/u,
+    translateDocument(unknown, to(SPACE)).unsupported,
+    /STL node CALC0 \(extension\) is of a kind the translation does not know/u,
   );
   const sql = transformFile();
   sql.definition.definition.type = 'DCSQL';
   assert.match(
     translateDocument(sql, to(SPACE)).unsupported,
-    /type DCSQL cannot be translated yet/u,
+    /DCSQL definition holds no manifest nodes the translation can read/u,
   );
 });
 

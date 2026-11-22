@@ -1,0 +1,166 @@
+{
+  "note": "Sanitized STL node shapes (live API 68, DB entry data360:dataspace-ci-spelling-stl-nodes-api68). stored = POST then GET of a probe transform (deleted afterwards); validatedOnly = accepted by the transform validation endpoint, not stored. GET returns string values HTML-escaped (&quot; &#39;). No data values, no record IDs.",
+  "stored": {
+    "nodes": {
+      "LOAD_DATASET0": {
+        "action": "load",
+        "parameters": {
+          "dataset": {
+            "name": "CliStlSk7m__dll",
+            "type": "dataLakeObject"
+          },
+          "fields": ["Id__c", "Name__c", "ParentId__c", "Amount__c"],
+          "sampleDetails": {
+            "dataspace": "default",
+            "sortBy": [],
+            "type": "TopN"
+          }
+        },
+        "sources": []
+      },
+      "LOAD_DATASET1": {
+        "action": "load",
+        "parameters": {
+          "dataset": {
+            "name": "CliStlRk7m__dll",
+            "type": "dataLakeObject"
+          },
+          "fields": ["Id__c", "Name__c", "ParentId__c", "Amount__c"],
+          "sampleDetails": {
+            "dataspace": "default",
+            "sortBy": [],
+            "type": "TopN"
+          }
+        },
+        "sources": []
+      },
+      "JOIN0": {
+        "action": "join",
+        "parameters": {
+          "joinType": "LOOKUP",
+          "leftKeys": ["ParentId__c"],
+          "leftQualifier": "",
+          "rightKeys": ["Id__c"],
+          "rightQualifier": "R"
+        },
+        "sources": ["LOAD_DATASET0", "LOAD_DATASET1"]
+      },
+      "FORMULA0": {
+        "action": "formula",
+        "parameters": {
+          "expressionType": "SQL",
+          "fields": [
+            {
+              "defaultValue": "",
+              "formulaExpression": "upper(&quot;R.Name__c&quot;) || &#39;-&#39; || Name__c",
+              "label": "NameUp",
+              "name": "NameUp__c",
+              "precision": 255,
+              "type": "TEXT"
+            }
+          ]
+        },
+        "sources": ["JOIN0"]
+      },
+      "FILTER0": {
+        "action": "filter",
+        "parameters": {
+          "filterExpressions": [
+            {
+              "field": "Amount__c",
+              "operands": ["0"],
+              "operator": "GREATER_THAN",
+              "type": "NUMBER"
+            }
+          ]
+        },
+        "sources": ["FORMULA0"]
+      },
+      "OUTPUT0": {
+        "action": "outputD360",
+        "parameters": {
+          "dedupOrder": [],
+          "fieldsMappings": [
+            {
+              "sourceField": "Id__c",
+              "targetField": "Id__c"
+            },
+            {
+              "sourceField": "NameUp__c",
+              "targetField": "Name__c"
+            }
+          ],
+          "name": "CliStlOk7m__dll",
+          "type": "dataLakeObject",
+          "writeMode": "OVERWRITE"
+        },
+        "sources": ["FILTER0"]
+      }
+    },
+    "outputDataObjects": [
+      {
+        "category": "Other",
+        "fields": [
+          {
+            "isPrimaryKey": true,
+            "keyQualifierField": "KQ_Id",
+            "label": "Id",
+            "name": "Id__c",
+            "type": "Text"
+          },
+          {
+            "isPrimaryKey": false,
+            "keyQualifierField": "KQ_Name",
+            "label": "Name",
+            "name": "Name__c",
+            "type": "Text"
+          }
+        ],
+        "label": "CliStlOk7m",
+        "name": "CliStlOk7m__dll",
+        "status": "active",
+        "type": "dataLakeObject"
+      }
+    ]
+  },
+  "validatedOnly": {
+    "aggregate": {
+      "action": "aggregate",
+      "parameters": {
+        "aggregations": [
+          {
+            "action": "SUM",
+            "source": "Amount__c",
+            "name": "SumAmount__c",
+            "label": "SumAmount"
+          }
+        ],
+        "groupings": ["Name__c"]
+      },
+      "sources": ["LOAD_DATASET0"]
+    },
+    "appendV2": {
+      "action": "appendV2",
+      "parameters": {
+        "fieldMappings": [
+          {
+            "top": "Id__c",
+            "bottom": "Id__c"
+          },
+          {
+            "top": "Name__c",
+            "bottom": "Name__c"
+          }
+        ]
+      },
+      "sources": ["LOAD_DATASET0", "LOAD_DATASET1"]
+    },
+    "sqlFilter": {
+      "action": "sqlFilter",
+      "parameters": {
+        "sqlFilterExpression": "Name__c = 'x'"
+      },
+      "sources": ["LOAD_DATASET0"]
+    }
+  }
+}

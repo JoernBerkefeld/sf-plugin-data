@@ -1,6 +1,6 @@
 # `CROSS_DATASPACE_UNSUPPORTED`
 
-> --allow-cross-dataspace cannot translate this kind of file yet (DCSQL transforms, STL transforms with expression nodes, streams). Nothing was sent. Deploy those in their own data space.
+> --allow-cross-dataspace cannot translate this kind of file yet (STL transforms with an unknown node, transforms other than STL and DCSQL, streams). Nothing was sent. Deploy those in their own data space.
 
 |              |                                                          |
 | ------------ | -------------------------------------------------------- |
@@ -20,12 +20,14 @@ This only matters when your org has more than one data space.
 - Calculated insights, classic and SQL Insights Builder (`DC_SQL`).
 - Data graphs.
 - Identity resolution rulesets.
-- STL data transforms made only of load, join and output nodes.
+- STL data transforms made of load, join, formula, filter, SQL filter, aggregate, append and output nodes.
+- DCSQL data transforms: the SQL of every manifest node (`compiled_code`, and `raw_code` when present).
 
 Other kinds are not translated yet:
 
-- STL data transforms with a formula, filter or other expression node.
-- DCSQL data transforms.
+- STL data transforms with any other node.
+- DCSQL data transforms with a manifest node that holds no SQL in `compiled_code`.
+- Data transforms of any other type, such as streaming `SQL`.
 - Segments of other types.
 - Data streams.
 
@@ -43,8 +45,8 @@ A half-translated selection would deploy some components into the run's data spa
 ```text
 Deploy preview: blocked (CROSS_DATASPACE_UNSUPPORTED). No deployment executed.
 Data space: dataspace2.
-CROSS_DATASPACE_UNSUPPORTED: --allow-cross-dataspace cannot deploy these files into dataspace2 yet: data360/dataTransforms/Enrich.dataTransform.json (the STL node FORMULA0 (formula) is a formula, filter or other expression node; expressions come in a later step, only load, join and output nodes can be translated now). Nothing was sent. Deploy them with --dataspace default, or leave them out of this deploy.
-Hint: --allow-cross-dataspace cannot translate this kind of file yet (DCSQL transforms, STL transforms with expression nodes, streams). Nothing was sent. Deploy those in their own data space.
+CROSS_DATASPACE_UNSUPPORTED: --allow-cross-dataspace cannot deploy these files into dataspace2 yet: data360/dataTransforms/Enrich.dataTransform.json (data transforms of type SQL cannot be translated; only STL and DCSQL transforms can). Nothing was sent. Deploy them with --dataspace default, or leave them out of this deploy.
+Hint: --allow-cross-dataspace cannot translate this kind of file yet (STL transforms with an unknown node, transforms other than STL and DCSQL, streams). Nothing was sent. Deploy those in their own data space.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/general/CROSS_DATASPACE_UNSUPPORTED.md
 ```
 

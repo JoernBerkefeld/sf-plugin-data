@@ -28,7 +28,20 @@ export type SqlTranslation = {
   sql: string;
   rewrites: CrossSpaceRewrite[];
   unresolved: CrossSpaceUnresolved[];
+  /**
+   * The `*` the outermost query of each statement puts out, with whether it reads only DLOs (whose
+   * columns keep their names). Only translateSql fills it in.
+   */
+  outputs?: {
+    stars: Array<{ at: string; name: string; dlo: boolean }>;
+  };
 };
+
+/**
+ * The output field a column the SQL puts out lands in, by its source name (a DCSQL transform):
+ * the field's target name and the rule that placed it, or undefined when no field has that name.
+ */
+export type OutputField = (name: string) => { name: string; rule?: CrossSpaceRule } | undefined;
 
 /** What a table in scope answers for a column name. */
 type FieldAnswer =
@@ -46,14 +59,32 @@ type Source = {
   objectTo?: { name: string; rule?: CrossSpaceRule };
   /** The table could not be placed (already reported): its columns are left as they are. */
   refused?: boolean;
+  /** A DLO: every column keeps its name. */
+  keeps?: boolean;
   columns: (field: string) => FieldAnswer;
 };
 
-/** One query block's tables, its select aliases, and the enclosing block. */
-type Scope = { sources: Source[]; aliases: Set<string>; parent?: Scope };
+/** One query block's tables, its select aliases (with their uses), and the enclosing block. */
+type Scope = {
+  sources: Source[];
+  aliases: Set<string>;
+  aliasUses?: Map<string, number[]>;
+  parent?: Scope;
+};
 
-/** The columns a WITH block or subquery puts out: old name (lowercase) to answer, and `*` sources. */
-type Columns = { named: Map<string, FieldAnswer>; stars: Source[] };
+/**
+ * The columns a WITH block or subquery puts out: old name (lowercase) to answer, and `*` sources.
+ * `names` holds the token of each named column (its alias, or the column itself when it has
+ * none), `starAt` the `*` tokens with their tables.
+ */
+type Columns = {
+  named: Map<string, FieldAnswer>;
+  stars: Source[];
+  names?: Array<{ token: number; aliased: boolean }>;
+  /** Token indices of each alias's uses after the select list of its block (alias lowercase). */
+  aliasUses?: Map<string, number[]>;
+  starAt?: Array<{ token: number; sources: Source[] }>;
+};
 
 /** A WITH block visible to a query. */
 type Cte = { name: string; columns: Columns };
@@ -263,6 +294,8 @@ class SqlAnalysis {
     seen: new Set(),
     userNames: new Set(),
   };
+  /** The columns the outermost query of each statement puts out. */
+  public readonly statements: Columns[] = [];
 
   public constructor(
     private readonly tokens: SqlToken[],
@@ -293,7 +326,7 @@ class SqlAnalysis {
     let start = 0;
     for (let p = 0; p <= this.sig.length; p++)
       if (p === this.sig.length || this.isPunct(p, ';')) {
-        if (p > start) this.query(start, p, undefined, []);
+        if (p > start) this.statements.push(this.query(start, p, undefined, []));
         start = p + 1;
       }
     return this.out;
@@ -489,8 +522,12 @@ class SqlAnalysis {
       this.fromClause(clauses[fromIndex].at + 1, endOf(fromIndex), outer, ctes, scope, deferred);
     for (const run of deferred) run();
     const columns = this.selectList(from + 1, clauses[0]?.at ?? to, scope, ctes);
+    // Uses of an alias are recorded after the select list, where a name equal to an alias reads
+    // it (ORDER BY); inside the list such a name is still the table's column of that name.
+    scope.aliasUses = new Map();
     for (const [index, clause] of clauses.entries())
       if (clause.word !== 'FROM') this.expression(clause.at + 1, endOf(index), scope, ctes);
+    if (scope.aliasUses.size > 0) columns.aliasUses = scope.aliasUses;
     return columns;
   }
 
@@ -610,6 +647,7 @@ class SqlAnalysis {
     const placed = this.namer.object(name);
     if (placed === 'dlo') {
       this.keep(p);
+      source.keeps = true;
       source.objectName = name.toLowerCase();
       source.objectTo = { name };
       source.columns = (field) => ({ owns: true, name: field });
@@ -671,11 +709,13 @@ class SqlAnalysis {
         this.keep(last, hasAs || !nameLike(alias));
         scope.aliases.add(alias.toLowerCase());
         columns.named.set(alias.toLowerCase(), { owns: true, name: alias });
+        (columns.names ??= []).push({ token: this.sig[last], aliased: true });
         this.expression(begin, hasAs ? before : last, scope, ctes);
         continue;
       }
       if (this.isPunct(begin, '*', end) && end === begin + 1) {
         columns.stars.push(...scope.sources);
+        (columns.starAt ??= []).push({ token: this.sig[begin], sources: [...scope.sources] });
         continue;
       }
       if (
@@ -686,6 +726,7 @@ class SqlAnalysis {
       ) {
         const source = this.qualifier(begin, scope);
         if (source) columns.stars.push(source);
+        (columns.starAt ??= []).push({ token: this.sig[begin], sources: source ? [source] : [] });
         continue;
       }
       const single = end === begin + 1 && this.isName(begin, end);
@@ -699,6 +740,7 @@ class SqlAnalysis {
         const field = this.nameAt(fieldAt);
         const answer = single ? this.unqualified(begin, scope) : this.qualified(begin, scope);
         if (answer && answer.owns) columns.named.set(field.toLowerCase(), answer);
+        (columns.names ??= []).push({ token: this.sig[fieldAt], aliased: false });
         continue;
       }
       this.expression(begin, end, scope, ctes);
@@ -780,8 +822,11 @@ class SqlAnalysis {
       );
       return undefined;
     }
-    if (scope.aliases.has(field.toLowerCase()) && 'name' in answer && answer.name === field)
+    if (scope.aliases.has(field.toLowerCase()) && 'name' in answer && answer.name === field) {
       this.keep(p, true);
+      const uses = scope.aliasUses;
+      uses?.set(field.toLowerCase(), [...(uses.get(field.toLowerCase()) ?? []), this.sig[p]]);
+    }
     return this.applyAnswer(p, field, answer, field);
   }
 
@@ -873,6 +918,26 @@ function listedColumns(listed: string[]): Columns {
 }
 
 /**
+ * The first HTML character reference outside texts, comments and quoted names. `&#39;` outside a
+ * text reads as `&`, `#`, `39`, `;`: the `;` would split the statement and a name meant as text
+ * would be renamed. Such SQL is an HTML-escaped copy, not SQL to translate.
+ * @param {SqlToken[]} tokens Tokens.
+ * @returns {{token: SqlToken; text: string} | undefined} The token it starts in and the reference.
+ */
+function entityOutsideTexts(tokens: SqlToken[]): { token: SqlToken; text: string } | undefined {
+  const code = tokens.map((token) =>
+    ['string', 'comment', 'quoted'].includes(token.kind)
+      ? ' '.repeat(token.text.length)
+      : token.text,
+  );
+  const entity = htmlEntity.exec(code.join(''));
+  if (!entity) return undefined;
+  let offset = 0;
+  const token = tokens.find((_entry, index) => (offset += code[index].length) > entity.index)!;
+  return { token, text: entity[0] };
+}
+
+/**
  * Rewrite the names of one SQL text into the target data space. Texts in single quotes and
  * comments are never changed; WITH block names, table aliases and column aliases are user names
  * and stay. A table is placed by the object rules, a column by the rules of its table (through
@@ -880,12 +945,24 @@ function listedColumns(listed: string[]): Columns {
  * every table that could own it spells it the same way. Anything it cannot place exactly is
  * reported with its line and column. Afterwards every name-like token of the result is checked:
  * a name the rewrite did not account for, or one still in the source spelling, is reported too.
+ *
+ * With `outputField` (a DCSQL transform, whose output columns land in output fields by name) each
+ * named column the outermost query of a statement puts out (its first set branch) is checked
+ * against the field of its source name: an alias spelled like that field takes the field's target
+ * name; a column without an alias is placed only when its name in the target equals the field's
+ * target name, or when it changes from no field's name to none.
  * @param {string} sql SQL text.
  * @param {string} label What the positions are reported against (the SQL file name).
  * @param {SqlNamer} namer The rule engine.
+ * @param {OutputField} [outputField] The output field of a column name, for a DCSQL transform.
  * @returns {SqlTranslation} Rewritten SQL, its changes and every name it cannot place.
  */
-export function translateSql(sql: string, label: string, namer: SqlNamer): SqlTranslation {
+export function translateSql(
+  sql: string,
+  label: string,
+  namer: SqlNamer,
+  outputField?: OutputField,
+): SqlTranslation {
   const tokens = tokenizeSql(sql);
   if (isSqlTokenProblem(tokens))
     return {
@@ -900,31 +977,22 @@ export function translateSql(sql: string, label: string, namer: SqlNamer): SqlTr
       ],
     };
   const at = (token: SqlToken): string => `${label} line ${token.line}:${token.column}`;
-  // `&#39;` outside a text reads as `&`, `#`, `39`, `;`: the `;` would split the statement and a
-  // name meant as text would be renamed. Such SQL is an HTML-escaped copy, not SQL to translate.
-  const code = tokens.map((token) =>
-    ['string', 'comment', 'quoted'].includes(token.kind)
-      ? ' '.repeat(token.text.length)
-      : token.text,
-  );
-  const entity = htmlEntity.exec(code.join(''));
-  if (entity) {
-    let offset = 0;
-    const token = tokens.find((entry, index) => (offset += code[index].length) > entity.index)!;
+  const entity = entityOutsideTexts(tokens);
+  if (entity)
     return {
       sql,
       rewrites: [],
       unresolved: [
         {
-          at: at(token),
-          name: entity[0],
+          at: at(entity.token),
+          name: entity.text,
           reason:
-            'the SQL holds an HTML entity outside texts and comments, as an older plugin version wrote the model SQL of a DBT segment from Salesforce; retrieve the segment again and deploy the retrieved file',
+            'the SQL holds an HTML entity outside texts and comments, so it is an HTML-escaped copy, not SQL that can be read exactly: write the character itself (an older plugin version wrote the model SQL of a DBT segment so from Salesforce; retrieve the segment again and deploy the retrieved file)',
         },
       ],
     };
-  }
-  const found = new SqlAnalysis(tokens, namer).run();
+  const analysis = new SqlAnalysis(tokens, namer);
+  const found = analysis.run();
   if (typeof found === 'string')
     return {
       sql,
@@ -942,6 +1010,15 @@ export function translateSql(sql: string, label: string, namer: SqlNamer): SqlTr
     found.unresolved.set(index, reason);
     found.edits.delete(index);
   }
+  if (outputField)
+    for (const columns of analysis.statements)
+      for (const { token, aliased } of columns.names ?? []) {
+        if (found.unresolved.has(token)) continue;
+        const reason = outputColumn(token, aliased, tokens, found, outputField, columns.aliasUses);
+        if (reason === undefined) continue;
+        found.unresolved.set(token, reason);
+        found.edits.delete(token);
+      }
   const rewrites: CrossSpaceRewrite[] = [];
   const unresolved: CrossSpaceUnresolved[] = [];
   const parts = tokens.map((token, index) => {
@@ -981,5 +1058,214 @@ export function translateSql(sql: string, label: string, namer: SqlNamer): SqlTr
         reason: 'the rewrite does not cover this name, so it cannot be placed',
       });
   }
-  return { sql: result, rewrites, unresolved };
+  const outputs: NonNullable<SqlTranslation['outputs']> = { stars: [] };
+  for (const columns of analysis.statements)
+    for (const star of columns.starAt ?? [])
+      outputs.stars.push({
+        at: at(tokens[star.token]),
+        name: tokens[star.token].text,
+        dlo: star.sources.length > 0 && star.sources.every((source) => source.keeps),
+      });
+  return { sql: result, rewrites, unresolved, outputs };
+}
+
+/**
+ * Check one column the outermost query puts out against the output field of its source name (see
+ * translateSql). An alias spelled like the field is rewritten to the field's target name.
+ * @param {number} token Token index of the alias, or of the column without an alias.
+ * @param {boolean} aliased Whether the token is an alias.
+ * @param {SqlToken[]} tokens Tokens.
+ * @param {Collector} found The analysis result, changed in place.
+ * @param {OutputField} outputField The output field of a column name.
+ * @param {ReadonlyMap<string, number[]>} [aliasUses] The uses of each alias in its query block.
+ * @returns {string | undefined} Why the column cannot be placed, or undefined.
+ */
+function outputColumn(
+  token: number,
+  aliased: boolean,
+  tokens: SqlToken[],
+  found: Collector,
+  outputField: OutputField,
+  aliasUses?: ReadonlyMap<string, number[]>,
+): string | undefined {
+  const from = tokenName(tokens[token]) ?? '';
+  const field = outputField(from);
+  if (aliased) {
+    if (field && field.name.toLowerCase() !== from.toLowerCase())
+      // The alias and every use of it in its query block (ORDER BY ssot__Id__c) take the new name.
+      for (const index of [token, ...(aliasUses?.get(from.toLowerCase()) ?? [])])
+        found.edits.set(index, { to: field.name, rule: field.rule });
+    return undefined;
+  }
+  const to = found.edits.get(token)?.to ?? from;
+  const same = to.toLowerCase() === (field?.name ?? from).toLowerCase();
+  if (same) return undefined;
+  const way = `write the column with AS ${from}, and the alias then takes the output field's target name`;
+  if (!field)
+    return `this column has no alias, so it puts out a column named ${from}, which names no field of the output object; the translation spells it ${to}, which could land it in another field, so it cannot be placed: write the column with AS and the name of the output field it is meant for`;
+  if (to === from)
+    return `this column has no alias, so it puts out a column named ${from} into the output field ${from}; the column keeps its name in the target data space while the field is spelled ${field.name} there, so it cannot be placed: ${way}`;
+  return `this column has no alias, so it puts out a column named ${from} into the output field ${from}; the translation spells the column ${to} while the field is spelled ${field.name} in the target data space, so it cannot be placed: ${way}`;
+}
+
+/** How an SQL expression of an STL node (a formula, a SQL filter) places its column names. */
+export type ExpressionNamer = Pick<SqlNamer, 'leftover' | 'spelling'> & {
+  /**
+   * A column the node reads, with the join side qualifier written before it (`R.Name__c`).
+   * @param {string} field Column name.
+   * @param {string} [qualifier] Join side qualifier.
+   */
+  column(field: string, qualifier?: string): { name: string; rule?: CrossSpaceRule } | NotPlaced;
+};
+
+// A qualified column inside one quoted name, as STL writes it (`"R.Name__c"`).
+const quotedQualified = /^([A-Za-z_][A-Za-z0-9_]*)\.([^.]+)$/u;
+
+/**
+ * Rewrite the column names of one SQL expression (an STL formula or SQL filter: no FROM, no
+ * tables) into the target data space. Texts in single quotes and comments never change; a
+ * function name stays. A column is placed by `namer.column`, alone (`Name__c`) or with its join
+ * side qualifier, unquoted (`R.Name__c`) or inside one quoted name (`"R.Name__c"`). An object
+ * name, a longer dotted chain, or any name-like token it cannot place exactly is reported with
+ * its line and column. Afterwards every name-like token of the result is checked as in
+ * translateSql.
+ * @param {string} sql Expression text (HTML entities already undone).
+ * @param {string} label What the positions are reported against (the JSON path).
+ * @param {ExpressionNamer} namer The rule engine for this node.
+ * @returns {SqlTranslation} Rewritten expression, its changes and every name it cannot place.
+ */
+export function translateSqlExpression(
+  sql: string,
+  label: string,
+  namer: ExpressionNamer,
+): SqlTranslation {
+  const tokens = tokenizeSql(sql);
+  if (isSqlTokenProblem(tokens))
+    return {
+      sql,
+      rewrites: [],
+      unresolved: [
+        {
+          at: `${label} line ${tokens.line}:${tokens.column}`,
+          name: label,
+          reason: `the expression cannot be read exactly: ${tokens.reason}`,
+        },
+      ],
+    };
+  const at = (token: SqlToken): string => `${label} line ${token.line}:${token.column}`;
+  const entity = entityOutsideTexts(tokens);
+  if (entity)
+    return {
+      sql,
+      rewrites: [],
+      unresolved: [
+        {
+          at: at(entity.token),
+          name: entity.text,
+          reason:
+            'the expression holds an HTML entity outside texts after its escaping was undone (escaped twice), so it cannot be read exactly',
+        },
+      ],
+    };
+  const edits = new Map<number, { from: string; to: string; rule?: CrossSpaceRule }>();
+  const unresolved = new Map<number, string>();
+  const seen = new Set<number>();
+  const sig = tokens.flatMap((token, index) =>
+    token.kind === 'space' || token.kind === 'comment' ? [] : [index],
+  );
+  const isPunct = (position: number, text: string): boolean =>
+    tokens[sig[position]]?.kind === 'punct' && tokens[sig[position]].text === text;
+  // Place one column; `whole` spells the qualifier into the same quoted token.
+  const place = (index: number, field: string, qualifier?: string, whole = false): void => {
+    seen.add(index);
+    if (objectLike.test(field)) {
+      unresolved.set(index, 'an object name inside an expression cannot be placed');
+      return;
+    }
+    if (!nameLike(field)) return;
+    const spelling = namer.spelling(field);
+    if (spelling !== undefined) {
+      unresolved.set(index, spelling);
+      return;
+    }
+    const answer = namer.column(field, qualifier);
+    if ('reason' in answer) {
+      unresolved.set(index, answer.reason);
+      return;
+    }
+    const from = whole ? `${qualifier}.${field}` : field;
+    const to = whole ? `${qualifier}.${answer.name}` : answer.name;
+    if (to !== from) edits.set(index, { from, to, rule: answer.rule });
+  };
+  for (let position = 0; position < sig.length; position++) {
+    const index = sig[position];
+    const name = tokenName(tokens[index]);
+    if (name === undefined || seen.has(index)) continue;
+    if (isPunct(position + 1, '.')) {
+      // `R.Name__c`: a qualifier and its column; a longer chain is not placed.
+      const fieldIndex = sig[position + 2];
+      const field = fieldIndex === undefined ? undefined : tokenName(tokens[fieldIndex]);
+      if (field === undefined || isPunct(position + 3, '.')) {
+        seen.add(index);
+        unresolved.set(index, 'a dotted name other than <qualifier>.<field> cannot be placed');
+        continue;
+      }
+      seen.add(index);
+      place(fieldIndex, field, name);
+      position += 2;
+      continue;
+    }
+    if (tokens[index].kind === 'word' && isPunct(position + 1, '(')) {
+      if (nameLike(name)) {
+        seen.add(index);
+        unresolved.set(index, 'a function named like a field or object cannot be placed');
+      }
+      continue;
+    }
+    if (tokens[index].kind === 'quoted' && name.includes('.')) {
+      const qualified = quotedQualified.exec(name);
+      if (!qualified) {
+        seen.add(index);
+        unresolved.set(index, 'a dotted name other than <qualifier>.<field> cannot be placed');
+        continue;
+      }
+      place(index, qualified[2], qualified[1], true);
+      continue;
+    }
+    place(index, name);
+  }
+  const rewrites: CrossSpaceRewrite[] = [];
+  const parts = tokens.map((token, index) => {
+    const edit = edits.get(index);
+    if (!edit || unresolved.has(index)) return token.text;
+    rewrites.push({ at: at(token), from: edit.from, to: edit.to, rule: edit.rule ?? 'field-ssot' });
+    return spellToken(token, edit.to);
+  });
+  const result: CrossSpaceUnresolved[] = [];
+  // eslint-disable-next-line unicorn/no-array-sort -- Sorting a new array within the ES2022 library target.
+  for (const [index, reason] of [...unresolved].sort(([left], [right]) => left - right))
+    result.push({ at: at(tokens[index]), name: tokenName(tokens[index]) ?? '', reason });
+  const text = parts.join('');
+  const after = tokenizeSql(text);
+  if (isSqlTokenProblem(after) || after.length !== tokens.length) {
+    result.push({
+      at: `${label} line 1:1`,
+      name: label,
+      reason: 'the rewritten expression does not read back token for token',
+    });
+    return { sql, rewrites, unresolved: result };
+  }
+  for (const [index, token] of after.entries()) {
+    const name = tokenName(token);
+    if (name === undefined || unresolved.has(index)) continue;
+    const leftover = namer.leftover(name);
+    if (leftover !== undefined) result.push({ at: at(tokens[index]), name, reason: leftover });
+    else if (nameLike(name) && !seen.has(index))
+      result.push({
+        at: at(tokens[index]),
+        name,
+        reason: 'the rewrite does not cover this name, so it cannot be placed',
+      });
+  }
+  return { sql: text, rewrites, unresolved: result };
 }

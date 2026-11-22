@@ -491,9 +491,20 @@ stays), DLO (the run's data space added to its list), UI segment (name, `segment
 (name, `segmentOn`, children). A name no rule places exactly (towards `default` a
 `<prefix>_<Name>__dlm` without a selected custom DMO file, packaged DMOs, unified outputs without
 the `ssot` spelling, a foreign prefix, a data space without a prefix) is
-`CROSS_DATASPACE_UNRESOLVED`; DCSQL transforms, STL transforms with any node other than load,
-join and output, segment types other than UI, Waterfall and DBT, and data streams are
-`CROSS_DATASPACE_UNSUPPORTED`; both before any write. Also translated (Step 3a): calculated
+`CROSS_DATASPACE_UNRESOLVED`; STL transforms with any node other than load, join, formula,
+filter, sqlFilter, aggregate, appendV2 and output (Step 3b-1), DCSQL transforms with a manifest
+node without SQL in `compiled_code`, transforms of other types, segment types other than UI,
+Waterfall and DBT, and data streams are `CROSS_DATASPACE_UNSUPPORTED`; both before any write.
+Step 3b-2 translates DCSQL transforms: both names, `dataSpaceName`, each manifest node's
+`compiled_code` (and `raw_code`) by the SQL rewrite below, `relation_name` and
+`outputDataObjects` (with their `dataspaceName`) by the object rules, DLOs kept. Each node's
+top-level output columns (first `UNION` branch) are checked against the fields of the output object
+its `relation_name` names (a node naming none is refused): an alias spelled like an output field
+takes the field's target name (`AS ssot__Name__c` becomes `AS Name__c` towards `dataspace2`, uses
+of the alias in its query block follow); a column without an alias is refused unless its target
+name equals its field's target name (write it with `AS` and the source field name, which then
+follows the field), and so is `*` over a table that is not a DLO, or over a DLO when the output
+fields change (unit tests only). Also translated (Step 3a): calculated
 insights (`apiName` and `sourceCiDevName` by the prefix rule, `dataSpace`, and the SQL of
 classic and `DC_SQL` insights) and DBT segments (name, `segmentOn` and every model's SQL). The
 SQL is tokenized: single-quoted texts and `--` / `/* */` comments are skipped, double quotes and

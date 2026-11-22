@@ -1,6 +1,7 @@
 import type { OrgDataSpace } from './data-space-check.js';
-import type { SqlNamer } from './cross-dataspace-sql.js';
-import { translateSql } from './cross-dataspace-sql.js';
+import { unescapeSalesforceHtml } from '../artifacts/native-calculated-insight-document.js';
+import type { ExpressionNamer, SqlNamer } from './cross-dataspace-sql.js';
+import { translateSql, translateSqlExpression } from './cross-dataspace-sql.js';
 
 /**
  * The rename rules of a cross-data-space deploy. Each one is a fixed spelling rule Salesforce
@@ -433,6 +434,8 @@ class Recorder {
   public readonly unresolved: CrossSpaceUnresolved[] = [];
   /** Every JSON path the translation looked at, changed or kept on purpose. */
   public readonly visited = new Set<string>();
+  /** SQL texts, checked token by token by their own translation (not by the full-coverage check). */
+  public readonly ownCheck = new Set<string>();
 
   public constructor(private readonly context: CrossSpaceContext) {}
 
@@ -543,14 +546,91 @@ class Recorder {
    * @param {string} at JSON path of the SQL.
    * @param {string} sql SQL text.
    * @param {string} file The SQL file it is read from, as positions are reported.
+   * @param {ReadonlyMap<string, {name: string; rule?: CrossSpaceRule}>} [outputs] When the columns
+   * the SQL puts out land in the fields of its output object by name (a DCSQL node): each field of
+   * that object (source name, lowercase) with its target name and rule. Each output column is then
+   * checked against its field (see translateSql), and `*` over a table that is not a DLO is not
+   * placed.
    * @returns {string} The rewritten SQL.
    */
-  public sql(at: string, sql: string, file: string): string {
+  public sql(
+    at: string,
+    sql: string,
+    file: string,
+    outputs?: ReadonlyMap<string, { name: string; rule?: CrossSpaceRule }>,
+  ): string {
     this.visited.add(at);
-    const result = translateSql(sql, file, sqlNamer(this.context));
+    this.ownCheck.add(at);
+    const result = translateSql(
+      sql,
+      file,
+      sqlNamer(this.context),
+      outputs && ((name) => outputs.get(name.toLowerCase())),
+    );
     this.rewrites.push(...result.rewrites);
     this.unresolved.push(...result.unresolved);
+    if (outputs && result.outputs) {
+      const fieldsChange = [...outputs].some(
+        ([source, field]) => field.name.toLowerCase() !== source,
+      );
+      for (const star of result.outputs.stars)
+        if (!star.dlo || fieldsChange)
+          this.unresolved.push({
+            at: star.at,
+            name: star.name,
+            reason: star.dlo
+              ? "this * puts out the columns of a DLO, which keep their names while the output object's fields change in the target data space; list the columns with AS and the output field name"
+              : 'this * puts out the columns of a table that is not a DLO, whose names can change in the target data space while the output object keeps its fields; list the columns, each with AS and the output field name',
+          });
+    }
     return result.sql;
+  }
+
+  /**
+   * Rewrite one SQL expression of an STL node (a formula, a SQL filter) by the node's lineage. A
+   * value as Salesforce returns it, HTML-escaped (`&quot;`, `&#39;`), is read unescaped and
+   * written back escaped the same way; a value that mixes both forms is not placed. Line and
+   * column positions refer to the unescaped expression.
+   * @param {string} at JSON path of the expression.
+   * @param {string} text Expression as the file holds it.
+   * @param {Lineage} lineage Whose columns the node reads without a qualifier.
+   * @param {ReadonlyMap<string, Lineage>} [qualifiers] The qualifiers of the join above the node.
+   * @returns {string} The rewritten expression, in the file's form.
+   */
+  public expression(
+    at: string,
+    text: string,
+    lineage: Lineage,
+    qualifiers?: ReadonlyMap<string, Lineage>,
+  ): string {
+    this.visited.add(at);
+    const plain = unescapeSalesforceHtml(text);
+    const escaped = plain !== text;
+    if (escaped && escapeSalesforceHtml(plain) !== text) {
+      this.unresolved.push({
+        at,
+        name: text,
+        reason:
+          'the expression mixes HTML-escaped and plain characters, so it cannot be written back in the form the file has',
+      });
+      return text;
+    }
+    const base = sqlNamer(this.context);
+    const namer: ExpressionNamer = {
+      leftover: base.leftover,
+      spelling: base.spelling,
+      column: (field, qualifier) => {
+        if (qualifier === undefined) return this.placeLineage(lineage, field);
+        if (qualifiers?.has(qualifier)) return this.placeLineage(qualifiers.get(qualifier), field);
+        return {
+          reason: `the qualifier ${qualifier} names no side of the join this expression reads from, so the object of its field is not known and its spelling cannot be placed`,
+        };
+      },
+    };
+    const result = translateSqlExpression(plain, at, namer);
+    this.rewrites.push(...result.rewrites);
+    this.unresolved.push(...result.unresolved);
+    return escaped ? escapeSalesforceHtml(result.sql) : result.sql;
   }
 
   /**
@@ -601,7 +681,7 @@ class Recorder {
    * @param {string} field Source field name.
    * @returns {{name: string; rule?: CrossSpaceRule} | NotPlaced} Target field name, or why not.
    */
-  private placeLineage(
+  public placeLineage(
     owner: Placed | 'dlo' | undefined,
     field: string,
   ): { name: string; rule?: CrossSpaceRule } | NotPlaced {
@@ -615,6 +695,20 @@ class Recorder {
       };
     return { name: field };
   }
+}
+
+/**
+ * HTML-escape a text the way the API 68 GET returns STL expressions (`&quot;`, `&#39;`).
+ * @param {string} text Plain text.
+ * @returns {string} Escaped text.
+ */
+function escapeSalesforceHtml(text: string): string {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 /**
@@ -698,8 +792,20 @@ function translateCriteria(
   return result;
 }
 
-/** STL node actions the translation can place: no expression in them. */
-const translatableNodes = new Set(['load', 'outputD360', 'join']);
+/**
+ * STL node actions the translation can place: loads, joins and outputs, and the expression nodes
+ * whose shapes are known (live API 68, DB entry data360:dataspace-ci-spelling-stl-nodes-api68).
+ */
+const translatableNodes = new Set([
+  'load',
+  'outputD360',
+  'join',
+  'formula',
+  'filter',
+  'sqlFilter',
+  'aggregate',
+  'appendV2',
+]);
 
 /**
  * The definitions of a transform file: its `definition`, or each entry of `definitions`.
@@ -712,24 +818,67 @@ function transformDefinitions(document: Record<string, unknown>): Array<Record<s
   return [input.definition as Record<string, unknown>];
 }
 
+/** The keys of a DCSQL manifest node that hold SQL text. */
+const dcsqlSqlKeys = ['compiled_code', 'raw_code'];
+
 /**
- * Why a transform file cannot be translated yet: not STL (SQL comes in a later step), or a node
- * that is not a load, join or output (formula, filter, computed or other expression nodes).
+ * The model nodes of a DCSQL definition (`manifest.nodes`), or undefined when it has none.
+ * @param {Record<string, unknown>} definition DCSQL definition.
+ * @returns {Record<string, Record<string, unknown>> | undefined} Nodes by key.
+ */
+function dcsqlNodes(
+  definition: Record<string, unknown>,
+): Record<string, Record<string, unknown>> | undefined {
+  const manifest = definition.manifest as { nodes?: unknown } | null | undefined;
+  const nodes = manifest?.nodes;
+  if (!nodes || typeof nodes !== 'object' || Array.isArray(nodes)) return undefined;
+  return nodes as Record<string, Record<string, unknown>>;
+}
+
+/**
+ * Why a DCSQL definition cannot be translated: no model nodes, or a node without SQL text.
+ * @param {Record<string, unknown>} definition DCSQL definition.
+ * @returns {string | undefined} Reason.
+ */
+function dcsqlUnsupported(definition: Record<string, unknown>): string | undefined {
+  const nodes = dcsqlNodes(definition);
+  if (!nodes || Object.keys(nodes).length === 0)
+    return 'the DCSQL definition holds no manifest nodes the translation can read';
+  for (const [key, node] of Object.entries(nodes)) {
+    if (!node || typeof node !== 'object' || Array.isArray(node))
+      return `the DCSQL manifest node ${key} is not an object the translation can read`;
+    if (typeof node.compiled_code !== 'string')
+      return `the DCSQL manifest node ${key} holds no SQL in compiled_code`;
+    for (const sqlKey of dcsqlSqlKeys)
+      if (node[sqlKey] !== undefined && typeof node[sqlKey] !== 'string')
+        return `the DCSQL manifest node ${key} holds a ${sqlKey} that is not SQL text`;
+  }
+  return undefined;
+}
+
+/**
+ * Why a transform file cannot be translated yet: neither STL nor DCSQL, a DCSQL definition without
+ * SQL to read, or an STL node whose action the translation does not know.
  * @param {Record<string, unknown>} document Transform file.
  * @returns {string | undefined} Reason.
  */
 function transformUnsupported(document: Record<string, unknown>): string | undefined {
   for (const definition of transformDefinitions(document)) {
     const type = definition?.type;
+    if (type === 'DCSQL') {
+      const reason = dcsqlUnsupported(definition);
+      if (reason !== undefined) return reason;
+      continue;
+    }
     if (type !== 'STL')
-      return `data transforms of type ${String(type)} cannot be translated yet (SQL comes in a later step); only STL transforms without expression nodes can`;
+      return `data transforms of type ${String(type)} cannot be translated; only STL and DCSQL transforms can`;
     const nodes = definition.nodes;
     if (!nodes || typeof nodes !== 'object' || Array.isArray(nodes))
       return 'the STL definition holds no nodes the translation can read';
     for (const [key, node] of Object.entries(nodes as Record<string, unknown>)) {
       const action = (node as { action?: unknown } | null)?.action;
       if (typeof action !== 'string' || !translatableNodes.has(action))
-        return `the STL node ${key} (${String(action)}) is a formula, filter or other expression node; expressions come in a later step, only load, join and output nodes can be translated now`;
+        return `the STL node ${key} (${String(action)}) is of a kind the translation does not know; only load, join, formula, filter, sqlFilter, aggregate, appendV2 and output nodes can be translated`;
     }
   }
   return undefined;
@@ -1097,8 +1246,148 @@ function lineageFields(
 }
 
 /**
+ * Place the name of a column a node adds (a formula field, an aggregation). It is a user name, but
+ * every later node reads it by the lineage rule of its node (see lineageFields), so it takes that
+ * spelling too: from `default` an `ssot__` name drops it like any field, a plain name stays. Where
+ * the lineage rule would give a plain new name a spelling of the source object's own fields (an
+ * identity resolution output towards `default` gets `ssot__`), the new name is not placed: it is
+ * not a field of that object, and keeping it would leave the later references apart from it.
+ * @param {unknown} value Column name.
+ * @param {string} at JSON path.
+ * @param {Lineage} input Lineage of the node's one source.
+ * @param {Recorder} recorder Collects changes.
+ * @param {CrossSpaceContext} context Translation context.
+ * @returns {unknown} Target name.
+ */
+function addedColumn(
+  value: unknown,
+  at: string,
+  input: Lineage,
+  recorder: Recorder,
+  context: CrossSpaceContext,
+): unknown {
+  if (typeof value !== 'string' || !nameValue.test(value))
+    return lineageFields(value, at, input, recorder);
+  const placed = recorder.placeLineage(input, value);
+  const own = translateFieldName(context, 'custom', value);
+  if (!('reason' in placed) && placed.name !== own.name) {
+    recorder.visited.add(at);
+    recorder.unresolved.push({
+      at,
+      name: value,
+      reason: `this node adds the column ${value}, and the later nodes read it by the rule of the object the rows come from, which would spell it ${placed.name}, a field of that object it is not; deploy this transform in its own data space`,
+    });
+    return value;
+  }
+  return recorder.lineageField(at, input, value);
+}
+
+/**
+ * Translate the names of a formula, filter, sqlFilter or aggregate node by the lineage of its one
+ * source: whole values (filter fields, aggregate sources and groupings) as fields, SQL text
+ * (formula and SQL filter expressions) name by name. The columns a node adds (formula field
+ * names, aggregation names) are user names: see addedColumn.
+ * @param {unknown} action Node action.
+ * @param {Record<string, unknown>} parameters Node parameters, changed in place.
+ * @param {string} at JSON path of the parameters.
+ * @param {Lineage} input Lineage of the node's one source; undefined after a join or with several.
+ * @param {ReadonlyMap<string, Lineage>} [qualifiers] The qualifiers of the join above the node.
+ * @param {Recorder} recorder Collects changes.
+ * @param {CrossSpaceContext} context Translation context.
+ */
+function translateExpressionNode(
+  action: unknown,
+  parameters: Record<string, unknown>,
+  at: string,
+  input: Lineage,
+  qualifiers: ReadonlyMap<string, Lineage> | undefined,
+  recorder: Recorder,
+  context: CrossSpaceContext,
+): void {
+  const entries = (key: string): Array<Record<string, unknown>> =>
+    Array.isArray(parameters[key]) ? (parameters[key] as Array<Record<string, unknown>>) : [];
+  switch (action) {
+    case 'formula': {
+      const sql = parameters.expressionType === 'SQL';
+      for (const [index, field] of entries('fields').entries()) {
+        const fieldAt = `${at}.fields[${index}]`;
+        field.name = addedColumn(field.name, `${fieldAt}.name`, input, recorder, context);
+        if (typeof field.formulaExpression !== 'string') continue;
+        if (sql)
+          field.formulaExpression = recorder.expression(
+            `${fieldAt}.formulaExpression`,
+            field.formulaExpression,
+            input,
+            qualifiers,
+          );
+        else {
+          recorder.visited.add(`${fieldAt}.formulaExpression`);
+          recorder.unresolved.push({
+            at: `${fieldAt}.formulaExpression`,
+            name: field.formulaExpression,
+            reason: `formula expressions of type ${String(parameters.expressionType)} cannot be translated; only SQL expressions can`,
+          });
+        }
+      }
+      return;
+    }
+    case 'filter': {
+      for (const [index, expression] of entries('filterExpressions').entries())
+        expression.field = lineageFields(
+          expression.field,
+          `${at}.filterExpressions[${index}].field`,
+          input,
+          recorder,
+          qualifiers,
+        );
+      return;
+    }
+    case 'sqlFilter': {
+      if (typeof parameters.sqlFilterExpression === 'string')
+        parameters.sqlFilterExpression = recorder.expression(
+          `${at}.sqlFilterExpression`,
+          parameters.sqlFilterExpression,
+          input,
+          qualifiers,
+        );
+      return;
+    }
+    case 'aggregate': {
+      for (const [index, aggregation] of entries('aggregations').entries()) {
+        aggregation.source = lineageFields(
+          aggregation.source,
+          `${at}.aggregations[${index}].source`,
+          input,
+          recorder,
+          qualifiers,
+        );
+        aggregation.name = addedColumn(
+          aggregation.name,
+          `${at}.aggregations[${index}].name`,
+          input,
+          recorder,
+          context,
+        );
+      }
+      parameters.groupings = lineageFields(
+        parameters.groupings,
+        `${at}.groupings`,
+        input,
+        recorder,
+        qualifiers,
+      );
+      return;
+    }
+    default: {
+      return;
+    }
+  }
+}
+
+/**
  * Translate one STL definition: load and output objects and fields, output field mappings, join
- * keys and the sample data space; output object definitions by their name.
+ * keys and the sample data space, the names in formula, filter, sqlFilter, aggregate and appendV2
+ * nodes; output object definitions by their name.
  * @param {Record<string, unknown>} definition STL definition, changed in place.
  * @param {string} at JSON path.
  * @param {Recorder} recorder Collects changes.
@@ -1150,14 +1439,21 @@ function translateStl(
         recorder,
       );
   }
-  // A node takes the lineage of its one source; a join mixes its sources.
+  // A node takes the lineage of its one source. A join or append mixes its sources: its columns
+  // keep one spelling only when every source is a DLO, or every source a DMO of the same kind
+  // (the field rule reads nothing else); otherwise its lineage is unknown.
   const lineageOf = (key: string, seen = new Set<string>()): Lineage => {
     if (lineage.has(key)) return lineage.get(key);
     const node = nodes[key];
-    if (!node || seen.has(key) || node.action === 'join') return undefined;
+    if (!node || seen.has(key)) return undefined;
     seen.add(key);
-    const sources = sourcesOf(node);
-    return sources.length === 1 ? lineageOf(sources[0], seen) : undefined;
+    const sides = sourcesOf(node).map((source) => lineageOf(source, new Set(seen)));
+    const [first] = sides;
+    if (first === undefined) return undefined;
+    const same = sides.every((side) =>
+      side === 'dlo' || first === 'dlo' ? side === first : side?.kind === first.kind,
+    );
+    return same ? first : undefined;
   };
   // The qualifiers of the nearest join above a node (`leftQualifier`, `rightQualifier`), each with
   // the lineage of its side.
@@ -1195,9 +1491,34 @@ function translateStl(
           side === undefined ? undefined : qualifiersOf(sources[side] ?? ''),
         );
       }
-    if (node.action !== 'outputD360') continue;
     const input = sources.length === 1 ? lineageOf(sources[0]) : undefined;
     const qualifiers = sources.length === 1 ? qualifiersOf(sources[0]) : undefined;
+    if (node.action === 'appendV2') {
+      for (const [index, pair] of (
+        (parameters.fieldMappings as Array<Record<string, unknown>>) ?? []
+      ).entries())
+        for (const [side, name] of ['top', 'bottom'].entries())
+          pair[name] = lineageFields(
+            pair[name],
+            `${nodeAt}.fieldMappings[${index}].${name}`,
+            lineageOf(sources[side] ?? ''),
+            recorder,
+            qualifiersOf(sources[side] ?? ''),
+          );
+      continue;
+    }
+    if (node.action !== 'outputD360') {
+      translateExpressionNode(
+        node.action,
+        parameters,
+        nodeAt,
+        input,
+        qualifiers,
+        recorder,
+        context,
+      );
+      continue;
+    }
     const output =
       typeof parameters.name === 'string'
         ? transformObject(`${nodeAt}.name`, parameters.name, recorder)
@@ -1228,27 +1549,112 @@ function translateStl(
         recorder,
       );
   }
+  translateOutputObjects(definition, at, recorder, context);
+}
+
+/**
+ * Translate the output object definitions of a transform definition by their name: a DLO keeps
+ * its name and fields, a DMO is placed with its fields; a `dataspaceName` names the target.
+ * @param {Record<string, unknown>} definition Transform definition, changed in place.
+ * @param {string} at JSON path of the definition.
+ * @param {Recorder} recorder Collects changes.
+ * @param {CrossSpaceContext} context Translation context.
+ * @returns {Map<string, Map<string, {name: string; rule?: CrossSpaceRule}>>} Per output object
+ * (source name, lowercase) each field (source name, lowercase) with its target name and rule.
+ */
+function translateOutputObjects(
+  definition: Record<string, unknown>,
+  at: string,
+  recorder: Recorder,
+  context: CrossSpaceContext,
+): Map<string, Map<string, { name: string; rule?: CrossSpaceRule }>> {
+  const objects = new Map<string, Map<string, { name: string; rule?: CrossSpaceRule }>>();
   for (const [index, object] of (
     (definition.outputDataObjects as Array<Record<string, unknown>>) ?? []
   ).entries()) {
     const objectAt = `${at}.outputDataObjects[${index}]`;
+    const fields = new Map<string, { name: string; rule?: CrossSpaceRule }>();
+    if (typeof object.name === 'string') objects.set(object.name.toLowerCase(), fields);
     const placed =
       typeof object.name === 'string'
         ? transformObject(`${objectAt}.name`, object.name, recorder)
         : undefined;
     if (placed) object.name = placed.name;
+    if (typeof object.dataspaceName === 'string')
+      object.dataspaceName = recorder.change(
+        `${objectAt}.dataspaceName`,
+        object.dataspaceName,
+        context.target,
+        'data-space',
+      );
     for (const [fieldIndex, field] of (
       (object.fields as Array<Record<string, unknown>>) ?? []
     ).entries()) {
+      const source = field.name;
       field.name = lineageFields(
         field.name,
         `${objectAt}.fields[${fieldIndex}].name`,
         placed?.lineage,
         recorder,
       );
-      if (typeof field.keyQualifierField === 'string')
-        recorder.keep(`${objectAt}.fields[${fieldIndex}].keyQualifierField`);
+      if (typeof source === 'string' && typeof field.name === 'string') {
+        const rule = recorder.rewrites.find(
+          (entry) => entry.at === `${objectAt}.fields[${fieldIndex}].name`,
+        )?.rule;
+        fields.set(source.toLowerCase(), { name: field.name, ...(rule ? { rule } : {}) });
+      }
+      for (const key of ['keyQualifierField', 'keyQualifierName'])
+        if (typeof field[key] === 'string')
+          recorder.keep(`${objectAt}.fields[${fieldIndex}].${key}`);
     }
+  }
+  return objects;
+}
+
+/**
+ * Translate one DCSQL definition: its name, the output objects (see translateOutputObjects), and
+ * per manifest node the SQL (`compiled_code`, and `raw_code` when present) by the SQL rules and
+ * the output object (`relation_name`) by its name. The columns a node's SQL puts out land by name
+ * in the fields of the output object its `relation_name` names, so each is checked against that
+ * object's fields (see translateSql); a node whose `relation_name` names no output object of the
+ * definition is not placed. The node's `name` and `config` are kept; anything else name-like is
+ * left to the full-coverage check.
+ * @param {Record<string, unknown>} definition DCSQL definition, changed in place.
+ * @param {string} at JSON path.
+ * @param {Recorder} recorder Collects changes.
+ * @param {CrossSpaceContext} context Translation context.
+ */
+function translateDcsql(
+  definition: Record<string, unknown>,
+  at: string,
+  recorder: Recorder,
+  context: CrossSpaceContext,
+): void {
+  if (typeof definition.name === 'string')
+    definition.name = recorder.named(`${at}.name`, definition.name, translateUniqueName);
+  const objects = translateOutputObjects(definition, at, recorder, context);
+  for (const [key, node] of Object.entries(dcsqlNodes(definition) ?? {})) {
+    const nodeAt = `${at}.manifest.nodes.${key}`;
+    const relation = typeof node.relation_name === 'string' ? node.relation_name : undefined;
+    const fields = relation === undefined ? undefined : objects.get(relation.toLowerCase());
+    if (!fields)
+      recorder.unresolved.push({
+        at: `${nodeAt}.relation_name`,
+        name: relation ?? '(none)',
+        reason: `the node's relation_name ${relation === undefined ? 'is missing' : 'names no output object of this definition'}, so the output fields its SQL columns land in are not known and the column names cannot be placed`,
+      });
+    for (const sqlKey of dcsqlSqlKeys)
+      if (typeof node[sqlKey] === 'string')
+        node[sqlKey] = recorder.sql(
+          `${nodeAt}.${sqlKey}`,
+          node[sqlKey] as string,
+          `${nodeAt}.${sqlKey}`,
+          fields ?? new Map(),
+        );
+    if (relation !== undefined)
+      node.relation_name = transformObject(`${nodeAt}.relation_name`, relation, recorder).name;
+    if (typeof node.name === 'string') recorder.keep(`${nodeAt}.name`);
+    if (node.config !== undefined) recorder.keepAll(node.config, `${nodeAt}.config`);
   }
 }
 
@@ -1273,16 +1679,14 @@ function translateTransform(
       context.target,
       'data-space',
     );
+  const translate = (definition: Record<string, unknown>, at: string): void => {
+    if (definition.type === 'DCSQL') translateDcsql(definition, at, recorder, context);
+    else translateStl(definition, at, recorder, context);
+  };
   if (Array.isArray(input.definitions))
     for (const [index, entry] of (input.definitions as Array<Record<string, unknown>>).entries())
-      translateStl(entry, `definition.definitions[${index}]`, recorder, context);
-  else
-    translateStl(
-      input.definition as Record<string, unknown>,
-      'definition.definition',
-      recorder,
-      context,
-    );
+      translate(entry, `definition.definitions[${index}]`);
+  else translate(input.definition as Record<string, unknown>, 'definition.definition');
 }
 
 /**
@@ -1538,7 +1942,7 @@ export function translateDocument(
       '',
       recorder,
       context,
-      new Set(recorder.unresolved.map((entry) => entry.at)),
+      new Set([...recorder.unresolved.map((entry) => entry.at), ...recorder.ownCheck]),
     );
     return { document: copy, rewrites: recorder.rewrites, unresolved: recorder.unresolved };
   }

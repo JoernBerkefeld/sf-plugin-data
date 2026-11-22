@@ -377,7 +377,7 @@ test('translateDocument refuses every kind it does not cover yet', () => {
     {
       kind: 'data-transform',
       c__dataSpace: 'default',
-      definition: { name: 'T', definition: { type: 'DCSQL' } },
+      definition: { name: 'T', definition: { type: 'SQL' } },
     },
     { kind: 'data-stream', c__dataSpace: ['default'] },
     segmentFile({ spec: { ...segmentFile().spec, segmentType: 'Dynamic' } }),
@@ -868,7 +868,7 @@ test('under the flag unsupported kinds and unplaceable names refuse the deploy b
     assert.deepEqual(unresolved.calls, []);
   }));
 
-test('a SQL or expression transform file of another data space is refused as not supported yet', async () =>
+test('a streaming SQL transform or an STL transform with an unknown node is refused as not supported yet', async () =>
   withSpaces(async () => {
     const command = Object.create(Deploy.prototype);
     command.parse = async () => ({
@@ -888,7 +888,7 @@ test('a SQL or expression transform file of another data space is refused as not
         schemaVersion: 1,
         kind: 'data-transform',
         c__dataSpace: 'default',
-        definition: { name: 'T', definition: { type: 'DCSQL' } },
+        definition: { name: 'T', definition: { type: 'SQL' } },
       },
       {
         schemaVersion: 1,
@@ -896,7 +896,7 @@ test('a SQL or expression transform file of another data space is refused as not
         c__dataSpace: 'default',
         definition: {
           name: 'T',
-          definition: { type: 'STL', nodes: { F: { action: 'filter' } } },
+          definition: { type: 'STL', nodes: { F: { action: 'extension' } } },
         },
       },
     ]) {
@@ -908,7 +908,7 @@ test('a SQL or expression transform file of another data space is refused as not
       assert.equal(result.diagnostics.errors[0].code, 'CROSS_DATASPACE_UNSUPPORTED');
       assert.match(
         result.diagnostics.errors[0].message,
-        /cannot be translated yet|expressions come in a later step/u,
+        /cannot be translated; only STL and DCSQL|of a kind the translation does not know/u,
       );
     }
   }));

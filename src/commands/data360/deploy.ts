@@ -501,7 +501,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       char: 'c',
       default: false,
       summary:
-        'Only with more than one data space: deploy files of another data space into --dataspace. DMO, mapping, relationship, DLO (membership only), UI, Waterfall and SQL (DBT) segment, calculated insight, data graph, identity resolution and STL transform (load, join and output nodes only) files are translated in memory by rule, the SQL of insights and DBT segments name by name (prefix, ssot__; identity resolution outputs from the ruleset list when their ruleset is not deployed with them); each translated file gets a copy file under its new name after it deployed. Other kinds and any name that cannot be placed exactly are refused before any write. With --preview it lists every rewrite (for SQL with its file, line and column).',
+        'Only with more than one data space: deploy files of another data space into --dataspace. DMO, mapping, relationship, DLO (membership only), UI, Waterfall and SQL (DBT) segment, calculated insight, data graph, identity resolution, STL transform (load, join, formula, filter, sqlFilter, aggregate, appendV2 and output nodes) and DCSQL transform files are translated in memory by rule, the SQL of insights, DBT segments and DCSQL transforms and STL expressions name by name (prefix, ssot__; identity resolution outputs from the ruleset list when their ruleset is not deployed with them); each translated file gets a copy file under its new name after it deployed. Other kinds and any name that cannot be placed exactly are refused before any write. With --preview it lists every rewrite (for SQL with its file, line and column).',
     }),
     'allow-dataspace-removal': Flags.boolean({
       default: false,

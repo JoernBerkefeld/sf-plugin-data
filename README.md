@@ -326,8 +326,9 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
 
 - **What is translated:** DMOs, mappings, relationships, UI, Waterfall and SQL (DBT)
   segments, calculated insights (classic and SQL Insights Builder), data graphs, identity
-  resolution rulesets and STL data transforms made of load, join and output nodes. A DLO is
-  added to the target data space; nothing in it is renamed.
+  resolution rulesets, STL data transforms (load, join, formula, filter, SQL filter, aggregate,
+  append and output nodes) and DCSQL data transforms. A DLO is added to the target data space;
+  nothing in it is renamed.
 - **How names change:** by fixed rules, with the prefixes from the org's list of data spaces.
   - Custom DMOs and segments get, lose or swap the prefix: `Order__dlm` becomes
     `ds2_Order__dlm`, `Audience` becomes `ds2_Audience`.
@@ -348,7 +349,7 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
     is placed by that side.
   - A mapping keeps its DLO side; it is found by its DLO and DMO, as always.
   - Calculated insights get, lose or swap the prefix: `Spend__cio` becomes `ds2_Spend__cio`.
-- **SQL is renamed name by name** (calculated insights and DBT segment models):
+- **SQL is renamed name by name** (calculated insights, DBT segment models and DCSQL transforms):
   - Tables follow the rules above. A DLO (`__dll`) keeps its name. Another insight (`__cio`)
     gets the prefix.
   - A column follows the rules of its table, through the table name, its alias, a `WITH` block
@@ -369,6 +370,13 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
     fails it about three minutes after activation without a message. So after the rewrite
     every name of the SQL outside texts and comments must be placed, and none may keep the old
     spelling.
+  - In a DCSQL transform the columns land by name in the fields of the node's output object
+    (`relation_name`). An alias spelled like an output field follows that field
+    (`AS ssot__Name__c` becomes `AS Name__c` when the field becomes `Name__c`). A column without
+    an alias is refused when its name and its field's name no longer match in the target (an
+    output DLO keeps its fields, so `SELECT ssot__Id__c …` into it is refused): write it with
+    `AS` and the field name as the source data space spells it. `*` over a table that is not a
+    DLO is refused too, and so is `*` over a DLO when the output fields change: list the columns.
   - Positions are reported per SQL file, line and column.
 - **Nothing is guessed.** A name no rule places exactly is listed, and the whole deploy is
   refused before any write (`CROSS_DATASPACE_UNRESOLVED`). For example, `ds2_Order__dlm`
@@ -377,9 +385,9 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
   the `default` spelling in another data space and builds it on the `default` objects. So after
   the translation every object and field name must be covered, and none may keep the old
   spelling; otherwise the file is refused (`CROSS_DATASPACE_UNRESOLVED`).
-- **Not translated yet:** DCSQL transforms, STL transforms with a formula, filter or other
-  expression node, and data streams. Under the flag they are
-  refused before any write (`CROSS_DATASPACE_UNSUPPORTED`).
+- **Not translated yet:** STL transforms with any other node, transforms of other types (such
+  as streaming SQL), and data streams. Under the flag they are refused before any write
+  (`CROSS_DATASPACE_UNSUPPORTED`).
 - **`--preview`** lists every rename (file, place in the file, old and new name, rule) and the
   copy files it would write. It writes nothing.
 - **Copy files:** after an item has deployed, deploy writes its translated file under the new
