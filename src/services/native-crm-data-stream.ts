@@ -1,4 +1,5 @@
 import { setTimeout as wait } from 'node:timers/promises';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import {
   DataStreamError,
   createSpacesRefusal,
@@ -186,6 +187,11 @@ async function planCrmDataStream(
   const org = await streamSpaces(current, document.identity.apiName, dataSpace, clients);
   if (!sameSpaces(document.c__dataSpace, org))
     throw spacesDiffer(document.identity.apiName, document.c__dataSpace, org);
+  refuseEscapedCopy(
+    crmDeploySpec(document),
+    orgSpec(current, org),
+    (code) => new DataStreamError(code),
+  );
   const { body, parts, unsupported } = crmDataStreamPatch(
     crmDeploySpec(document),
     orgSpec(current, org),

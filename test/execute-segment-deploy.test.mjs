@@ -1120,7 +1120,7 @@ test('a projection refusal of the readback ends the poll as SEGMENT_CREATE_UNCON
   );
 });
 
-test('a create whose readback holds the model SQL HTML-escaped is confirmed', async () => {
+test('a create whose readback holds the model SQL as sent is confirmed', async () => {
   const desired = document();
   desired.spec.models = [
     {
@@ -1128,18 +1128,11 @@ test('a create whose readback holds the model SQL HTML-escaped is confirmed', as
       sql: "SELECT Person__dlm.Id__c FROM Person__dlm WHERE Person__dlm.Name__c LIKE 'A%'",
     },
   ];
-  const escaped = {
-    models: [
-      {
-        name: 'Audience',
-        sql: 'SELECT Person__dlm.Id__c FROM Person__dlm WHERE Person__dlm.Name__c LIKE &#39;A%&#39;',
-      },
-    ],
-  };
+  const stored = { models: structuredClone(desired.spec.models) };
   let acquisitions = 0;
   const full = () => ({
     ...runtime(desired, 'ACTIVE'),
-    includeDbt: escaped,
+    includeDbt: stored,
     segmentOnId: 'target-local',
     segmentMembershipDmo: { historyTable: 'history', latestTable: 'latest' },
   });
@@ -1158,7 +1151,7 @@ test('a create whose readback holds the model SQL HTML-escaped is confirmed', as
           : { candidate: desired, blockers: [], expectations: { runtime: full() } },
       create: async () => ({
         ...runtime(desired, 'PROCESSING'),
-        includeDbt: escaped,
+        includeDbt: stored,
         segmentOnId: 'target-local',
       }),
       read: async () => ({ segments: [full()] }),

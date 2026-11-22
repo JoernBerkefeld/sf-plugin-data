@@ -362,7 +362,7 @@ test('DCSQL SQL the translation cannot place exactly is refused', () => {
     [
       'SELECT i.ssot__Id__c AS Id__c FROM ssot__Individual__dlm i WHERE i.ssot__A__c &lt; 3',
       `${SQL} line 1:79`,
-      /HTML entity outside texts/u,
+      /HTML entity outside texts.*fresh retrieve of the data transform still shows/u,
     ],
     [
       'SELECT SSOT__Id__c AS Id__c FROM ssot__Individual__dlm',

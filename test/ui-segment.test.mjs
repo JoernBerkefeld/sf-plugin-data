@@ -6,7 +6,6 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   carriesDefinition,
-  decodeSegmentCriteria,
   joinSegmentFiles,
   serializeSegmentFiles,
   validateSegmentDocument,
@@ -36,7 +35,6 @@ const normalized = (value = 'CliNoMatchZZ') => ({
   operator: 'equal',
   subjectFieldBusinessType: 'TEXT',
 });
-const encode = (criteria) => JSON.stringify(criteria).replaceAll('"', '&quot;');
 const document = (criteria = normalized(), lookbackPeriod = 'P90D') => ({
   schemaVersion: 1,
   kind: 'segment',
@@ -51,7 +49,8 @@ const document = (criteria = normalized(), lookbackPeriod = 'P90D') => ({
     lookbackPeriod,
   },
 });
-// Shape of a live GET (2026-11-16, API68), with synthetic IDs.
+// Shape of a live GET (2026-11-16, API68), with synthetic IDs; the criteria as a plain JSON string
+// (the client asks for plain text).
 const runtime = (criteria = normalized(), lookbackPeriod = 'P90D', status = 'ACTIVE') => ({
   apiName: 'Audience',
   createdBy: { id: '005000000000001AAA' },
@@ -59,7 +58,7 @@ const runtime = (criteria = normalized(), lookbackPeriod = 'P90D', status = 'ACT
   dataSpace: 'default',
   description: 'Description',
   displayName: 'Audience label',
-  includeCriteria: encode(criteria),
+  includeCriteria: JSON.stringify(criteria),
   lastModifiedBy: { id: '005000000000001AAA' },
   lastModifiedDate: '2026-11-16T05:10:37.000Z',
   lastSegmentMemberCount: 0,
@@ -79,7 +78,7 @@ const connection = {
   getApiVersion: () => '68.0',
 };
 
-test('retrieve of a UI segment GET writes a normal document with decoded criteria', async () => {
+test('retrieve of a UI segment GET writes a normal document with its criteria as an object', async () => {
   const projected = projectSegment({ segments: [runtime()] }, 'Audience', 'retrieve');
   assert.deepEqual(projected.candidate, document());
   // Deploy mode reads the same GET the same way.
@@ -104,7 +103,9 @@ test('retrieve of a UI segment GET writes a normal document with decoded criteri
     JSON.parse(await readFile(written.path, 'utf8')).spec.includeCriteria,
     normalized(),
   );
-  assert.equal(decodeSegmentCriteria('&amp;quot;&#65;&#x42;&lt;'), '&quot;AB<');
+  // Plain text is never decoded: a literal entity in a criteria value stays.
+  const literal = projectSegment({ segments: [runtime(normalized('AT&amp;T'))] }, 'Audience');
+  assert.deepEqual(literal.candidate.spec.includeCriteria.values, ['AT&amp;T']);
 });
 
 test('a UI segment GET with server-owned segmentMembershipTable is a normal document', () => {

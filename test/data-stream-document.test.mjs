@@ -34,10 +34,10 @@ const document = () => ({
     actualDloName: 'Example_ProbeRecord_43F5E7F5__dll',
     mappings: [
       { sourceFieldName: 'ProbeExtra', targetFieldName: 'ProbeExtra' },
-      { formula: '&quot;Example_ProbeRecord_43F5E7F5&quot;', targetFieldName: 'DataSourceObject' },
+      { formula: '"Example_ProbeRecord_43F5E7F5"', targetFieldName: 'DataSourceObject' },
       { sourceFieldName: 'ProbeId', targetFieldName: 'ProbeId' },
       { sourceFieldName: 'ProbeValue', targetFieldName: 'ProbeValue' },
-      { formula: '&quot;Example_Connection&quot;', targetFieldName: 'DataSource' },
+      { formula: '"Example_Connection"', targetFieldName: 'DataSource' },
       { formula: 'ProbeValue', targetFieldName: 'QualificationValue' },
     ],
     sourceFields: ['ProbeExtra', 'ProbeId', 'ProbeValue'].map((name) => ({

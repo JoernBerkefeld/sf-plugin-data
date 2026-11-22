@@ -41,7 +41,8 @@ const version = { requested: '68.0', restSelector: 'v68.0', soapNumeric: '68.0' 
 const origin = 'https://synthetic.my.salesforce.com';
 
 /**
- * One API 68 GET body with server fields; the expression is HTML-escaped as Salesforce returns it.
+ * One API 68 GET body with server fields; the expression plain, as Salesforce returns it to the
+ * plain-text request header the client sends.
  * @param {object} overrides Changed keys.
  * @returns {object} Raw GET body.
  */
@@ -55,7 +56,7 @@ const raw = (overrides = {}) => ({
   description: nil,
   dimensions: [{ apiName: 'app_id__c' }],
   displayName: 'Synthetic native',
-  expression: sql.replaceAll("'", '&#39;'),
+  expression: sql,
   historyPublishScheduleInterval: nil,
   historyPublishScheduleTimeZone: nil,
   historyPublishTime: nil,
@@ -97,7 +98,6 @@ const org = (initial) => {
       ...raw(),
       ...state,
       ...document,
-      expression: document.expression.replaceAll("'", '&#39;'),
       calculatedInsightStatus: status,
     };
   };
@@ -847,4 +847,21 @@ test('the ordered batch keys insights in their own data space (SQL names carry n
   assert.throws(() => orderDependencyNodes([crossing]), {
     code: 'DEPENDENCY_IDENTITY_UNSUPPORTED',
   });
+});
+
+test('a file holding an HTML-escaped copy of the org label is refused before any write', async () => {
+  const target = org(raw({ displayName: 'Synthetic & native' }));
+  const result = await deploy(target, file({ displayName: 'Synthetic &amp; native' }));
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.diagnostics[0].code, 'HTML_ESCAPED_FILE');
+  assert.match(result.diagnostics[0].message, /HTML-escaped text at displayName/u);
+  assert.deepEqual(writes(target), []);
+  // A literal entity the org stores itself is no escaped copy: unchanged.
+  const literal = org(raw({ displayName: 'Synthetic &amp; native' }));
+  const same = await deploy(literal, file({ displayName: 'Synthetic &amp; native' }));
+  assert.equal(same.outcome, 'unchanged');
+  // A label that decodes to another text is an ordinary update.
+  const other = org(raw({ displayName: 'Synthetic & other' }));
+  const update = await deploy(other, file({ displayName: 'Synthetic &amp; native' }));
+  assert.equal(update.outcome, 'updated');
 });

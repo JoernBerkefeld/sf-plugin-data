@@ -346,7 +346,8 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
     developer names) are left out; Salesforce generates new ones. A node developer name is
     rebuilt as Salesforce builds it: `ds2_PhoneGraph_ds2_ContactPointPhone`.
   - In a transform, a field after a join written with the side's qualifier (`R.FirstName__c`)
-    is placed by that side.
+    is placed by that side. Output DLO names stay, and a DLO has only one writing transform
+    across data spaces: give the copy another output object, or delete the source transform.
   - A mapping keeps its DLO side; it is found by its DLO and DMO, as always.
   - Calculated insights get, lose or swap the prefix: `Spend__cio` becomes `ds2_Spend__cio`.
 - **SQL is renamed name by name** (calculated insights, DBT segment models and DCSQL transforms):
@@ -461,6 +462,16 @@ The few things to know per type. Each type page has the full rules and error cod
 - The file holds the transform as Salesforce returns it, plus its schedule. A file without a
   schedule leaves the org's schedule alone.
 - A deployed schedule makes the transform run in the target org. Deploy never starts a run.
+- Formula, SQL filter and DCSQL SQL are written plain: the plugin asks Salesforce for plain
+  text. Salesforce never decodes HTML entities it is sent, so deploy refuses an expression
+  holding one outside texts (`&gt;`, `&#39;`): write the character itself.
+- Deploy refuses a file whose text is an HTML-escaped copy of the org's text
+  (`HTML_ESCAPED_FILE`, all types): Salesforce would store the entities literally.
+- A DLO is written by one transform only, whatever the data space. A transform copied into
+  another data space keeps its output DLO names, so it needs another output object, or the
+  source transform deleted first. Salesforce's validation issues are shown with
+  `TRANSFORM_VALIDATION_FAILED`.
+- A SQL filter refuses `<>`; write `!=`.
 - Reference: [Data transforms](docs/types/data-transform.md).
 
 ### Calculated insights

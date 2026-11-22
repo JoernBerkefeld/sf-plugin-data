@@ -36,6 +36,8 @@ export const hints: Readonly<Record<string, string>> = {
     'Two selected files describe the same component. Keep one file per component in the selection, for example by narrowing --source-dir, then rerun.',
   EXECUTION_UNCONFIRMED:
     'A write was sent but its result could not be confirmed, so it may have taken effect. Inspect the target with retrieve or deploy --preview before running the deploy again.',
+  HTML_ESCAPED_FILE:
+    'The file holds HTML-escaped text (such as &amp; or &#39;) where the org holds the character itself; Salesforce would store the entities literally, so nothing was written. Retrieve the component again, or write the characters themselves.',
   INVALID_ASYNC_SCOPE:
     '--async works only when the selection contains an identity resolution. Remove --async, or select an identity-resolution file or -m identity-resolution:<Name>.',
   INVALID_DATASPACE_FIELD:

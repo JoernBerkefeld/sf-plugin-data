@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { Connection } from '@salesforce/core';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
@@ -353,6 +354,7 @@ export async function preflightNativeIdentityResolutionDeploy(
     )
       throw new Error('IDENTITY_RESOLUTION_NOT_SETTLED');
     result.target = 'present';
+    refuseEscapedCopy(desired, current, (code) => new IdentityResolutionError(code));
     result.outcome = isDeepStrictEqual(current, desired)
       ? 'unchanged'
       : nativeIdentityResolutionConfigurationDelta(current, desired)
@@ -362,8 +364,10 @@ export async function preflightNativeIdentityResolutionDeploy(
     if (result.outcome === 'blocked-changes')
       throw new Error('IDENTITY_RESOLUTION_UPDATE_UNQUALIFIED');
   } catch (error) {
-    // A data space refusal keeps its own code and explanation.
-    const spaced = error instanceof IdentityResolutionError && /DATASPACE/u.test(error.code);
+    // A data space or escaped-text refusal keeps its own code and explanation.
+    const spaced =
+      error instanceof IdentityResolutionError &&
+      (/DATASPACE/u.test(error.code) || error.code === 'HTML_ESCAPED_FILE');
     const code = spaced
       ? error.code
       : error instanceof Error &&

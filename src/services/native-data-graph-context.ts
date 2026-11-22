@@ -6,7 +6,7 @@ import {
   retainConnectDiagnostic,
 } from '../transport/connect-diagnostic.js';
 import type { ConnectDiagnostic } from '../transport/connect-diagnostic.js';
-import { ConnectError } from '../transport/connect-client.js';
+import { ConnectError, plainTextRequest } from '../transport/connect-client.js';
 import { dataGraphName, graphRequire } from '../artifacts/data-graph-document.js';
 import { isDataSpaceName } from '../artifacts/data-space-field.js';
 import type { NativeGraphContext, NativeGraphRead } from './native-data-graph-crd.js';
@@ -102,7 +102,7 @@ export async function nativeDataGraphReadContext(
       },
     };
     try {
-      await receiver.request({ method: 'GET', url: `${parsed.origin}${route}` }, {
+      await receiver.request(plainTextRequest({ method: 'GET', url: `${parsed.origin}${route}` }), {
         transport: observer,
         retry: { maxRetries: 0 },
         followRedirect: () => {

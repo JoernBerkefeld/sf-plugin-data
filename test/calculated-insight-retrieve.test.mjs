@@ -45,7 +45,8 @@ const getBody = (apiName = 'Synthetic__cio') => ({
   description: wireNull,
   dimensions: [{ apiName: 'app_id__c', fieldRole: 'DIMENSION' }],
   displayName: 'Synthetic',
-  expression: escapedSql,
+  // The client asks for plain text, so the GET holds the SQL as stored.
+  expression: plainSql,
   historyPublishScheduleInterval: wireNull,
   historyPublishScheduleTimeZone: wireNull,
   historyPublishTime: wireNull,
@@ -168,7 +169,7 @@ test('code fields: join refuses a missing, extra or already present code', () =>
   assert.throws(() => splitCodeFields({ apiName: 'A' }, fields, invalid), /invalid/u);
 });
 
-test('unescape: the entities Salesforce writes into the GET expression', () => {
+test('unescape: the entities of an HTML-escaped copy (files of older versions)', () => {
   assert.equal(unescapeSalesforceHtml(escapedSql), plainSql);
   assert.equal(
     unescapeSalesforceHtml('a &lt; b &amp;&amp; c &gt; d &quot;q&quot; &apos;x&#x27; &#65;'),
@@ -180,7 +181,7 @@ test('unescape: the entities Salesforce writes into the GET expression', () => {
     assert.equal(unescapeSalesforceHtml(unchanged), unchanged);
 });
 
-test('module: observe keeps the GET body as returned without server fields, SQL unescaped', () => {
+test('module: observe keeps the GET body as returned without server fields, SQL as read', () => {
   const document = observeNativeCalculatedInsight(getBody());
   assert.deepEqual(Object.keys(document), [...kept, 'expression'].toSorted());
   assert.equal(document.expression, plainSql);
@@ -197,6 +198,12 @@ test('module: observe keeps the GET body as returned without server fields, SQL 
   assert.deepEqual(parseNativeCalculatedInsight(json, files), document);
   // Keys Salesforce adds later are kept as returned.
   assert.equal(observeNativeCalculatedInsight({ ...getBody(), newField: 1 }).newField, 1);
+  // Plain text is never decoded: a literal entity in a text stays.
+  const literal = `${plainSql} HAVING app_id__c != '&amp;'`;
+  assert.equal(
+    observeNativeCalculatedInsight({ ...getBody(), expression: literal }).expression,
+    literal,
+  );
 });
 
 test('module: structural validation only', () => {

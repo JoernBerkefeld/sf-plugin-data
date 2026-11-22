@@ -3970,3 +3970,19 @@ test('a blocked graph delete after a deleted one words its refusal per item', as
   assert.match(diagnostic.message, /This data graph was not deleted; no delete was sent for it\./u);
   assert.doesNotMatch(diagnostic.message, /nothing was deleted/u);
 });
+
+test('a graph file holding an HTML-escaped copy of the org description is blocked before any write', async () => {
+  const raw = runtime();
+  raw.description = `Live & "described"`;
+  const f = updateFixture(raw);
+  const escaped = nativeDataGraphDocumentFromResponse(raw);
+  escaped.definition.description = 'Live &amp; &quot;described&quot;';
+  const outcome = await operateNativeDataGraph(escaped, f.context, f.client, f.intent);
+  assert.equal(outcome.outcome, 'blocked');
+  assert.equal(outcome.diagnostics[0].code, 'HTML_ESCAPED_FILE');
+  assert.match(outcome.diagnostics[0].message, /HTML-escaped text at description/u);
+  assert.deepEqual(
+    f.calls.filter((call) => ['POST', 'PUT', 'DELETE'].includes(call)),
+    [],
+  );
+});

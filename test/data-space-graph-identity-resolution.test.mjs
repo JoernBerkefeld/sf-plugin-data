@@ -691,3 +691,19 @@ async function refuseOtherSpaceFiles() {
     /names the data space "?default"? in c__dataSpace, but the run's data space is "?dataspace2"?/u,
   );
 }
+
+test('a ruleset file holding an HTML-escaped copy of the org label is blocked before any write', async () => {
+  const native = { ...irNative(), label: `Space & 'ruleset'` };
+  const escaped = projectNativeIdentityResolution(native, 'ds2_Individual_cx2a').candidate;
+  escaped.spec.label = 'Space &amp; &#39;ruleset&#39;';
+  const result = await preflightNativeIdentityResolutionDeploy(
+    escaped,
+    { ...connection, request: async () => structuredClone(native) },
+    nativeSelection,
+    SPACE,
+    { verifyDependencies: async () => {} },
+  );
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.diagnostics[0].code, 'HTML_ESCAPED_FILE');
+  assert.match(result.diagnostics[0].message, /HTML-escaped text at spec\.label/u);
+});

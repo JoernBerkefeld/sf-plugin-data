@@ -26,7 +26,7 @@ sf data360 delete -o target -m calculated-insight:ExampleInsight__cio --json
 Each insight is two files. Retrieve writes any insight the API returns, whatever its status, schedule or SQL.
 
 - `data360/calculatedInsights/<Name>.calculatedInsight-meta.json`: the GET body with its key names and enum values as returned (for example `CALCULATED_METRIC`, `NOT_SCHEDULED`), with the data space in `c__dataSpace`. Left out is what the org sets or derives: status and run history (`calculatedInsightStatus`, `definitionStatus`, `isEnabled`, `lastCalcInsightStatus*`, `lastRun*`), `sourceCiId`, `sourceCiName`, `creationType`, `subType`, and the `dimensions` and `measures` Salesforce derives from the SQL.
-- `data360/calculatedInsights/<Name>.calculatedInsight-meta.sql`: the `expression` as plain SQL. The GET returns it HTML-escaped (`&gt;`, `&#39;`); retrieve writes it unescaped, ending with one line feed. Trailing line breaks are not part of the `expression` that deploy sends and compares.
+- `data360/calculatedInsights/<Name>.calculatedInsight-meta.sql`: the `expression` as plain SQL, as Salesforce stores it (the plugin asks for plain text), ending with one line feed. Trailing line breaks are not part of the `expression` that deploy sends and compares.
 
 A repeated retrieve of an unchanged insight is `unchanged`; differing files need `--overwrite`. An insight the org does not have is `CI_NOT_FOUND`.
 

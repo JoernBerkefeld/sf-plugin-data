@@ -66,8 +66,8 @@ const stream = {
   mappings: [
     { sourceFieldName: 'ProbeId', targetFieldName: 'ProbeId' },
     { sourceFieldName: 'ProbeValue', targetFieldName: 'ProbeValue' },
-    { formula: '&quot;SyntheticConnection&quot;', targetFieldName: 'DataSource' },
-    { formula: '&quot;GeneratedStream&quot;', targetFieldName: 'DataSourceObject' },
+    { formula: '"SyntheticConnection"', targetFieldName: 'DataSource' },
+    { formula: '"GeneratedStream"', targetFieldName: 'DataSourceObject' },
     { formula: 'ProbeValue', targetFieldName: 'AddedValue' },
   ],
   dataLakeObjectInfo: {
@@ -339,10 +339,10 @@ function reorderedMappingReads() {
   }));
   target.mappings = [
     { sourceFieldName: 'ProbeValue', targetFieldName: 'ProbeValue' },
-    { formula: '&quot;SyntheticConnection&quot;', targetFieldName: 'DataSource' },
+    { formula: '"SyntheticConnection"', targetFieldName: 'DataSource' },
     { sourceFieldName: 'ProbeId', targetFieldName: 'ProbeId' },
     { sourceFieldName: 'ProbeExtra', targetFieldName: 'ProbeExtra' },
-    { formula: '&quot;GeneratedStream&quot;', targetFieldName: 'DataSourceObject' },
+    { formula: '"GeneratedStream"', targetFieldName: 'DataSourceObject' },
   ];
   target.dataLakeObjectInfo.fields = target.dataLakeObjectInfo.fields.filter(
     (field) => field.name !== 'AddedValue',
@@ -1034,9 +1034,9 @@ test('retrieval retains generated inventory, classifies only proven source Text 
   for (const id of [streamId, connectionId, dloId])
     assert.equal(JSON.stringify(result).includes(id), false);
   assert.ok(Object.isFrozen(result.observed.mappings));
-  // A real formula is carried, decoded, with the type of its DLO field.
+  // A real formula is carried as read, with the type of its DLO field.
   const formula = reads();
-  formula.target.mappings.at(-1).formula = 'UPPER(sourceField[&#39;ProbeValue&#39;])';
+  formula.target.mappings.at(-1).formula = "UPPER(sourceField['ProbeValue'])";
   const withFormula = await retrieveNativeDataStream('GeneratedStream', formula.clients);
   assert.deepEqual(withFormula.spec.additiveFieldMappings, []);
   assert.deepEqual(withFormula.spec.formulaMappings, [

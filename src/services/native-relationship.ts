@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import { sameEnum } from '../artifacts/enum-case.js';
 import { paceReadback, readbackPace } from './readback-pace.js';
 import { explainSpaceMismatch, explanationOf, replaceExplanation } from './operation-diagnostic.js';
@@ -385,10 +386,16 @@ export async function preflightNativeRelationship(
     inventory.find((entry) => entry.name === desired.identity.apiName) ??
     findBinding(desired, inventory);
   if (!found) return { operation: 'create', desired };
+  refuseEscapedCopy(desired.spec, found, (code) => new NativeRelationshipError(code));
   const changes = listedChanges(found, desired.spec);
   if (changes.length === 0 && desired.spec.label === undefined)
     return { operation: 'noop', desired, existing: found.name };
   const current = await readDefinition(found.name, client);
+  refuseEscapedCopy(
+    { label: desired.spec.label },
+    { label: current.masterLabel },
+    (code) => new NativeRelationshipError(code),
+  );
   if (desired.spec.label !== undefined && current.masterLabel !== desired.spec.label)
     changes.push('label');
   if (changes.length === 0) return { operation: 'noop', desired, existing: found.name };

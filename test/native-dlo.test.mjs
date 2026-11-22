@@ -1092,3 +1092,35 @@ test('the record-modified field is retrieved, created, compared and sent only wh
     /INVALID_DLO_DOCUMENT/u,
   );
 });
+
+test('a file holding an HTML-escaped copy of the org text is refused before any write', async () => {
+  const target = native();
+  target.label = `Example & "quoted"`;
+  target.dataLakeFieldInfoRepresentation[1].description = "Portable & 'definition'";
+  const escaped = normalizeDlo(target, 'default');
+  escaped.spec.fields.find((f) => f.name === 'Note__c').description =
+    'Portable &amp; &#39;definition&#39;';
+  await assert.rejects(
+    preflightNativeDlo(escaped, { get: async () => target }, 'default'),
+    (error) => {
+      assert.equal(error.code, 'HTML_ESCAPED_FILE');
+      assert.match(error.message, /HTML-escaped text at spec\.fields\[\d+\]\.description/u);
+      return true;
+    },
+  );
+  const label = normalizeDlo(target, 'default');
+  label.spec.label = 'Example &amp; &quot;quoted&quot;';
+  await assert.rejects(
+    preflightNativeDlo(label, { get: async () => target }, 'default'),
+    /HTML_ESCAPED_FILE/u,
+  );
+  // An entity Salesforce stores itself reads back as stored and compares equal.
+  const literal = native();
+  literal.label = 'AT&amp;T';
+  const plan = await preflightNativeDlo(
+    normalizeDlo(literal, 'default'),
+    { get: async () => literal },
+    'default',
+  );
+  assert.equal(plan.operation, 'unchanged');
+});

@@ -514,3 +514,76 @@ test('preview runs later stages after a blocked native item; execution stops the
   assert.equal(stopped.status, 'blocked');
   assert.deepEqual(execution.calls, []);
 });
+
+test('deploy keeps HTML_ESCAPED_FILE with its key path for DMO, mapping and relationship', async () => {
+  const { NativeDmoError } = await import('../lib/artifacts/native-dmo-document.js');
+  const { NativeMappingError } = await import('../lib/artifacts/native-mapping-document.js');
+  const { NativeRelationshipError } =
+    await import('../lib/artifacts/native-relationship-document.js');
+  const { writeNativeRelationshipDocument } =
+    await import('../lib/artifacts/write-native-relationship.js');
+  const { refuseEscapedCopy } = await import('../lib/services/escaped-copy.js');
+  const refusal = (ErrorClass) => {
+    try {
+      refuseEscapedCopy(
+        { spec: { label: 'A &amp; B' } },
+        { spec: { label: 'A & B' } },
+        (code) => new ErrorClass(code),
+      );
+    } catch (error) {
+      return error;
+    }
+    return assert.fail('no refusal');
+  };
+  const project = await mixedProject();
+  const cwd = path.dirname(path.dirname(path.dirname(project[0].path)));
+  await writeNativeRelationshipDocument(
+    {
+      schemaVersion: 1,
+      kind: 'relationship',
+      c__dataSpace: 'default',
+      identity: { apiName: 'Person_rel' },
+      spec: {
+        sourceObjectName: 'Person__dlm',
+        sourceFieldName: 'Ref__c',
+        targetObjectName: 'Other__dlm',
+        targetFieldName: 'Id__c',
+        cardinality: 'ManyToOne',
+        relationshipOwner: 'Source',
+      },
+    },
+    cwd,
+    false,
+  );
+  const relationship = await readDeployInputs({ cwd, metadata: ['relationship:Person_rel'] });
+  for (const [kind, ErrorClass, inputs, override] of [
+    [
+      'dmo',
+      NativeDmoError,
+      project.filter((index) => index.document.kind === 'dmo'),
+      'preflightNativeDmo',
+    ],
+    [
+      'mapping',
+      NativeMappingError,
+      project.filter((index) => index.document.kind === 'mapping'),
+      'preflightMapping',
+    ],
+    ['relationship', NativeRelationshipError, relationship, 'preflightRelationship'],
+  ]) {
+    const { command } = harness(inputs, { preview: true });
+    command[override] = async () => {
+      throw refusal(ErrorClass);
+    };
+    const result = await run(command);
+    assert.equal(result.status, 'blocked', `${kind}: ${JSON.stringify(result)}`);
+    const diagnostics = [
+      ...(result.diagnostics?.errors ?? []),
+      ...result.result.items.flatMap((item) => item.diagnostics ?? []),
+    ];
+    const found = diagnostics.find((entry) => entry.code === 'HTML_ESCAPED_FILE');
+    assert.ok(found, `${kind}: ${JSON.stringify(diagnostics)}`);
+    assert.match(found.message, /HTML-escaped text at spec\.label/u, kind);
+    assert.ok(!diagnostics.some((entry) => entry.code === 'PREFLIGHT_FAILED'), kind);
+  }
+});

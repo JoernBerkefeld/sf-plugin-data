@@ -7,6 +7,8 @@ import {
 import { foldEnums } from './enum-case.js';
 import type { DocumentMode } from './verbatim-document.js';
 import { dataSpaceKey, isDataSpaceName, readSingleDataSpace } from './data-space-field.js';
+import { unescapeSalesforceHtml } from './native-calculated-insight-document.js';
+import { htmlEntityOutsideTexts } from '../services/cross-dataspace-sql.js';
 
 /**
  * A transform file: Salesforce's create/update input in `definition`, kept as read. Its data space
@@ -308,6 +310,144 @@ export function serializeDataTransformDocument(
 }
 
 /**
+ * STL node parameter keys whose values are SQL expressions. Salesforce stores them as sent and
+ * never decodes HTML entities on write; without the plain-text request header (plainTextHeaders)
+ * its GET returns them HTML-escaped (`&gt;`, `&lt;`, `&quot;`, `&#39;`), as older plugin versions
+ * wrote them into files (live, DB entries data360:plugin-cross-dataspace-deploy-3b-api68 and
+ * data360:connect-rest-entity-encoding-header-api68).
+ */
+const stlExpressionKeys: ReadonlySet<string> = new Set([
+  'formulaExpression',
+  'sqlFilterExpression',
+]);
+/** DCSQL manifest node keys that hold SQL text, treated the same way. */
+const dcsqlSqlKeys = ['compiled_code', 'raw_code'];
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+/**
+ * A node key as it may appear in a message: a printable key, dots allowed (`model.out1`).
+ * @param {string} key Node key.
+ * @returns {string} Printable key.
+ */
+const nodeKey = (key: string): string =>
+  /^[A-Za-z_$][\w.$-]{0,79}$/u.test(key) ? key : printableKey(key);
+
+/**
+ * Replace every SQL expression string below one STL node's parameters.
+ * @param {unknown} value Parameters or part of them (changed in place).
+ * @param {string} at JSON path of `value`.
+ * @param {(text: string, at: string) => string} visit Replacement of one expression.
+ */
+function visitParameters(
+  value: unknown,
+  at: string,
+  visit: (text: string, at: string) => string,
+): void {
+  if (Array.isArray(value)) {
+    for (const [index, entry] of value.entries()) visitParameters(entry, `${at}[${index}]`, visit);
+    return;
+  }
+  if (!isObject(value)) return;
+  for (const [key, entry] of Object.entries(value)) {
+    const path = `${at}.${printableKey(key)}`;
+    if (typeof entry === 'string' && stlExpressionKeys.has(key)) value[key] = visit(entry, path);
+    else visitParameters(entry, path, visit);
+  }
+}
+
+/**
+ * A copy of a transform input with every SQL expression replaced: STL formula and SQL filter
+ * expressions and the SQL of DCSQL manifest nodes, in `definition` or each `definitions` entry.
+ * @param {Record<string, unknown>} input Transform input (not changed).
+ * @param {(text: string, at: string) => string} visit Replacement of one expression.
+ * @returns {Record<string, unknown>} Detached input.
+ */
+function mapTransformExpressions(
+  input: Record<string, unknown>,
+  visit: (text: string, at: string) => string,
+): Record<string, unknown> {
+  const copy = structuredClone(input);
+  const entries: Array<[unknown, string]> = Array.isArray(copy.definitions)
+    ? copy.definitions.map((entry, index) => [entry, `definition.definitions[${index}]`])
+    : [[copy.definition, 'definition.definition']];
+  for (const [entry, at] of entries) {
+    if (!isObject(entry)) continue;
+    if (isObject(entry.nodes))
+      for (const [key, node] of Object.entries(entry.nodes))
+        if (isObject(node))
+          visitParameters(node.parameters, `${at}.nodes.${nodeKey(key)}.parameters`, visit);
+    const manifest = entry.manifest;
+    if (isObject(manifest) && isObject(manifest.nodes))
+      for (const [key, node] of Object.entries(manifest.nodes))
+        if (isObject(node))
+          for (const sqlKey of dcsqlSqlKeys)
+            if (typeof node[sqlKey] === 'string')
+              node[sqlKey] = visit(node[sqlKey], `${at}.manifest.nodes.${nodeKey(key)}.${sqlKey}`);
+  }
+  return copy;
+}
+
+/**
+ * A transform file's input with each SQL expression that is an HTML-escaped copy (an entity
+ * outside texts, as an older plugin version retrieved it) decoded, the others kept, so a delete
+ * compares such a file with the org as observed.
+ * @param {Record<string, unknown>} input Transform input from a file.
+ * @returns {Record<string, unknown>} Detached input.
+ */
+export function plainTransformExpressions(input: Record<string, unknown>): Record<string, unknown> {
+  return mapTransformExpressions(input, (text) =>
+    htmlEntityOutsideTexts(text) === undefined ? text : unescapeSalesforceHtml(text),
+  );
+}
+
+/**
+ * Refuse a transform file whose SQL expression holds an HTML entity outside texts, comments and
+ * quoted names: Salesforce does not decode entities on write, so it would read them as a syntax
+ * error.
+ * @param {DataTransformDocument} document Checked transform file.
+ */
+export function refuseEscapedTransformExpressions(document: DataTransformDocument): void {
+  let found: { at: string; line: number; column: number; text: string } | undefined;
+  mapTransformExpressions(document.definition, (text, at) => {
+    const entity = found ? undefined : htmlEntityOutsideTexts(text);
+    if (entity) found = { at, ...entity };
+    return text;
+  });
+  if (found)
+    throw explainInput(
+      new DataTransformError('UNSUPPORTED_TRANSFORM_INPUT'),
+      `The data transform file cannot be deployed: ${found.at} holds the HTML entity ${found.text} at line ${found.line}:${found.column} outside texts, which Salesforce reads as a syntax error (it stores what it is sent and does not decode entities). Write the character itself in the file. If a fresh retrieve of the data transform still shows the entity, Salesforce stores the expression that way; write the character itself in the file, or fix the expression in Data Cloud.`,
+    );
+}
+
+/**
+ * A transform input without the `nodeType` `STANDARD` of its STL aggregate nodes, which Salesforce
+ * adds to an aggregate node that does not name it (live API 68), so a file without it compares
+ * equal to the org.
+ * @param {Record<string, unknown>} input Transform input (not changed).
+ * @returns {Record<string, unknown>} Detached input.
+ */
+function withoutDefaultNodeType(input: Record<string, unknown>): Record<string, unknown> {
+  const copy = structuredClone(input);
+  const entries = Array.isArray(copy.definitions) ? copy.definitions : [copy.definition];
+  for (const entry of entries) {
+    if (!isObject(entry) || !isObject(entry.nodes)) continue;
+    for (const node of Object.values(entry.nodes))
+      if (
+        isObject(node) &&
+        node.action === 'aggregate' &&
+        isObject(node.parameters) &&
+        typeof node.parameters.nodeType === 'string' &&
+        node.parameters.nodeType.toUpperCase() === 'STANDARD'
+      )
+        delete node.parameters.nodeType;
+  }
+  return copy;
+}
+
+/**
  * Transform keys whose values are enums Salesforce stores in its own letter case
  * (`fullRunFrequency` `Weekly` reads `WEEKLY`, live API 68): the transform, definition, output
  * object and field `type`, the output `category` and an output node's `writeMode`.
@@ -330,8 +470,9 @@ const scheduleEnumKeys: ReadonlySet<string> = new Set(['frequency']);
 
 /**
  * Whether the org transform already holds the definition of the file: the same canonical input,
- * with enum values compared ignoring letter case. Names, labels, SQL and other text compare
- * exactly. The schedule is not compared.
+ * with enum values compared ignoring letter case and an aggregate node's `nodeType` `STANDARD`
+ * (added by Salesforce) the same as none. Names, labels, SQL and other text compare exactly (the
+ * org's expressions as stored, read as plain text). The schedule is not compared.
  * @param {DataTransformDocument} current Org document as projected.
  * @param {DataTransformDocument} desired Document from the file.
  * @param {DocumentMode} [mode] `deploy` (strict) or `retrieve` (keeps unknown input keys).
@@ -349,7 +490,7 @@ export function sameDataTransformDefinition(
         kind: 'data-transform',
         apiVersion: '68.0',
         c__dataSpace: document.c__dataSpace,
-        definition: foldEnums(document.definition, transformEnumKeys),
+        definition: foldEnums(withoutDefaultNodeType(document.definition), transformEnumKeys),
       },
       mode,
     );

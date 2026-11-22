@@ -33,7 +33,7 @@ const field = (name, label, dataType, isPrimaryKey = false) => ({
   label,
   name,
 });
-// The GET of the live CRM probe on Pricebook2 (identifiers replaced), formula HTML-escaped.
+// The GET of the live CRM probe on Pricebook2 (identifiers replaced), read as plain text.
 const crmGet = () => ({
   advancedAttributes: {},
   capabilities: {},
@@ -80,11 +80,11 @@ const crmGet = () => ({
     { sourceFieldName: 'Id', targetFieldName: 'Id' },
     { sourceFieldName: 'IsActive', targetFieldName: 'IsActive' },
     { sourceFieldName: 'Name', targetFieldName: 'Name' },
-    { formula: 'UPPER(sourceField[&#39;Name&#39;])', targetFieldName: 'CliNameUpper' },
-    { formula: '&quot;Salesforce_Home&quot;', targetFieldName: 'DataSource' },
+    { formula: "UPPER(sourceField['Name'])", targetFieldName: 'CliNameUpper' },
+    { formula: '"Salesforce_Home"', targetFieldName: 'DataSource' },
     { sourceFieldName: 'LastModifiedDate', targetFieldName: 'LastModifiedDate' },
     { sourceFieldName: 'SfdcOrganizationId', targetFieldName: 'SfdcOrganizationId' },
-    { formula: '&quot;Pricebook2&quot;', targetFieldName: 'DataSourceObject' },
+    { formula: '"Pricebook2"', targetFieldName: 'DataSourceObject' },
     { sourceFieldName: 'SystemModstamp', targetFieldName: 'SystemModstamp' },
   ],
   name: 'CliCrmPb2',
@@ -102,8 +102,8 @@ const crmGet = () => ({
     { datatype: 'Text', name: 'Id' },
     { datatype: 'Text', name: 'Name' },
     { datatype: 'Text', name: 'SfdcOrganizationId' },
-    { datatype: 'DateTime', format: 'yyyy-MM-dd&#39;T&#39;HH:mm:ss', name: 'LastModifiedDate' },
-    { datatype: 'DateTime', format: 'yyyy-MM-dd&#39;T&#39;HH:mm:ss', name: 'SystemModstamp' },
+    { datatype: 'DateTime', format: "yyyy-MM-dd'T'HH:mm:ss", name: 'LastModifiedDate' },
+    { datatype: 'DateTime', format: "yyyy-MM-dd'T'HH:mm:ss", name: 'SystemModstamp' },
     { datatype: 'Text', name: 'IsActive' },
   ],
   status: 'ACTIVE',
@@ -353,7 +353,7 @@ test('a formula added to the file is one PATCH of datastreamType and that mappin
   document.spec.dataLakeObjectInfo.fields.push(field('CliLower', 'CliLower', 'Text'));
   const after = crmGet();
   after.mappings.push({
-    formula: 'LOWER(sourceField[&#39;Name&#39;])',
+    formula: "LOWER(sourceField['Name'])",
     targetFieldName: 'CliLower',
   });
   after.dataLakeObjectInfo.fields.push(field('CliLower', 'CliLower', 'Text'));
@@ -925,5 +925,21 @@ test('a CRM stream GET that names no data space takes the spaces of its DLO, nev
   );
   const same = await preflightDataStream(document, { ...clients, dlo: dlo('default') }, 'default');
   assert.equal(same.outcome, 'unchanged');
+  assert.equal(requests.length, 0);
+});
+
+test('a CRM stream file holding an HTML-escaped copy of an org formula is blocked before any write', async () => {
+  const document = structuredClone(crmDocument());
+  const mapping = document.spec.mappings.find((entry) => entry.targetFieldName === 'CliNameUpper');
+  mapping.formula = 'UPPER(sourceField[&#39;Name&#39;])';
+  const { clients, requests } = org(() => crmGet());
+  await assert.rejects(preflightDataStream(document, clients), (error) => {
+    assert.equal(error.code, 'HTML_ESCAPED_FILE');
+    return true;
+  });
+  const result = await executeDataStream(document, clients, options);
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.diagnostics[0].code, 'HTML_ESCAPED_FILE');
+  assert.match(result.diagnostics[0].message, /HTML-escaped text at mappings\[\d+\]\.formula/u);
   assert.equal(requests.length, 0);
 });

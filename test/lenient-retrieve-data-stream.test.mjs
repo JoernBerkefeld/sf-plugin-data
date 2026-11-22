@@ -37,8 +37,8 @@ const ingestStream = () => ({
   mappings: [
     { sourceFieldName: 'ProbeId', targetFieldName: 'ProbeId' },
     { sourceFieldName: 'ProbeValue', targetFieldName: 'ProbeValue' },
-    { formula: '&quot;SyntheticConnection&quot;', targetFieldName: 'DataSource' },
-    { formula: '&quot;GeneratedStream&quot;', targetFieldName: 'DataSourceObject' },
+    { formula: '"SyntheticConnection"', targetFieldName: 'DataSource' },
+    { formula: '"GeneratedStream"', targetFieldName: 'DataSourceObject' },
   ],
   dataLakeObjectInfo: {
     name: 'ActualDlo__dll',
@@ -346,7 +346,7 @@ test('an as-is stream whose GET names no data space is written only when its DLO
 test('an IngestApi stream with a real formula is written as a stream file that deploys', async () => {
   const stream = ingestStream();
   stream.mappings.push({
-    formula: 'UPPER(sourceField[&#39;ProbeValue&#39;])',
+    formula: "UPPER(sourceField['ProbeValue'])",
     targetFieldName: 'Upper',
   });
   stream.dataLakeObjectInfo.fields.push({
@@ -390,14 +390,14 @@ function engagementStream(event, hash) {
     sourceFields: typed.map(([field, datatype]) => ({ name: field, datatype })),
     mappings: [
       ...typed.map(([field]) => ({ sourceFieldName: field, targetFieldName: field })),
-      { formula: '&quot;SyntheticConnection&quot;', targetFieldName: 'DataSource' },
-      { formula: `&quot;${name}&quot;`, targetFieldName: 'DataSourceObject' },
+      { formula: '"SyntheticConnection"', targetFieldName: 'DataSource' },
+      { formula: `"${name}"`, targetFieldName: 'DataSourceObject' },
       {
         formula:
-          'if(ISEMPTY(formulaField[&#39;EventTime__c&#39;])) { null; } else { DAYPRECISION(formulaField[&#39;EventTime__c&#39;]); }',
+          "if(ISEMPTY(formulaField['EventTime__c'])) { null; } else { DAYPRECISION(formulaField['EventTime__c']); }",
         targetFieldName: 'cdp_sys_PartitionDate',
       },
-      { formula: 'sourceField[&#39;Score&#39;] * 2', targetFieldName: 'ScoreX2' },
+      { formula: "sourceField['Score'] * 2", targetFieldName: 'ScoreX2' },
     ],
     dataLakeObjectInfo: {
       name: `${name}__dll`,

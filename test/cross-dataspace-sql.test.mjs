@@ -1,7 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { translateSql } from '../lib/services/cross-dataspace-sql.js';
+import { htmlEntityOutsideTexts, translateSql } from '../lib/services/cross-dataspace-sql.js';
 import {
   sqlNamer,
   translateCalculatedInsight,
@@ -521,8 +521,28 @@ test('SQL holding an HTML entity outside texts and comments is refused, not tran
       [[at, name]],
       text,
     );
-    assert.match(result.unresolved[0].reason, /retrieve the segment again/u);
+    assert.match(result.unresolved[0].reason, /write the character itself in the file/u);
+    assert.doesNotMatch(result.unresolved[0].reason, /older plugin version/u);
   }
+  // The refusal names what the SQL belongs to.
+  const named = translateSql(
+    'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i WHERE i.ssot__A__c &gt; 3',
+    'X.sql',
+    sqlNamer(to(SPACE)),
+    undefined,
+    'data transform',
+  );
+  assert.match(
+    named.unresolved[0].reason,
+    /If a fresh retrieve of the data transform still shows the entity, Salesforce stores the SQL that way; write the character itself in the file, or fix the SQL in Data Cloud/u,
+  );
+  // An entity outside texts is found with its position; inside a text or comment it is none.
+  assert.deepEqual(htmlEntityOutsideTexts('a &gt; 1\nAND b = &#39;x&#39;'), {
+    line: 1,
+    column: 3,
+    text: '&gt;',
+  });
+  assert.equal(htmlEntityOutsideTexts("a = '&gt;' -- &amp;"), undefined);
   // In a text or a comment it is text.
   assert.equal(
     clean(
@@ -605,4 +625,19 @@ test('planCrossSpaceInputs translates an insight and plans it from the translate
   );
   assert.equal(plan.files[0].family, 'calculated-insight');
   assert.equal(input.native.apiName, 'CliSpend__cio', 'the admitted input is not changed');
+});
+
+test('a DBT segment Salesforce stores with an entity outside texts: the refusal does not promise a retrieve fixes it', () => {
+  // A plain-text GET can still hold &lt; when Salesforce stores the SQL so (live API 68).
+  const stored =
+    'SELECT ssot__Individual__dlm.ssot__Id__c FROM ssot__Individual__dlm WHERE ssot__Individual__dlm.ssot__Age__c &lt; 3';
+  const result = translateDocument(dbtSegment(stored), to(SPACE));
+  assert.equal(result.unresolved.length, 1);
+  const [entry] = result.unresolved;
+  assert.equal(entry.name, '&lt;');
+  assert.match(
+    entry.reason,
+    /If a fresh retrieve of the DBT segment still shows the entity, Salesforce stores the SQL that way; write the character itself in the file, or fix the SQL in Data Cloud/u,
+  );
+  assert.doesNotMatch(entry.reason, /retrieve the DBT segment again/u);
 });

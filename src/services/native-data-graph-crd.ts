@@ -1,4 +1,5 @@
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import type { ConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createHash } from 'node:crypto';
@@ -701,6 +702,11 @@ export async function updateNativeDataGraph(
   },
 ): Promise<'update' | 'updated' | 'unchanged'> {
   const dataSpaceId = await bindNativeGraphDataSpace(context);
+  refuseEscapedCopy(
+    document.definition,
+    nativeDataGraphDocumentFromResponse(baseline.target).definition,
+    (code) => new DataGraphError(code),
+  );
   const desired = buildNativeDataGraphUpdateRequest(baseline.target, document);
   const same = isDeepStrictEqual(
     desired,

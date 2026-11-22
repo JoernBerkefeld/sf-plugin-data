@@ -938,6 +938,23 @@ function entityOutsideTexts(tokens: SqlToken[]): { token: SqlToken; text: string
 }
 
 /**
+ * The first HTML character reference of a SQL text or expression outside texts, comments and
+ * quoted names, with its position: such a text is an HTML-escaped copy (`&#39;`, `&gt;`), not SQL
+ * Salesforce reads, since it never decodes entities on write. SQL that cannot be tokenized gives
+ * none (Salesforce decides).
+ * @param {string} sql SQL text.
+ * @returns {{line: number; column: number; text: string} | undefined} The reference, or none.
+ */
+export function htmlEntityOutsideTexts(
+  sql: string,
+): { line: number; column: number; text: string } | undefined {
+  const tokens = tokenizeSql(sql);
+  if (isSqlTokenProblem(tokens)) return undefined;
+  const entity = entityOutsideTexts(tokens);
+  return entity && { line: entity.token.line, column: entity.token.column, text: entity.text };
+}
+
+/**
  * Rewrite the names of one SQL text into the target data space. Texts in single quotes and
  * comments are never changed; WITH block names, table aliases and column aliases are user names
  * and stay. A table is placed by the object rules, a column by the rules of its table (through
@@ -955,6 +972,8 @@ function entityOutsideTexts(tokens: SqlToken[]): { token: SqlToken; text: string
  * @param {string} label What the positions are reported against (the SQL file name).
  * @param {SqlNamer} namer The rule engine.
  * @param {OutputField} [outputField] The output field of a column name, for a DCSQL transform.
+ * @param {string} [item] What the SQL belongs to (`data transform`, `DBT segment`), as the refusal
+ * of an HTML-escaped copy names it.
  * @returns {SqlTranslation} Rewritten SQL, its changes and every name it cannot place.
  */
 export function translateSql(
@@ -962,6 +981,7 @@ export function translateSql(
   label: string,
   namer: SqlNamer,
   outputField?: OutputField,
+  item = 'item',
 ): SqlTranslation {
   const tokens = tokenizeSql(sql);
   if (isSqlTokenProblem(tokens))
@@ -986,8 +1006,7 @@ export function translateSql(
         {
           at: at(entity.token),
           name: entity.text,
-          reason:
-            'the SQL holds an HTML entity outside texts and comments, so it is an HTML-escaped copy, not SQL that can be read exactly: write the character itself (an older plugin version wrote the model SQL of a DBT segment so from Salesforce; retrieve the segment again and deploy the retrieved file)',
+          reason: `the SQL holds an HTML entity outside texts and comments, so it is not SQL that can be read exactly: write the character itself in the file. If a fresh retrieve of the ${item} still shows the entity, Salesforce stores the SQL that way; write the character itself in the file, or fix the SQL in Data Cloud`,
         },
       ],
     };

@@ -2,7 +2,6 @@ import { isDeepStrictEqual } from 'node:util';
 import type { Connection } from '@salesforce/core';
 import {
   SegmentError,
-  decodeSegmentCriteria,
   opaqueSegmentSchedule,
   segmentName,
   unnamedChildSegment,
@@ -17,7 +16,6 @@ import type { ApiVersionSelection } from '../transport/api-version.js';
 import { carryNativeResponse } from '../artifacts/verbatim-document.js';
 import type { DocumentMode } from '../artifacts/verbatim-document.js';
 import { isDataSpaceName } from '../artifacts/data-space-field.js';
-import { unescapeSalesforceHtml } from '../artifacts/native-calculated-insight-document.js';
 import { explainInput, explanationOf } from './operation-diagnostic.js';
 export type SegmentAcquisition = {
   /** The reported identity: the requested name in the run's data space. */
@@ -201,7 +199,7 @@ const otherConfiguration = [
 /**
  * Project a segment of a type other than DBT (UI and the other types) onto the file: the GET
  * minus server-owned keys, with the schedule projected by `projectSegmentSchedule`. A UI
- * segment's `includeCriteria` is decoded from its HTML-entity-encoded JSON string into an object;
+ * segment's `includeCriteria` is parsed from its JSON string (plain text) into an object;
  * another type keeps its lookback when it has one. Retrieve keeps keys the plugin does not know in
  * `spec`; deploy refuses them (UNKNOWN_SEGMENT_CONFIGURATION). Criteria that are not a JSON
  * object, and parameters (no write takes them), are UNSUPPORTED_SEGMENT_VARIANT. A Waterfall's
@@ -224,7 +222,7 @@ function projectTypedSegment(
   const required = ui ? uiConfiguration : otherConfiguration;
   const childIds =
     raw.segmentType === waterfallSegmentType && typeof raw.includeCriteria === 'string'
-      ? waterfallChildIds(decodeSegmentCriteria(raw.includeCriteria))
+      ? waterfallChildIds(raw.includeCriteria)
       : undefined;
   const named = childIds?.map((id) => children.get(id));
   const childSegments =
@@ -258,7 +256,7 @@ function projectTypedSegment(
     if (typeof raw.includeCriteria !== 'string')
       throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
     try {
-      criteria = JSON.parse(decodeSegmentCriteria(raw.includeCriteria));
+      criteria = JSON.parse(raw.includeCriteria);
     } catch {
       throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
     }
@@ -297,7 +295,7 @@ function projectTypedSegment(
  * `includeDbt` keys in `spec.includeDbt`), does not check the observed fields, and refuses only
  * what the file cannot represent (no DBT configuration, parameters, a schedule the file cannot
  * hold, another source kind, a model name unfit for a file), so the segment is written verbatim;
- * only the model SQL, which Salesforce returns HTML-escaped, is decoded.
+ * the model SQL is kept as read (plain text, plainTextHeaders).
  * Segments of other types than DBT are projected by `projectTypedSegment`.
  * @param {unknown} response Untrusted API68 exact GET response.
  * @param {string} apiName Requested exact identity.
@@ -360,17 +358,8 @@ export function projectSegment(
   if (lenient && Object.hasOwn(raw, 'parameters') && !isDeepStrictEqual(raw.parameters, []))
     throw new SegmentError('UNSUPPORTED_SEGMENT_VARIANT');
   const schedule = projectSegmentSchedule(raw, mode);
-  const { models: escaped, ...dbtExtra } = dbt;
-  // Salesforce returns the model SQL HTML-escaped (`&#39;`, `&lt;`; live API 68) and stores the
-  // plain SQL the write sends, so the file and every comparison hold the plain SQL.
-  const models = (escaped as unknown[]).map((model) =>
-    model &&
-    typeof model === 'object' &&
-    !Array.isArray(model) &&
-    typeof (model as { sql?: unknown }).sql === 'string'
-      ? { ...model, sql: unescapeSalesforceHtml((model as { sql: string }).sql) }
-      : model,
-  );
+  // The model SQL reads as stored: the client asks Salesforce for plain text (plainTextHeaders).
+  const { models, ...dbtExtra } = dbt;
   const candidate = {
     schemaVersion: 1,
     kind: 'segment',
@@ -514,7 +503,7 @@ export async function segmentChildNames(
   if (
     raw?.segmentType !== waterfallSegmentType ||
     typeof raw.includeCriteria !== 'string' ||
-    !waterfallChildIds(decodeSegmentCriteria(raw.includeCriteria))
+    !waterfallChildIds(raw.includeCriteria)
   )
     return undefined;
   let names = childNameCache.get(connection);

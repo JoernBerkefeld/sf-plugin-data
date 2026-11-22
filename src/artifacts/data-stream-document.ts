@@ -16,7 +16,7 @@ export type DataStreamMapping = {
   targetFieldReturntype: string;
 };
 
-/** A formula mapping onto a DLO field Salesforce creates from it; the formula is stored decoded. */
+/** A formula mapping onto a DLO field Salesforce creates from it; the formula as plain text. */
 export type DataStreamFormulaMapping = {
   targetFieldName: string;
   formula: string;
@@ -265,7 +265,7 @@ export function validateDataStreamDocument(
       'targetFieldName',
       'targetFieldReturntype',
     ]);
-    // A label is free text (the read returns it HTML-escaped in `formula`; it is stored decoded).
+    // A label is free text (the read returns it in `formula`).
     text(mapping.sourceFieldLabel, `${at}.sourceFieldLabel`);
     const target = identifier(mapping.targetFieldName, `${at}.targetFieldName`);
     // Field type, source and target are Salesforce's to accept or refuse; the file only needs
@@ -430,8 +430,8 @@ export function dataStreamTargetFieldName(value: string): string {
 /**
  * A data stream of any connector other than the Ingestion API (`connectorInfo.connectorType`, for
  * example `SalesforceDotCom` for Salesforce CRM): `spec` is the stream GET without server-owned
- * keys and without the fields and mappings Salesforce adds itself. Formulas are stored decoded
- * (the GET HTML-escapes them). Only Salesforce CRM streams are tested live; other connectors are
+ * keys and without the fields and mappings Salesforce adds itself. Formulas are stored as read
+ * (plain text, plainTextHeaders). Only Salesforce CRM streams are tested live; other connectors are
  * sent the same way and Salesforce decides.
  */
 export type CrmDataStreamDocument = {
@@ -487,20 +487,6 @@ export function isCrmSystemField(fieldName: unknown): boolean {
 }
 
 /**
- * Decode the HTML entities the stream GET puts into formulas.
- * @param {string} value Escaped formula.
- * @returns {string} Formula as written.
- */
-export function decodeFormula(value: string): string {
-  return value
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#39;', "'")
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&amp;', '&');
-}
-
-/**
  * Sort key of one entry: name, then target field, source field and formula.
  * @param {unknown} value Array entry.
  * @returns {string} Key.
@@ -548,7 +534,8 @@ export function isCrmDataStreamDocument(value: unknown): value is CrmDataStreamD
 
 /**
  * The spec of a CRM stream file: the GET without server-owned keys, system fields and system
- * mappings, formulas decoded, fields, source fields and mappings in a stable order.
+ * mappings, fields, source fields and mappings in a stable order. Formulas read as stored: the
+ * client asks Salesforce for plain text (plainTextHeaders).
  * @param {unknown} value Stream GET response.
  * @returns {Bag} Spec as stored in the file.
  */
@@ -590,13 +577,9 @@ export function crmDataStreamSpec(value: unknown): Bag {
     );
   if (Array.isArray(spec.mappings))
     spec.mappings = byName(
-      spec.mappings
-        .filter((mapping) => !isCrmSystemField(isBag(mapping) && mapping.targetFieldName))
-        .map((mapping) =>
-          isBag(mapping) && typeof mapping.formula === 'string'
-            ? { ...mapping, formula: decodeFormula(mapping.formula) }
-            : mapping,
-        ),
+      spec.mappings.filter(
+        (mapping) => !isCrmSystemField(isBag(mapping) && mapping.targetFieldName),
+      ),
     );
   return spec;
 }

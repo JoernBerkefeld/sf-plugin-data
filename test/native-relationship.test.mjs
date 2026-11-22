@@ -917,3 +917,15 @@ test('cardinality and owner that differ only in letter case are no change', asyn
   const changed = await preflightNativeRelationship(other, fakeClient([wire()]).client, 'default');
   assert.deepEqual(changed.changes, ['cardinality']);
 });
+
+test('a label holding an HTML-escaped copy of the org label is refused', async () => {
+  const { client, calls } = fakeClient([wire()]);
+  client.definitions.get(name).masterLabel = `Order & "customer"`;
+  const escaped = { ...document, spec: { ...spec, label: 'Order &amp; &quot;customer&quot;' } };
+  await assert.rejects(preflightNativeRelationship(escaped, client, 'default'), (error) => {
+    assert.equal(error.code, 'HTML_ESCAPED_FILE');
+    assert.match(error.message, /HTML-escaped text at label/u);
+    return true;
+  });
+  assert.ok(!calls.some(([kind]) => kind === 'update'));
+});

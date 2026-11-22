@@ -1,5 +1,5 @@
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
-import { operationDiagnostic } from './operation-diagnostic.js';
+import { explanationOf, operationDiagnostic } from './operation-diagnostic.js';
 import { rejectedNextAction } from './deploy-result.js';
 import {
   CalculatedInsightError,
@@ -87,7 +87,10 @@ export async function executeCalculatedInsightDeploy(
                       : mutation === 'unknown'
                         ? 'CI mutation may have occurred; no replay or rollback was performed.'
                         : 'CI deployment was not attempted.';
-                  return getConnectDiagnostic(error) ? operationDiagnostic(error, next) : next;
+                  // Salesforce's answer or the plugin's own explanation (an escaped file).
+                  return getConnectDiagnostic(error) || explanationOf(error) !== undefined
+                    ? operationDiagnostic(error, next)
+                    : next;
                 })(),
               },
             ]

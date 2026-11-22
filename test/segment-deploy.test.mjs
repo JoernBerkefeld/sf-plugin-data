@@ -880,3 +880,18 @@ test('public Segment preview is read-only; drift during target acquisition preve
     }
   }
 });
+
+test('a segment file holding an HTML-escaped copy of the org description is blocked', async () => {
+  const stored = document();
+  stored.spec.description = `Audience & "friends"`;
+  const escaped = document();
+  escaped.spec.description = 'Audience &amp; &quot;friends&quot;';
+  const result = await preflightSegmentDeploy(escaped, connection, '68.0', 'default', async () => ({
+    candidate: stored,
+    blockers: [],
+    expectations: { runtime: { segmentStatus: 'ACTIVE' } },
+  }));
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.diagnostics[0].code, 'HTML_ESCAPED_FILE');
+  assert.match(result.diagnostics[0].message, /HTML-escaped text at spec\.description/u);
+});

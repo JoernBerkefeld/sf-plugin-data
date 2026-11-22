@@ -1,4 +1,5 @@
 import type { Connection } from '@salesforce/core';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import { getConnectDiagnostic, retainConnectDiagnostic } from '../transport/connect-diagnostic.js';
 import { explanationOf, operationDiagnostic } from './operation-diagnostic.js';
 import type { ApiVersionSelection } from '../transport/api-version.js';
@@ -149,6 +150,7 @@ export async function preflightSegmentDeploy(
       current.c__dataSpace !== desired.c__dataSpace
     )
       return result('blocked', 'unknown', 'SEGMENT_TARGET_IDENTITY_MISMATCH');
+    refuseEscapedCopy(desired, current, (code) => new SegmentError(code));
     return carriesDefinition(current, desired)
       ? result('unchanged', 'present')
       : withNotice(result('update', 'present'), current);

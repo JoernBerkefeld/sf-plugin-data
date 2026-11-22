@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import { paceReadback, readbackPace } from './readback-pace.js';
 import {
   explainMismatch,
@@ -797,6 +798,11 @@ async function planLabel(
   }
   if (typeof current?.masterLabel !== 'string')
     throw labelReadFailed(target.identity.apiName, 'to compare its label');
+  refuseEscapedCopy(
+    { spec: { label } },
+    { spec: { label: current.masterLabel } },
+    (code) => new NativeMappingError(code),
+  );
   return current.masterLabel === label
     ? {}
     : { labelChange: { from: current.masterLabel, to: label } };
@@ -979,6 +985,7 @@ export async function preflightNativeMapping(
       if (!listed.has(pairKey(pair)) && isGeneratedMappingPair(pair, context))
         desired.spec.fieldMappings.push(structuredClone(pair));
   }
+  if (target) refuseEscapedCopy(desired, target, (code) => new NativeMappingError(code));
   const labelPlan = await planLabel(desired, target, client);
   if (!target) {
     const fields = desired.spec.fieldMappings.filter((pair) => !generated.has(pairKey(pair)));

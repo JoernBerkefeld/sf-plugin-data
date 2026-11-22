@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import { sameProperty } from '../artifacts/enum-case.js';
 import {
   explainInput,
@@ -378,6 +379,7 @@ export async function preflightNativeDmo(
         new NativeDmoError('DMO_DATASPACE_MISMATCH'),
         `Salesforce reads ${apiName} in the data space ${printableKey(target.c__dataSpace)}, but the file and the run name ${printableKey(desired.c__dataSpace)}. Retrieve the DMO again with --dataspace ${printableKey(target.c__dataSpace)}.`,
       );
+    refuseEscapedCopy(desired, target, (code) => new NativeDmoError(code));
     // Every DMO but an unprefixed custom one is written within the standard scope only:
     // standard, platform-generated and namespaced DMOs alike, and Salesforce answers the rest.
     const scope = nativeDmoWriteScope(read.raw);

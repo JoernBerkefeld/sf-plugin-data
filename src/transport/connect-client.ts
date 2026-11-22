@@ -23,6 +23,31 @@ export type TransportErrorCode = 'INVALID_REQUEST' | 'AUTHENTICATION_FAILED' | '
 const nativeAbsenceCodes = ['ITEM_NOT_FOUND', 'ENTITY_IS_DELETED'] as const;
 export type NativeAbsenceCode = (typeof nativeAbsenceCodes)[number];
 
+/**
+ * The request header that makes Connect REST answer in plain text. By default it HTML-escapes
+ * every string of a response (`<>"'\&` read as `&lt; &gt; &quot; &#39; &#92; &amp;`) while it
+ * stores what a write sends as is, so a retrieved label, description, formula or SQL would not be
+ * what Salesforce holds (live API 68: data transforms, DLOs, data streams, calculated insights,
+ * segments; DB entry data360:connect-rest-entity-encoding-header-api68).
+ */
+export const plainTextHeaders: Readonly<Record<string, string>> = Object.freeze({
+  'X-Chatter-Entity-Encoding': 'false',
+});
+
+/**
+ * The request with {@link plainTextHeaders} when it goes to a Data 360 (`/ssot/`) route; any
+ * other request as it is.
+ * @param {Parameters<Connection['request']>[0]} request Request as built.
+ * @returns {Parameters<Connection['request']>[0]} Request to send.
+ */
+export function plainTextRequest(
+  request: Parameters<Connection['request']>[0],
+): Parameters<Connection['request']>[0] {
+  const object = typeof request === 'string' ? { method: 'GET' as const, url: request } : request;
+  if (!/\/services\/data\/[^/?#]+\/ssot\//u.test(String(object.url))) return request;
+  return { ...object, headers: { ...object.headers, ...plainTextHeaders } };
+}
+
 /** An intentionally payload-free diagnostic safe for JSON and console output. */
 export class ConnectError extends Error {
   public constructor(
@@ -453,7 +478,7 @@ export class ConnectClient {
         : undefined;
     try {
       return await receiver.request<T>(
-        request,
+        plainTextRequest(request),
         // Core narrows options to JSON, but JSforce supports request-local transport/redirect guards.
         {
           ...(observer ? { transport: observer } : {}),

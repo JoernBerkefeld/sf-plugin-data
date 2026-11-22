@@ -18,7 +18,8 @@ import Delete from '../lib/commands/data360/delete.js';
 import { apiDiagnostic, retainConnectDiagnostic } from '../lib/transport/connect-diagnostic.js';
 
 // Live API 68 shapes (2026-11-18, verification DB data360:segment.other-type-update.api68),
-// synthetic IDs: a Waterfall reads its children as entity-encoded includeCriteria.
+// synthetic IDs: a Waterfall reads its children in includeCriteria (plain text: the client asks
+// for it).
 const childIds = { First: '3HX000000000011AAA', Second: '3HX000000000012AAA' };
 const targetIds = { First: '3HX000000000021AAA', Second: '3HX000000000022AAA' };
 const criteria = (ids) =>
@@ -26,7 +27,6 @@ const criteria = (ids) =>
     type: 'Waterfall',
     segments: ids.map((segmentId) => ({ type: 'NestedSegment', segmentId })),
   });
-const encoded = (ids) => criteria(ids).replaceAll('"', '&quot;');
 const raw = (ids = [childIds.First, childIds.Second], extra = {}) => ({
   apiName: 'Tiers',
   createdBy: { id: '005000000000001AAA' },
@@ -34,7 +34,7 @@ const raw = (ids = [childIds.First, childIds.Second], extra = {}) => ({
   dataSpace: 'default',
   description: 'Description',
   displayName: 'Tiers',
-  ...(ids ? { includeCriteria: encoded(ids) } : {}),
+  ...(ids ? { includeCriteria: criteria(ids) } : {}),
   lastModifiedBy: { id: '005000000000001AAA' },
   lastModifiedDate: '2026-11-18T19:33:36.000Z',
   marketSegmentDefinitionId: '3HX000000000001AAA',
@@ -94,7 +94,7 @@ test('a Waterfall reads its child segments by name; unnamed children stay as rea
   // A child retrieve cannot name keeps the criteria as read (deploy refuses that file).
   const kept = projectSegment({ segments: [raw()] }, 'Tiers', 'retrieve');
   assert.equal(kept.candidate.spec.childSegments, undefined);
-  assert.equal(kept.candidate.spec.includeCriteria, encoded([childIds.First, childIds.Second]));
+  assert.equal(kept.candidate.spec.includeCriteria, criteria([childIds.First, childIds.Second]));
   assert.throws(() => validateSegmentDocument(kept.candidate), {
     code: 'UNKNOWN_SEGMENT_CONFIGURATION',
   });
@@ -267,7 +267,7 @@ test('each child is bound in the target before any write; a missing one is refus
 
 /**
  * A synthetic target org with the Waterfall (or none) and the write seams of the deploy. Writes
- * store the criteria as sent; reads return it entity-encoded, as Salesforce does.
+ * store the criteria as sent; reads return it as stored.
  * @param {object | undefined} current GET-shaped Waterfall, or none.
  * @param {string[]} [present] Child segments that exist in the target.
  * @returns {object} State with recorded writes and deploy options.
@@ -277,7 +277,7 @@ function org(current, present = ['First', 'Second']) {
   const store = (body) => {
     state.current = raw(false, {
       ...(body.includeCriteria
-        ? { includeCriteria: body.includeCriteria.replaceAll('"', '&quot;') }
+        ? { includeCriteria: body.includeCriteria }
         : state.current?.includeCriteria
           ? { includeCriteria: state.current.includeCriteria }
           : {}),

@@ -478,6 +478,7 @@ test('mapping inventory reader is list-only, version-pinned and disables replay/
     {
       method: 'GET',
       url: 'https://synthetic.example/services/data/v61.0/ssot/data-model-object-mappings?dataspace=default&dmoDeveloperName=ssot__Target__dlm&dloDeveloperName=Source__dll',
+      headers: { 'X-Chatter-Entity-Encoding': 'false' },
     },
   ]);
   for (const [dmo, dlo] of [

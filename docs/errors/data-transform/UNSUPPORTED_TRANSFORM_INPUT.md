@@ -17,7 +17,8 @@ The plugin checks only a few things in the transform input before it sends it, a
 - `name` is an API name (a letter, then letters, digits or underscores);
 - exactly one of `definition` (one definition, such as STL) or `definitions` (a list, such as DCSQL) is present;
 - every top-level key of the definition is one the create/update input takes (`name`, `label`, `description`, `type`, `dataSpaceName`, `fullRunFrequency`, `definition`, `definitions`, `parameters`, `tags`, `capabilities`, `currencyIsoCode`, `primarySource`);
-- `dataSpaceName`, when present, is `default` (a transform built in the UI on DLOs may have none).
+- `dataSpaceName`, when present, is `default` (a transform built in the UI on DLOs may have none);
+- on deploy, no STL formula or SQL filter expression and no DCSQL `compiled_code` / `raw_code` holds an HTML entity (`&gt;`, `&#39;`, `&quot;`, …) outside texts and comments. Salesforce never decodes entities, so it would read them as a syntax error. The message names the expression, line and column. Write the character itself in the file. The plugin asks Salesforce for plain text, so if a fresh retrieve still shows the entity, Salesforce stores it that way: write the character itself in the file, or fix it in Data Cloud.
 
 Everything else in the definition is sent as written, and Salesforce decides whether it is valid. On deploy, the message names the key path, for example `definition.futureKey`.
 

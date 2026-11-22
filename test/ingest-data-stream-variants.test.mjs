@@ -31,9 +31,8 @@ const typed = [
   ['Score', 'Number'],
   ['IsOpen', 'Boolean'],
 ];
-const encode = (formula) => formula.replaceAll("'", '&#39;').replaceAll('"', '&quot;');
 // Event field labels differ from the names (the key keeps its name as label); Salesforce returns
-// an additive mapping's label HTML-escaped in `formula`.
+// an additive mapping's label in `formula` (plain: the client asks for plain text).
 const labels = { Score: "Score's value", EventTime: 'Event time', IsOpen: 'Is open' };
 const labelOf = (name) => labels[name] ?? name;
 const nameOf = (label) => typed.find(([name]) => labelOf(name) === label)?.[0];
@@ -111,16 +110,16 @@ function org() {
               sourceFieldName: fieldName,
               targetFieldName: fieldName,
             })),
-            { formula: `&quot;${connection.name}&quot;`, targetFieldName: 'DataSource' },
-            { formula: `&quot;${name}&quot;`, targetFieldName: 'DataSourceObject' },
+            { formula: `"${connection.name}"`, targetFieldName: 'DataSource' },
+            { formula: `"${name}"`, targetFieldName: 'DataSourceObject' },
             {
-              formula: 'DAYPRECISION(formulaField[&#39;EventTime__c&#39;])',
+              formula: "DAYPRECISION(formulaField['EventTime__c'])",
               targetFieldName: 'cdp_sys_PartitionDate',
             },
             ...body.mappings.map((mapping) =>
               mapping.sourceFieldLabel === undefined
                 ? {
-                    formula: encode(mapping.transformationFormula),
+                    formula: mapping.transformationFormula,
                     targetFieldName: mapping.targetFieldName,
                   }
                 : {
@@ -175,7 +174,7 @@ function org() {
             (entry) => entry.targetFieldName !== mapping.targetFieldName,
           );
           stream.mappings.push({
-            formula: encode(mapping.sourceFieldLabel ?? mapping.transformationFormula),
+            formula: mapping.sourceFieldLabel ?? mapping.transformationFormula,
             targetFieldName: mapping.targetFieldName,
           });
           if (
@@ -319,7 +318,7 @@ test('two Engagement streams on one connection create, repeat unchanged, add a f
   assert.equal(second.targetApiName, 'CliConn_CliEvB_00000002');
   assert.equal(writes.length, 2);
 
-  // Retrieve: a normal stream file, formula decoded; its repeat deploy sends nothing.
+  // Retrieve: a normal stream file, formula as read; its repeat deploy sends nothing.
   const retrieved = await retrieveNativeDataStream(
     first.targetApiName,
     clients,
@@ -755,4 +754,28 @@ test('preview lists mapping removals; a removal Salesforce answers 200 but ignor
         (entry) => entry.targetFieldName === 'ScoreCopy' && entry.sourceFieldName === 'Score',
       ),
   );
+});
+
+test('an Ingestion API stream file holding an HTML-escaped copy of an org formula is blocked before any write', async () => {
+  const { clients, writes } = org();
+  const created = await executeDataStream(file('CliEvA'), clients, options);
+  assert.equal(created.outcome, 'created', JSON.stringify(created.diagnostics));
+  const retrieved = await retrieveNativeDataStream(
+    created.targetApiName,
+    clients,
+    'default',
+    false,
+    'retrieve',
+  );
+  const escaped = structuredClone(retrieved);
+  escaped.spec.formulaMappings[0].formula = 'sourceField[&#39;Score&#39;] * 2';
+  const before = writes.length;
+  const result = await executeDataStream(escaped, clients, options);
+  assert.equal(result.outcome, 'blocked', JSON.stringify(result.diagnostics));
+  assert.equal(result.diagnostics[0].code, 'HTML_ESCAPED_FILE');
+  assert.match(
+    result.diagnostics[0].message,
+    /HTML-escaped text at spec\.formulaMappings\[0\]\.formula/u,
+  );
+  assert.equal(writes.length, before);
 });

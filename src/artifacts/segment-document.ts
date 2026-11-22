@@ -502,7 +502,7 @@ function scheduleBody(
  * `{"type":"Waterfall","segments":[{"type":"NestedSegment","segmentId":"<id>"}, ...]}` with at
  * least one child. Anything else (other keys, element types, no children) is not a shape the
  * file holds by name.
- * @param {string} criteria Plain (decoded) criteria JSON text.
+ * @param {string} criteria Plain criteria JSON text.
  * @returns {string[] | undefined} Child definition IDs in priority order, or undefined.
  */
 export function waterfallChildIds(criteria: string): string[] | undefined {
@@ -622,24 +622,6 @@ export function segmentScheduleNotice(
         : 'The schedule of the file turns the segment refresh schedule off in this org.'
       : `The schedule of the file (${name}) replaces the segment refresh schedule in this org; the segment then publishes on it there.`,
   };
-}
-
-/**
- * Decode the HTML entities Salesforce puts into a UI segment's criteria string on read
- * (`&quot;` and the like); the write takes the plain JSON string.
- * @param {string} value Criteria string as returned.
- * @returns {string} Plain JSON text.
- */
-export function decodeSegmentCriteria(value: string): string {
-  const named: Record<string, string> = { quot: '"', amp: '&', lt: '<', gt: '>', apos: "'" };
-  return value.replaceAll(
-    /&(?:(quot|amp|lt|gt|apos)|#(\d{1,7})|#[xX]([0-9A-Fa-f]{1,6}));/gu,
-    (match, name?: string, decimal?: string, hex?: string) => {
-      if (name) return named[name];
-      const point = decimal ? Number(decimal) : Number.parseInt(hex!, 16);
-      return point <= 0x10_ff_ff ? String.fromCodePoint(point) : match;
-    },
-  );
 }
 
 /** Every `spec.models[].sql` lives in its own `<Name>.segment.<model>.sql` file. */

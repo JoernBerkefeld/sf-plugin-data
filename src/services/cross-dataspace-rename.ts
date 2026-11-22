@@ -1,7 +1,11 @@
 import type { OrgDataSpace } from './data-space-check.js';
 import { unescapeSalesforceHtml } from '../artifacts/native-calculated-insight-document.js';
 import type { ExpressionNamer, SqlNamer } from './cross-dataspace-sql.js';
-import { translateSql, translateSqlExpression } from './cross-dataspace-sql.js';
+import {
+  htmlEntityOutsideTexts,
+  translateSql,
+  translateSqlExpression,
+} from './cross-dataspace-sql.js';
 
 /**
  * The rename rules of a cross-data-space deploy. Each one is a fixed spelling rule Salesforce
@@ -546,6 +550,7 @@ class Recorder {
    * @param {string} at JSON path of the SQL.
    * @param {string} sql SQL text.
    * @param {string} file The SQL file it is read from, as positions are reported.
+   * @param {string} item What the SQL belongs to, as a refusal names it (`data transform`).
    * @param {ReadonlyMap<string, {name: string; rule?: CrossSpaceRule}>} [outputs] When the columns
    * the SQL puts out land in the fields of its output object by name (a DCSQL node): each field of
    * that object (source name, lowercase) with its target name and rule. Each output column is then
@@ -557,6 +562,7 @@ class Recorder {
     at: string,
     sql: string,
     file: string,
+    item: string,
     outputs?: ReadonlyMap<string, { name: string; rule?: CrossSpaceRule }>,
   ): string {
     this.visited.add(at);
@@ -566,6 +572,7 @@ class Recorder {
       file,
       sqlNamer(this.context),
       outputs && ((name) => outputs.get(name.toLowerCase())),
+      item,
     );
     this.rewrites.push(...result.rewrites);
     this.unresolved.push(...result.unresolved);
@@ -588,14 +595,15 @@ class Recorder {
 
   /**
    * Rewrite one SQL expression of an STL node (a formula, a SQL filter) by the node's lineage. A
-   * value as Salesforce returns it, HTML-escaped (`&quot;`, `&#39;`), is read unescaped and
-   * written back escaped the same way; a value that mixes both forms is not placed. Line and
-   * column positions refer to the unescaped expression.
+   * value as an older retrieve wrote it, HTML-escaped as the GET returns it (`&quot;`, `&#39;`:
+   * an entity outside texts), is read unescaped; a value that mixes both forms is not placed. The
+   * result is always written plain: Salesforce stores what it is sent and never decodes entities.
+   * Line and column positions refer to the unescaped expression.
    * @param {string} at JSON path of the expression.
    * @param {string} text Expression as the file holds it.
    * @param {Lineage} lineage Whose columns the node reads without a qualifier.
    * @param {ReadonlyMap<string, Lineage>} [qualifiers] The qualifiers of the join above the node.
-   * @returns {string} The rewritten expression, in the file's form.
+   * @returns {string} The rewritten expression, plain.
    */
   public expression(
     at: string,
@@ -604,14 +612,14 @@ class Recorder {
     qualifiers?: ReadonlyMap<string, Lineage>,
   ): string {
     this.visited.add(at);
-    const plain = unescapeSalesforceHtml(text);
-    const escaped = plain !== text;
+    const escaped = htmlEntityOutsideTexts(text) !== undefined;
+    const plain = escaped ? unescapeSalesforceHtml(text) : text;
     if (escaped && escapeSalesforceHtml(plain) !== text) {
       this.unresolved.push({
         at,
         name: text,
         reason:
-          'the expression mixes HTML-escaped and plain characters, so it cannot be written back in the form the file has',
+          'the expression mixes HTML-escaped and plain characters, so it cannot be decoded exactly; write it plain',
       });
       return text;
     }
@@ -630,7 +638,7 @@ class Recorder {
     const result = translateSqlExpression(plain, at, namer);
     this.rewrites.push(...result.rewrites);
     this.unresolved.push(...result.unresolved);
-    return escaped ? escapeSalesforceHtml(result.sql) : result.sql;
+    return result.sql;
   }
 
   /**
@@ -698,7 +706,8 @@ class Recorder {
 }
 
 /**
- * HTML-escape a text the way the API 68 GET returns STL expressions (`&quot;`, `&#39;`).
+ * HTML-escape a text the way Connect REST returns every string without the plain-text request
+ * header (`&quot;`, `&#39;`, `&#92;`), as older plugin versions wrote STL expressions into files.
  * @param {string} text Plain text.
  * @returns {string} Escaped text.
  */
@@ -708,7 +717,8 @@ function escapeSalesforceHtml(text: string): string {
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+    .replaceAll("'", '&#39;')
+    .replaceAll('\\', '&#92;');
 }
 
 /**
@@ -1649,6 +1659,7 @@ function translateDcsql(
           `${nodeAt}.${sqlKey}`,
           node[sqlKey] as string,
           `${nodeAt}.${sqlKey}`,
+          'data transform',
           fields ?? new Map(),
         );
     if (relation !== undefined)
@@ -1881,6 +1892,7 @@ export function translateCalculatedInsight(
     'expression',
     String(native.expression),
     `${source}.calculatedInsight-meta.sql`,
+    'calculated insight',
   );
   for (const key of insightPlainKeys) recorder.keep(key);
   // The SQL had its own token-level check; the other keys are checked here.
@@ -2020,6 +2032,7 @@ export function translateDocument(
             `spec.models[${index}].sql`,
             String(model.sql),
             `${sourceName}.segment.${String(model.name)}.sql`,
+            'DBT segment',
           );
         }
     }

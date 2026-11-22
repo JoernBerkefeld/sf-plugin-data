@@ -67,8 +67,10 @@ const entities: Readonly<Record<string, string>> = {
 };
 
 /**
- * Undo the HTML escaping of the API 68 GET (`&gt;`, `&#39;`, …) in one pass, so `&amp;lt;`
- * becomes `&lt;`. Unknown or invalid references stay as they are.
+ * Undo the HTML escaping Connect REST applies without the plain-text request header (`&gt;`,
+ * `&#39;`, …), as files of older plugin versions hold it, in one pass, so `&amp;lt;` becomes
+ * `&lt;`. Unknown or invalid references stay as they are. Never applied to a response: the client
+ * asks for plain text (plainTextHeaders).
  * @param {string} text Escaped text.
  * @returns {string} Plain text.
  */
@@ -121,7 +123,8 @@ export function validateNativeCalculatedInsight(value: unknown): NativeCalculate
 }
 
 /**
- * Project an API 68 GET body to the file form: server fields dropped, SQL unescaped.
+ * Project an API 68 GET body to the file form: server fields dropped. The SQL reads as stored:
+ * the client asks Salesforce for plain text (plainTextHeaders).
  * @param {unknown} raw GET response.
  * @returns {NativeCalculatedInsight} Retrievable document.
  */
@@ -130,8 +133,6 @@ export function observeNativeCalculatedInsight(raw: unknown): NativeCalculatedIn
     throw new CalculatedInsightError('INVALID_CI_DOCUMENT');
   const body = { ...(raw as Record<string, unknown>) };
   for (const key of calculatedInsightServerFields) delete body[key];
-  if (typeof body.expression === 'string')
-    body.expression = unescapeSalesforceHtml(body.expression);
   return validateNativeCalculatedInsight(sorted(body));
 }
 

@@ -178,7 +178,7 @@ The old `identity.dataSpace` is refused (`LEGACY_DATASPACE_KEY`).
   `event`, `datastreamType` (`INGEST_API`), `refreshMode`, `label`, `newDlo` (`name`,
   `label`, `category` when the DLO has one, `eventDateTimeFieldName`, `primaryKey`),
   `additiveFieldMappings` (`sourceFieldLabel`, `targetFieldName` without `__c`,
-  `targetFieldReturntype`) and `formulaMappings` (`targetFieldName`, `formula` decoded,
+  `targetFieldReturntype`) and `formulaMappings` (`targetFieldName`, `formula` plain,
   `targetFieldReturntype`), plus the read-only `observed` section.
 - **Any other connector** (Salesforce CRM `SalesforceDotCom` tested live; others such as
   S3 untested): `spec` is the stream GET without server-owned keys, system fields and

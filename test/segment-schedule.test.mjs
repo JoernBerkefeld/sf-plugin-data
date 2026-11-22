@@ -43,11 +43,11 @@ const raw = (type = 'DBT', extra = {}) => ({
   displayName: 'Audience',
   ...(type === 'DBT'
     ? {
-        includeCriteria: '&lt;DbtPipeline xmlns=&quot;&quot;&gt;&lt;/DbtPipeline&gt;',
+        includeCriteria: '<DbtPipeline xmlns=""></DbtPipeline>',
         includeDbt: { models: [{ name: 'Audience', sql }] },
       }
     : {}),
-  ...(type === 'UI' ? { includeCriteria: '{&quot;type&quot;:&quot;TextComparison&quot;}' } : {}),
+  ...(type === 'UI' ? { includeCriteria: '{"type":"TextComparison"}' } : {}),
   lastModifiedBy: { id: '005000000000001AAA' },
   lastModifiedDate: '2026-11-18T17:16:51.000Z',
   lastSegmentMemberCount: 0,
@@ -533,7 +533,7 @@ test('a file cannot hold parameters, unknown schedule keys or keys beside freque
 });
 
 test('criteria of another type are kept on retrieve and refused on deploy', () => {
-  const read = raw('Dynamic', { includeCriteria: '{&quot;type&quot;:&quot;Any&quot;}' });
+  const read = raw('Dynamic', { includeCriteria: '{"type":"Any"}' });
   const kept = projectSegment({ segments: [read] }, 'Audience', 'retrieve').candidate;
   assert.equal(kept.spec.includeCriteria, read.includeCriteria);
   assert.throws(() => validateSegmentDocument(kept), { code: 'UNKNOWN_SEGMENT_CONFIGURATION' });

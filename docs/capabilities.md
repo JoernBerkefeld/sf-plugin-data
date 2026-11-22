@@ -510,8 +510,17 @@ classic and `DC_SQL` insights) and DBT segments (name, `segmentOn` and every mod
 SQL is tokenized: single-quoted texts and `--` / `/* */` comments are skipped, double quotes and
 backticks are names; a backslash before a quote in a text, a comment inside a comment, an
 unclosed text, name or comment, unmatched parentheses, or an HTML entity (`&#39;`, `&lt;`, …)
-outside texts and comments refuse the file (retrieve decodes the HTML-encoded model SQL that
-Salesforce returns for a DBT segment, and the read after a deploy compares it decoded). Tables in `FROM` and
+outside texts and comments refuse the file (every Data 360 request asks for plain text with
+`X-Chatter-Entity-Encoding: false`, so retrieve writes the SQL as Salesforce stores it; without
+that header Connect REST HTML-escapes every string of a response; Salesforce stores what it is
+sent and never decodes, DB entries
+`data360:plugin-cross-dataspace-deploy-3b-api68` and
+`data360:connect-rest-entity-encoding-header-api68`). An STL expression a file still holds
+HTML-escaped is read unescaped and written plain; a same-space deploy of a transform file
+holding an entity outside texts is refused before any write (`UNSUPPORTED_TRANSFORM_INPUT`: write
+the character itself; one Salesforce stores so reads back the same after a fresh retrieve).
+Before any update of any type, a file text that decodes once to exactly the org's text is
+refused (`HTML_ESCAPED_FILE`). Tables in `FROM` and
 `JOIN` are placed by the DMO rules and the ruleset list (`__dlm`), the prefix rule (`__cio`) or
 kept (`__dll`); a parenthesis after a join word (`JOIN (SELECT …) a`, `JOIN (t a)`) is a
 subquery with its own scope or a table group, `LEFT(`/`RIGHT(` stay functions; `WITH` blocks

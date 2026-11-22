@@ -320,3 +320,18 @@ test('CRM stream: enum casing in the DLO, refresh mode and return type is no cha
   relabelled.dataLakeObjectInfo.label = 'clienum home';
   assert.deepEqual(crmDataStreamPatch(relabelled, org).parts, ['dataLakeObjectInfo']);
 });
+
+test('DMO: a file holding an HTML-escaped copy of the org label is refused', async () => {
+  const org = { ...dmoNative(), label: `Cli & 'Enum'` };
+  const escaped = dmoFile('Text');
+  escaped.spec.category = 'OTHER';
+  escaped.spec.label = 'Cli &amp; &#39;Enum&#39;';
+  await assert.rejects(
+    preflightNativeDmo(escaped, { get: async () => org }, 'default'),
+    (error) => {
+      assert.equal(error.code, 'HTML_ESCAPED_FILE');
+      assert.match(error.message, /HTML-escaped text at spec\.label/u);
+      return true;
+    },
+  );
+});

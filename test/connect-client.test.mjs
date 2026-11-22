@@ -97,7 +97,11 @@ test('authenticated request preserves explicit version, query and response', asy
     {
       instanceUrl: origin,
       request: async (request, options) => {
-        assert.deepEqual(request, { method: 'GET', url: `${origin}${path}?limit=2` });
+        assert.deepEqual(request, {
+          method: 'GET',
+          url: `${origin}${path}?limit=2`,
+          headers: { 'X-Chatter-Entity-Encoding': 'false' },
+        });
         assert.equal(typeof options.followRedirect, 'function');
         return response;
       },
@@ -106,6 +110,31 @@ test('authenticated request preserves explicit version, query and response', asy
   );
   assert.equal(await client.get(`${path}?limit=2`), response);
   assert.equal(await client.get(`${origin}${path}?limit=2`), response);
+});
+
+test('every Data 360 request asks for plain text; the core query route does not', async () => {
+  // Connect REST HTML-escapes every response string unless the request turns it off (live API 68,
+  // DB entry data360:connect-rest-entity-encoding-header-api68).
+  const requests = [];
+  const connection = {
+    instanceUrl: origin,
+    request: async (request, options) => {
+      requests.push(request);
+      return request.method === 'DELETE' ? options.noContentResponse : { done: true, records: [] };
+    },
+  };
+  const client = new ConnectClient(connection, '68.0');
+  await client.get('/services/data/v68.0/ssot/data-model-objects?limit=2');
+  await client.patchSegment(segment);
+  await client.deleteSegment('Audience');
+  await client.soql('SELECT Id FROM Organization');
+  const plain = { 'X-Chatter-Entity-Encoding': 'false' };
+  assert.deepEqual(requests[0].headers, plain);
+  assert.deepEqual(requests[1].headers, { 'content-type': 'application/json', ...plain });
+  assert.equal(requests[1].url, `${origin}${segmentRoute}`);
+  assert.deepEqual(requests[2].headers, plain);
+  assert.equal(requests[3].headers, undefined);
+  assert.match(requests[3].url, /\/services\/data\/v68\.0\/query\?q=/u);
 });
 
 test('unsafe origin, namespace, version and normalization paths never reach connection', async () => {

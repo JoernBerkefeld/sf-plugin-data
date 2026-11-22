@@ -1,4 +1,5 @@
 import { sameEnum, sameRecord } from '../artifacts/enum-case.js';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import {
   crossSpaceSentence,
   explainInput,
@@ -187,6 +188,7 @@ export async function preflightNativeDlo(
   if (typeof raw.id !== 'string' || !/^[A-Za-z0-9]{18}$/u.test(raw.id))
     throw new DloError('INVALID_DLO_TARGET_ID');
   const targetId = raw.id;
+  refuseEscapedCopy(desired, target, (code) => new DloError(code));
   const membership = {
     add: dataSpaces.filter((space) => !target.c__dataSpace.includes(space)),
     remove: target.c__dataSpace.filter((space) => !dataSpaces.includes(space)),

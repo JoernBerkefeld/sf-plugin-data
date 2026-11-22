@@ -554,3 +554,26 @@ test('the key qualifier of a relationship source field is a generated pair on a 
   assert.equal(isGeneratedMappingPair(samePair('KQ_Other__c'), context), false);
   assert.equal(isGeneratedMappingPair(samePair('RefId__c'), context), false);
 });
+
+test('mapping: a label holding an HTML-escaped copy of the org label is refused', async () => {
+  const org = mappingOrg('custom');
+  org.client.readDefinitions = async (names) => [
+    { fullName: names[0], masterLabel: `Source & "map"` },
+  ];
+  const document = await retrieveLeanNativeMapping(
+    org.raw.developerName,
+    org.client,
+    'default',
+    org.dependencies,
+  );
+  const escaped = structuredClone(document);
+  escaped.spec.label = 'Source &amp; &quot;map&quot;';
+  await assert.rejects(
+    preflightNativeMapping(escaped, org.client, org.dependencies, 'default'),
+    (error) => {
+      assert.equal(error.code, 'HTML_ESCAPED_FILE');
+      assert.match(error.message, /HTML-escaped text at spec\.label/u);
+      return true;
+    },
+  );
+});

@@ -73,21 +73,22 @@ test('native Graph binds raw lowercase dataspaceName and exact API68 CRD only', 
   assert.deepEqual(Object.keys(client), ['get', 'create', 'update', 'delete']);
   for (const [operation, execute] of Object.entries(operations))
     assert.equal(await execute(client), operation === 'delete' ? undefined : response);
+  const plain = { 'X-Chatter-Entity-Encoding': 'false' };
   assert.deepEqual(calls, [
-    { method: 'GET', url: `${endpoint}/${name}` },
+    { method: 'GET', url: `${endpoint}/${name}`, headers: plain },
     {
       method: 'POST',
       url: endpoint,
       body: JSON.stringify(createBody()),
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...plain },
     },
     {
       method: 'PUT',
       url: `${endpoint}/${name}`,
       body: JSON.stringify(candidate()),
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...plain },
     },
-    { method: 'DELETE', url: `${endpoint}/${name}` },
+    { method: 'DELETE', url: `${endpoint}/${name}`, headers: plain },
   ]);
   const input = candidate();
   const detached = buildDataGraphCreateRequest(input);

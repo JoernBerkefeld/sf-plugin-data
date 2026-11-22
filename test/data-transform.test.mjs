@@ -496,7 +496,11 @@ test('Transform transport pins native68 and exposes only admitted definition wri
   await assert.rejects(client.delete('SyntheticTransform'));
   await client.delete(id);
   assert.equal(calls.length, 8);
-  assert.deepEqual(calls[7], { method: 'DELETE', url: `${prefix}/${id}` });
+  assert.deepEqual(calls[7], {
+    method: 'DELETE',
+    url: `${prefix}/${id}`,
+    headers: { 'X-Chatter-Entity-Encoding': 'false' },
+  });
   connection.instanceUrl = 'https://other.my.salesforce.com';
   await assert.rejects(client.delete(id), /TRANSFORM_CONNECTION_DRIFT/u);
   await assert.rejects(client.list());

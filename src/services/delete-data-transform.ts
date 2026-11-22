@@ -5,6 +5,7 @@ import {
   dataTransformId,
   dataTransformName,
   dataTransformSpaceMismatch,
+  plainTransformExpressions,
   sameDataTransformDocument,
   serializeDataTransformDocument,
   validateDataTransformDocument,
@@ -230,11 +231,14 @@ export async function deleteDataTransform(
     const observed = await retrieveDataTransform(targetId, client, 'retrieve', undefined, space);
     check();
     refuseProcessing(observed.runtime.status);
-    // Enum values the org stores in its own letter case are no drift.
+    // Enum values the org stores in its own letter case are no drift. The file matches as written
+    // (also when Salesforce stores an entity itself) or with its HTML-escaped expressions decoded.
+    const local = validateDataTransformDocument(value, 'retrieve');
     if (
+      !sameDataTransformDocument(observed.document, local, 'retrieve') &&
       !sameDataTransformDocument(
         observed.document,
-        validateDataTransformDocument(value, 'retrieve'),
+        { ...local, definition: plainTransformExpressions(local.definition) },
         'retrieve',
       )
     )

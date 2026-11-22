@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import { explainInput, explainMismatch, printableKey } from './operation-diagnostic.js';
 import { setTimeout as wait } from 'node:timers/promises';
 import {
@@ -6,7 +7,6 @@ import {
   buildDataStreamCreateBody,
   buildDataStreamPatchBody,
   createSpacesRefusal,
-  decodeFormula,
   validateDataStreamDocument,
 } from '../artifacts/data-stream-document.js';
 import { dataSpaceKey, isDataSpaceName, sortedDataSpaces } from '../artifacts/data-space-field.js';
@@ -840,9 +840,8 @@ export async function projectNativeDataStream(
       continue;
     if (
       (mapping.targetFieldName === 'DataSource' &&
-        mapping.formula === `&quot;${binding.connectionName}&quot;`) ||
-      (mapping.targetFieldName === 'DataSourceObject' &&
-        mapping.formula === `&quot;${apiName}&quot;`) ||
+        mapping.formula === `"${binding.connectionName}"`) ||
+      (mapping.targetFieldName === 'DataSourceObject' && mapping.formula === `"${apiName}"`) ||
       // Salesforce adds the partition-date formula of an Engagement DLO itself.
       (typeof mapping.targetFieldName === 'string' &&
         mapping.targetFieldName.startsWith('cdp_sys_') &&
@@ -856,9 +855,7 @@ export async function projectNativeDataStream(
     // as a plain source mapping onto another target when the create carried it (live, API 68).
     const additiveSource =
       typeof mapping.formula === 'string' && mapping.sourceFieldName === undefined
-        ? binding.sourceFields.find(
-            (field) => field.label === decodeFormula(mapping.formula as string),
-          )
+        ? binding.sourceFields.find((field) => field.label === mapping.formula)
         : mapping.formula === undefined
           ? binding.sourceFields.find((field) => field.name === mapping.sourceFieldName)
           : undefined;
@@ -885,7 +882,7 @@ export async function projectNativeDataStream(
     else
       formulas.push({
         targetFieldName: target.name as string,
-        formula: decodeFormula(mapping.formula as string),
+        formula: mapping.formula as string,
         targetFieldReturntype: target.dataType,
       });
   }
@@ -1448,6 +1445,7 @@ export async function preflightNativeDataStreamUpdate(
   const target = await retrieveNativeDataStream(binding.target.name as string, clients, dataSpace);
   if (!sameSpaces(document.c__dataSpace, target.c__dataSpace))
     throw spacesDiffer(document.identity.apiName, document.c__dataSpace, target.c__dataSpace);
+  refuseEscapedCopy(document, target, (code) => new DataStreamError(code));
   const confirmation = inspectNativeDataStream(
     await clients.streams.get(binding.target.recordId as string),
   );
@@ -1803,7 +1801,7 @@ export async function updateNativeDataStream(
             return (
               mapping.targetFieldName === entry.targetFieldName &&
               ((typeof mapping.formula === 'string' &&
-                decodeFormula(mapping.formula) === entry.sourceFieldLabel &&
+                mapping.formula === entry.sourceFieldLabel &&
                 mapping.sourceFieldName === undefined) ||
                 (mapping.formula === undefined && mapping.sourceFieldName === source?.name))
             );
@@ -1820,9 +1818,7 @@ export async function updateNativeDataStream(
               (mapping) => mapping.formula === undefined && mapping.sourceFieldName === undefined,
             );
           const formula = onTarget[0]?.formula;
-          return (
-            typeof formula === 'string' && decodeFormula(formula) === entry.transformationFormula
-          );
+          return typeof formula === 'string' && formula === entry.transformationFormula;
         });
       const fieldsReady =
         plan.additions.every((entry) =>

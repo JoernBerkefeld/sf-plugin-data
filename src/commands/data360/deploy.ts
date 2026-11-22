@@ -2,6 +2,7 @@ import {
   DataTransformError,
   dataTransformSpaceMismatch,
 } from '../../artifacts/data-transform-document.js';
+import { escapedCopyCode } from '../../services/escaped-copy.js';
 import { createDataTransformClient } from '../../transport/data-transform-rest.js';
 import { preflightDataTransformDeploy } from '../../services/preflight-data-transform-deploy.js';
 import {
@@ -2230,8 +2231,13 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               absenceProof: 'none',
               diagnostics: [
                 {
-                  // A native DMO refusal names its own reason (for example a standard target).
-                  code: error instanceof NativeDmoError ? error.code : 'PREFLIGHT_FAILED',
+                  // A native DMO refusal names its own reason (for example a standard target),
+                  // and so does an escaped-text refusal of any family.
+                  code:
+                    error instanceof NativeDmoError ||
+                    (error as { code?: unknown } | null)?.code === escapedCopyCode
+                      ? (error as { code: string }).code
+                      : 'PREFLIGHT_FAILED',
                   message: operationDiagnostic(
                     error,
                     'Target preview failed; no deployment was executed.',

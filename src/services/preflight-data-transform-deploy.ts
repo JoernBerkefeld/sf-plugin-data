@@ -1,9 +1,11 @@
 import {
   DataTransformError,
+  refuseEscapedTransformExpressions,
   sameDataTransformDefinition,
   sameDataTransformSchedule,
   validateDataTransformDocument,
 } from '../artifacts/data-transform-document.js';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import type {
   DataTransformDocument,
   DataTransformObservation,
@@ -11,6 +13,47 @@ import type {
 import type { DataTransformClient } from '../transport/data-transform-rest.js';
 import { retrieveDataTransform } from './retrieve-data-transform.js';
 import { explainInput, printableKey } from './operation-diagnostic.js';
+import { displayableApiText } from '../transport/connect-diagnostic.js';
+
+/**
+ * One validation issue as it may be shown: its error code when it is a code, and its message (plain
+ * text: the client asks for it, plainTextHeaders) when it passes the display filter of REST
+ * errors. A possessive `'s` reads as `’s`, so the filter does not take it
+ * for a quoted value. Anything else is left out.
+ * @param {unknown} issue Validation issue.
+ * @returns {string | undefined} Displayable text, or none.
+ */
+function issueText(issue: unknown): string | undefined {
+  if (!issue || typeof issue !== 'object' || Array.isArray(issue)) return undefined;
+  const { errorCode, errorMessage } = issue as Record<string, unknown>;
+  const code =
+    typeof errorCode === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/u.test(errorCode)
+      ? errorCode
+      : undefined;
+  const message =
+    typeof errorMessage === 'string'
+      ? displayableApiText(errorMessage.replaceAll(/(?<=[A-Za-z0-9_])'(?=s\b)/gu, '’'))
+      : undefined;
+  return code || message ? [code, message].filter(Boolean).join(': ') : undefined;
+}
+
+/**
+ * TRANSFORM_VALIDATION_FAILED with Salesforce's issues: at most three, each as {@link issueText}
+ * admits it.
+ * @param {string} name Transform name.
+ * @param {unknown[]} issues Validation issues (at least one).
+ * @returns {DataTransformError} The refusal.
+ */
+function validationRefusal(name: string, issues: unknown[]): DataTransformError {
+  const texts = [
+    ...new Set(issues.map((issue) => issueText(issue)).filter((text) => text !== undefined)),
+  ];
+  const shown = `${texts.slice(0, 3).join('; ')}${texts.length > 3 ? `; and ${texts.length - 3} more` : ''}`;
+  return explainInput(
+    new DataTransformError('TRANSFORM_VALIDATION_FAILED'),
+    `Salesforce validation rejected the data transform ${name}${shown ? `: ${shown}${/[.!?]$/u.test(shown) ? '' : '.'}` : ' without an issue text that can be shown.'} Nothing was created.`,
+  );
+}
 
 export type DataTransformDeploySelection =
   { operation: 'create' } | { operation: 'update'; targetId: string };
@@ -44,6 +87,7 @@ export async function preflightDataTransformDeploy(
   options: { skipServerValidation?: boolean } = {},
 ): Promise<DataTransformDeployPlan> {
   const document = validateDataTransformDocument(value);
+  refuseEscapedTransformExpressions(document);
   // A create can name its data space only through dataSpaceName; without it the data space of
   // the new transform is not proven, so a create outside default is refused before any write.
   if (
@@ -67,6 +111,12 @@ export async function preflightDataTransformDeploy(
         `The org's data transform ${String(document.definition.name)} is in the data space ${printableKey(current.document.c__dataSpace)}, but the file names ${printableKey(document.c__dataSpace)} in c__dataSpace. A transform does not move between data spaces; nothing was written.`,
       );
   }
+  if (current)
+    refuseEscapedCopy(
+      document.definition,
+      current.document.definition,
+      (code) => new DataTransformError(code),
+    );
   const writeDefinition = !current || !sameDataTransformDefinition(current.document, document);
   const writeSchedule =
     document.schedule !== undefined &&
@@ -87,10 +137,11 @@ export async function preflightDataTransformDeploy(
       !validation ||
       typeof validation !== 'object' ||
       Array.isArray(validation) ||
-      !Array.isArray((validation as Record<string, unknown>).issues) ||
-      ((validation as Record<string, unknown>).issues as unknown[]).length > 0
+      !Array.isArray((validation as Record<string, unknown>).issues)
     )
       throw new DataTransformError('TRANSFORM_VALIDATION_FAILED');
+    const issues = (validation as Record<string, unknown>).issues as unknown[];
+    if (issues.length > 0) throw validationRefusal(String(document.definition.name), issues);
   }
   return {
     operation: selection.operation,

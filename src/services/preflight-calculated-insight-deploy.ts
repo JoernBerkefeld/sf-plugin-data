@@ -1,4 +1,5 @@
 import { getConnectDiagnostic } from '../transport/connect-diagnostic.js';
+import { refuseEscapedCopy } from './escaped-copy.js';
 import { explanationOf, operationDiagnostic } from './operation-diagnostic.js';
 import {
   CalculatedInsightError,
@@ -72,6 +73,7 @@ export async function planNativeCalculatedInsightDeploy(
   const acquired = await acquireCalculatedInsight(context, desired.apiName);
   context.check();
   if (acquired.state === 'absent') return { action: 'create', acquired };
+  refuseEscapedCopy(desired, acquired.document, (code) => new CalculatedInsightError(code));
   if (calculatedInsightMatches(desired, acquired.document))
     return { action: 'unchanged', acquired };
   return {

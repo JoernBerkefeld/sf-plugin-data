@@ -98,7 +98,7 @@ const chain = ({
   p,
   space = 'default',
   formulaName = 'FullName__c',
-  formulaExpression = `upper(&quot;${p}FirstName__c&quot;) || &#39;-&#39; || ${p}LastName__c`,
+  formulaExpression = `upper("${p}FirstName__c") || '-' || ${p}LastName__c`,
   sqlFilterExpression = `${p}FirstName__c = 'x'`,
 }) => {
   const fields = ['UnifiedRecordId__c', `${p}FirstName__c`, `${p}LastName__c`, `${p}Amount__c`];
@@ -151,12 +151,15 @@ test('the probe transform (load, join, formula, filter, output on DLOs) is trans
   const nodes = result.document.definition.definition.nodes;
   assert.equal(result.document.definition.name, 'ds2_CliStl');
   assert.equal(nodes.LOAD_DATASET0.parameters.sampleDetails.dataspace, SPACE);
-  // DLO fields keep their names; the escaped expression is written back unchanged.
-  assert.deepEqual(nodes.FORMULA0.parameters, probe.stored.nodes.FORMULA0.parameters);
+  // DLO fields keep their names; the escaped expression (as an older retrieve wrote the GET) is
+  // written plain, since Salesforce never decodes entities.
+  const plain = clone(probe.stored.nodes);
+  plain.FORMULA0.parameters.fields[0].formulaExpression = `upper("R.Name__c") || '-' || Name__c`;
+  assert.deepEqual(nodes.FORMULA0.parameters, plain.FORMULA0.parameters);
   assert.deepEqual(nodes.FILTER0.parameters, probe.stored.nodes.FILTER0.parameters);
   const back = translateDocument(result.document, to('default', SPACE));
   assert.deepEqual(back.unresolved, []);
-  assert.deepEqual(back.document.definition.definition.nodes, probe.stored.nodes);
+  assert.deepEqual(back.document.definition.definition.nodes, plain);
 });
 
 /**
@@ -188,8 +191,8 @@ test('default to dataspace2: the probe on standard DMOs, a qualified formula fie
   assert.deepEqual(after.JOIN0.parameters.leftKeys, ['ParentId__c']);
   assert.deepEqual(after.JOIN0.parameters.rightKeys, ['Id__c']);
   const formula = after.FORMULA0.parameters.fields[0];
-  // The qualified field is placed by the right side; the form stays HTML-escaped.
-  assert.equal(formula.formulaExpression, 'upper(&quot;R.Name__c&quot;) || &#39;-&#39; || Name__c');
+  // The qualified field is placed by the right side; the expression is written plain.
+  assert.equal(formula.formulaExpression, `upper("R.Name__c") || '-' || Name__c`);
   assert.equal(formula.name, 'NameUp__c');
   assert.equal(after.FILTER0.parameters.filterExpressions[0].field, 'Amount__c');
   assert.equal(after.OUTPUT0.parameters.fieldsMappings[0].sourceField, 'Id__c');
@@ -224,10 +227,7 @@ test('default to dataspace2: formula, filter, sqlFilter, aggregate and appendV2 
   const nodes = result.document.definition.definition.nodes;
   assert.equal(nodes.LOAD0.parameters.dataset.name, 'ds2_Individual__dlm');
   const formula = nodes.FORMULA0.parameters.fields[0];
-  assert.equal(
-    formula.formulaExpression,
-    'upper(&quot;FirstName__c&quot;) || &#39;-&#39; || LastName__c',
-  );
+  assert.equal(formula.formulaExpression, `upper("FirstName__c") || '-' || LastName__c`);
   // A new column named in the source spelling follows the renamed fields.
   assert.equal(formula.name, 'FullName__c');
   assert.equal(formula.label, 'NameUp');
@@ -284,7 +284,7 @@ test('dataspace2 to default on a unified output: references get ssot__, added co
   assert.equal(nodes.LOAD0.parameters.dataset.name, 'UnifiedssotIndividualB__dlm');
   assert.equal(
     nodes.FORMULA0.parameters.fields[0].formulaExpression,
-    'upper(&quot;ssot__FirstName__c&quot;) || &#39;-&#39; || ssot__LastName__c',
+    `upper("ssot__FirstName__c") || '-' || ssot__LastName__c`,
   );
   assert.equal(nodes.FILTER0.parameters.filterExpressions[0].field, 'ssot__Amount__c');
   assert.equal(nodes.SQLFILTER0.parameters.sqlFilterExpression, "ssot__FirstName__c = 'x'");
@@ -296,7 +296,7 @@ test('dataspace2 to default on a unified output: references get ssot__, added co
   ]);
 });
 
-test('HTML-escaped expressions are read unescaped and written back escaped; a mixed form is refused', () => {
+test('HTML-escaped expressions (an older retrieve) are read unescaped and written plain; a mixed form is refused', () => {
   const escaped = chain({
     object: 'ssot__Individual__dlm',
     p: 'ssot__',
@@ -307,7 +307,19 @@ test('HTML-escaped expressions are read unescaped and written back escaped; a mi
   assert.deepEqual(result.unresolved, []);
   assert.equal(
     result.document.definition.definition.nodes.SQLFILTER0.parameters.sqlFilterExpression,
-    'Amount__c &gt; 1 AND &quot;FirstName__c&quot; &lt;&gt; &#39;a&amp;b&#39;',
+    `Amount__c > 1 AND "FirstName__c" <> 'a&b'`,
+  );
+  // A plain expression keeps an entity inside a text as data.
+  const literal = chain({
+    object: 'ssot__Individual__dlm',
+    p: 'ssot__',
+    sqlFilterExpression: "ssot__FirstName__c != '&amp;'",
+  });
+  const kept = translateDocument(literal, to(SPACE));
+  assert.deepEqual(kept.unresolved, []);
+  assert.equal(
+    kept.document.definition.definition.nodes.SQLFILTER0.parameters.sqlFilterExpression,
+    "FirstName__c != '&amp;'",
   );
   const mixed = chain({
     object: 'ssot__Individual__dlm',
@@ -389,6 +401,6 @@ test('an expression name the translation cannot place exactly is refused', () =>
   );
   assert.equal(
     unknown.document.definition.definition.nodes.FORMULA0.parameters.fields[0].formulaExpression,
-    'upper(&quot;R.ssot__Name__c&quot;) || Name__c',
+    'upper("R.ssot__Name__c") || Name__c',
   );
 });

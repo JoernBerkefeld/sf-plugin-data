@@ -438,6 +438,11 @@ export async function operateNativeDataGraph(
       } catch (error) {
         if (error instanceof NativeGraphProcessingRequired) return processingRequired('update');
         // Salesforce keeps the old join of a PUT that changes it: refused before any write.
+        if (error instanceof DataGraphError && error.code === 'HTML_ESCAPED_FILE')
+          return {
+            ...blocked(error.code, explanationOf(error) ?? error.message),
+            target: 'present',
+          };
         if (error instanceof DataGraphError && error.code === 'DATA_GRAPH_JOIN_CHANGE')
           return {
             ...blocked(

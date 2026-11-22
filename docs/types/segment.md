@@ -39,7 +39,7 @@ SELECT ssot__Individual__dlm.ssot__Id__c FROM ssot__Individual__dlm WHERE ssot__
 
 - Deploy, delete and `--changed-since` join the JSON with exactly one SQL file per model. The JSON or any of its SQL files selects the segment. A missing or extra `<Name>.segment.*` file, or a `sql` key left in the JSON, is refused with `INVALID_SOURCE`.
 - A model name starts with a letter or digit and holds only letters, digits and underscores; two model names may not differ only in letter case (`INVALID_SEGMENT_DOCUMENT`).
-- Salesforce returns the model SQL HTML-encoded (`&#39;` for `'`, `&lt;` for `<`); retrieve decodes it, so the SQL file holds plain SQL, and the read after a deploy compares the decoded SQL with the file. Deploy sends the plain SQL, which Salesforce stores as sent.
+- The SQL file holds plain SQL as Salesforce stores it: the plugin asks Salesforce for plain text, and the read after a deploy compares that SQL with the file. Deploy sends the plain SQL, which Salesforce stores as sent.
 - A repeat retrieve of an unchanged segment writes nothing (`unchanged`). With `--overwrite` the SQL file of a model the segment no longer has is removed.
 - The plugin checks the structure only: the keys above, plain text values and a list of models with a name and SQL. The SQL, the model names and whether the DMO suits the segment are not checked locally; the file is sent as written and Salesforce decides. Salesforce requires every SQL column fully qualified as `Table.column` with the DMO API name as the table (for example `ssot__Individual__dlm.ssot__Id__c`) and refuses unqualified columns and table aliases.
 - The lookback (`lookbackPeriod`) is sent as written; Salesforce decides which periods it takes.
@@ -83,7 +83,7 @@ A segment built in the segment canvas (`segmentType` `UI`) has no SQL files. Its
 "lookbackPeriod": "P90D"
 ```
 
-- Salesforce returns the criteria as an HTML-encoded JSON string; retrieve decodes it, and deploy sends it back as a plain JSON string with `segmentCreationFlow` `Headless`, which the API requires.
+- Salesforce returns the criteria as a JSON string (the plugin asks for plain text); retrieve stores it as a JSON object, and deploy sends it back as a plain JSON string with `segmentCreationFlow` `Headless`, which the API requires.
 - The criteria are not checked locally; Salesforce decides. It adds its own keys to the stored criteria (`selfReference`, `subjectFieldDataType` and similar). A deploy is confirmed when every key of the file holds the same value in the org; retrieve afterwards to keep the stored form, and a repeat deploy of that file is `unchanged`.
 - Salesforce refuses a PATCH while the segment is still `PROCESSING` after a create (HTTP 403 `ENTITY_SAVE_ERROR`); deploy again once it is `ACTIVE`.
 - Criteria that are not a JSON object are retrieved as-is (`UNSUPPORTED_SEGMENT_VARIANT`). A key the plugin does not know (for example exclusion criteria) stays in the file and is refused on deploy. Criteria over related objects may be refused by Salesforce.
@@ -185,7 +185,7 @@ A segment belongs to one data space, named as a string in `c__dataSpace`. Its DM
 - Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a UI, Waterfall or SQL (DBT) segment file of another data space.
   - Its name, its DMO, the DMO and field names in its criteria and its Waterfall children are renamed by rule (`Audience` to `ds2_Audience`, `ssot__Individual__dlm` to `ds2_Individual__dlm`); compared values stay.
   - In a DBT segment, every model's SQL is renamed table by table and column by column; texts, comments and your own names (aliases, `WITH` blocks) stay. A name it cannot place exactly refuses the deploy before any write (`CROSS_DATASPACE_UNRESOLVED`), with the SQL file, line and column.
-  - SQL holding an HTML entity such as `&#39;` outside texts and comments is refused (`CROSS_DATASPACE_UNRESOLVED`): it is a still-encoded copy, written by an older plugin version. Retrieve the segment again.
+  - SQL holding an HTML entity such as `&#39;` outside texts and comments is refused (`CROSS_DATASPACE_UNRESOLVED`): write the character itself. If a fresh retrieve still shows the entity, Salesforce stores it that way: write the character itself in the file, or fix it in Data Cloud.
   - After the deploy the translated JSON and SQL files are written under the new name. See [Deploy from another data space](../../README.md#deploy-from-another-data-space-only-if-you-have-more-than-one-data-space).
 
 See [Data spaces](../../README.md#data-spaces) for the general rules.
