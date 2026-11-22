@@ -143,6 +143,40 @@ test('a column without a table in front: placed when every table agrees, else re
   assert.match(refused('SELECT ssot__Id__c')[0].reason, /no table of this query can own/u);
 });
 
+test('an ORDER BY after a set operation reads the first branch, not the tables of the last', () => {
+  // Towards default the unified output of the first branch gets ssot__ back while the DLO of the
+  // last branch keeps its column: the ORDER BY follows the first branch.
+  const context = to('default', SPACE);
+  assert.equal(
+    clean(
+      'SELECT u.Id__c FROM ds2_UnifiedIndividualB__dlm u UNION ALL SELECT s.Id__c FROM SyntheticSrc__dll s ORDER BY Id__c',
+      context,
+    ),
+    'SELECT u.ssot__Id__c FROM UnifiedssotIndividualB__dlm u UNION ALL SELECT s.Id__c FROM SyntheticSrc__dll s ORDER BY ssot__Id__c',
+  );
+  // A first-branch alias of that name is followed as written.
+  assert.equal(
+    clean(
+      'SELECT u.Id__c AS Key__c FROM ds2_UnifiedIndividualB__dlm u UNION ALL SELECT s.Id__c FROM SyntheticSrc__dll s ORDER BY Key__c',
+      context,
+    ),
+    'SELECT u.ssot__Id__c AS Key__c FROM UnifiedssotIndividualB__dlm u UNION ALL SELECT s.Id__c FROM SyntheticSrc__dll s ORDER BY Key__c',
+  );
+  // A later-branch alias that is a plain column of the first branch follows that column.
+  assert.equal(
+    clean(
+      'SELECT i.ssot__Id__c FROM ssot__Individual__dlm i UNION ALL SELECT j.ssot__FirstName__c AS ssot__Id__c FROM ssot__Individual__dlm j ORDER BY ssot__Id__c',
+    ),
+    'SELECT i.Id__c FROM ds2_Individual__dlm i UNION ALL SELECT j.FirstName__c AS ssot__Id__c FROM ds2_Individual__dlm j ORDER BY Id__c',
+  );
+  // A name the first branch does not put out is refused, even when a last-branch table has it.
+  const text =
+    'SELECT u.Id__c FROM ds2_UnifiedIndividualB__dlm u UNION ALL SELECT s.Id__c FROM SyntheticSrc__dll s ORDER BY Name__c';
+  const [missing] = refused(text, context);
+  assert.equal(missing.at, `X.sql line 1:${text.lastIndexOf('Name__c') + 1}`);
+  assert.match(missing.reason, /first branch puts out no column of this name/u);
+});
+
 test('names it cannot place exactly are refused with their position, never guessed', () => {
   const [unknown] = refused('SELECT q.ssot__Id__c FROM ssot__Individual__dlm');
   assert.equal(unknown.at, 'X.sql line 1:10');

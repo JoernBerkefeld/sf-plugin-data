@@ -1676,7 +1676,7 @@ function translateDcsql(
         : transformObject(`${nodeAt}.relation_name`, relation, recorder);
     // A relation_name that names no output object is an intermediate model: its columns land by
     // name in that relation, whose fields other nodes read by the relation's own rule, so each
-    // column is checked against that rule (a DLO relation keeps every name).
+    // column is checked against that rule (a DLO or custom DMO relation keeps every name).
     const lineage = placedRelation?.lineage;
     const fields =
       relation === undefined
@@ -1686,7 +1686,7 @@ function translateDcsql(
               const placed = recorder.placeLineage(lineage, name);
               return 'reason' in placed ? undefined : placed;
             },
-            fieldsChange: lineage !== 'dlo',
+            fieldsChange: lineage !== 'dlo' && lineage?.kind !== 'custom',
           });
     if (relation === undefined)
       recorder.unresolved.push({

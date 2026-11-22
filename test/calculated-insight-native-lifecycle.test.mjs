@@ -865,3 +865,17 @@ test('a file holding an HTML-escaped copy of the org label is refused before any
   const update = await deploy(other, file({ displayName: 'Synthetic &amp; native' }));
   assert.equal(update.outcome, 'updated');
 });
+
+test('preview refuses SQL that is HTML-escaped only inside a comment', async () => {
+  // The SQL check never reads comments; the comparison with the org's text still does.
+  const result = await preflightCalculatedInsightDeploy(
+    file({ expression: `${sql} -- a &gt; b` }),
+    connection,
+    version,
+    'default',
+    { context: org(raw({ expression: `${sql} -- a > b` })).context },
+  );
+  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.diagnostics[0].code, 'HTML_ESCAPED_FILE');
+  assert.match(result.diagnostics[0].message, /HTML-escaped text at expression/u);
+});

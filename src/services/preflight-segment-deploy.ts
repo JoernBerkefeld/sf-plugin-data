@@ -150,7 +150,17 @@ export async function preflightSegmentDeploy(
       current.c__dataSpace !== desired.c__dataSpace
     )
       return result('blocked', 'unknown', 'SEGMENT_TARGET_IDENTITY_MISMATCH');
-    refuseEscapedCopy(desired, current, (code) => new SegmentError(code));
+    // The segment was read: an escaped copy is refused against a present target.
+    try {
+      refuseEscapedCopy(desired, current, (code) => new SegmentError(code));
+    } catch (error) {
+      return result(
+        'blocked',
+        'present',
+        error instanceof SegmentError ? error.code : 'SEGMENT_ACQUISITION_FAILED',
+        error,
+      );
+    }
     return carriesDefinition(current, desired)
       ? result('unchanged', 'present')
       : withNotice(result('update', 'present'), current);

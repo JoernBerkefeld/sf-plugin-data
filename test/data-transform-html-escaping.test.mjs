@@ -431,3 +431,25 @@ test('an update of a file holding an HTML-escaped copy of the org label is refus
     false,
   );
 });
+
+test('an update of a file whose SQL is HTML-escaped only inside a comment is refused', async () => {
+  // The entity sits in a comment, which the SQL check never reads; the org comparison still does.
+  const stored = dcsqlInput('SELECT s.Id__c AS Id__c FROM Src__dll s -- a > b');
+  const escaped = dcsqlInput('SELECT s.Id__c AS Id__c FROM Src__dll s -- a &gt; b');
+  const h = harness(get(stored));
+  await assert.rejects(
+    preflightDataTransformDeploy(file(escaped), { operation: 'update', targetId: id }, h.client),
+    (error) => {
+      assert.equal(error.code, 'HTML_ESCAPED_FILE');
+      assert.match(
+        error.message,
+        /HTML-escaped text at definitions\[0\]\.manifest\.nodes\..+\.compiled_code/u,
+      );
+      return true;
+    },
+  );
+  assert.equal(
+    h.calls.some(([op]) => op === 'validate'),
+    false,
+  );
+});

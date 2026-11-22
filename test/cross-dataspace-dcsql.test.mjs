@@ -400,6 +400,74 @@ test('an output alias reused in ORDER BY follows its field; WHERE and GROUP BY r
 });
 
 const nodeOf = (document) => document.definition.definitions[0].manifest.nodes['model.input1'];
+/**
+ * Translate a DCSQL transform writing into the dataspace2 unified output back to default.
+ * @param {string} sql The node's compiled_code.
+ * @returns {object} Translation.
+ */
+const into = (sql) =>
+  translateDocument(
+    intoObject(sql, 'ds2_UnifiedIndividualB__dlm', ['Id__c'], SPACE),
+    to('default', SPACE),
+  );
+/**
+ * A DCSQL transform file whose node is an intermediate model writing into a relation.
+ * @param {string} relation The node's relation_name.
+ * @param {string} [sql] The node's compiled_code.
+ * @returns {object} Transform file.
+ */
+const staged = (relation, sql = 'SELECT * FROM SyntheticSrc__dll') => {
+  const file = dcsqlFile(sql);
+  nodeOf(file).relation_name = relation;
+  return file;
+};
+
+test('a GROUP BY name equal to a renamed output alias is refused; the expression itself is placed', () => {
+  // GROUP BY reads a table column of that name when one exists and the alias otherwise.
+  // An alias over another column or an expression is refused; one over the column of its own
+  // name is not (see the ORDER BY test above).
+  for (const sql of [
+    'SELECT UPPER(s.Name__c) AS Id__c FROM SyntheticSrc__dll s GROUP BY Id__c',
+    'SELECT s.Name__c AS Id__c FROM SyntheticSrc__dll s GROUP BY Id__c',
+  ]) {
+    const refused = into(sql);
+    assert.deepEqual(unresolvedAt(refused), [`${SQL} line 1:${sql.lastIndexOf('Id__c') + 1}`], sql);
+    assert.match(refused.unresolved[0].reason, /GROUP BY Id__c reads a table column.*ssot__Id__c/u);
+  }
+  const grouped = into(
+    'SELECT UPPER(s.Name__c) AS Id__c FROM SyntheticSrc__dll s GROUP BY UPPER(s.Name__c)',
+  );
+  assert.deepEqual(grouped.unresolved, []);
+  assert.equal(
+    sqlOf(grouped.document),
+    'SELECT UPPER(s.Name__c) AS ssot__Id__c FROM SyntheticSrc__dll s GROUP BY UPPER(s.Name__c)',
+  );
+});
+
+test('a * into an intermediate custom DMO is kept; into a standard DMO copy it is refused', () => {
+  // A custom DMO keeps every field name, so the DLO's columns land in the same fields.
+  const custom = translateDocument(
+    staged('ds2_Stage__dlm'),
+    to('default', SPACE, { customDmos: new Set(['ds2_Stage__dlm']) }),
+  );
+  assert.deepEqual(custom.unresolved, []);
+  assert.equal(sqlOf(custom.document), 'SELECT * FROM SyntheticSrc__dll');
+  assert.equal(nodeOf(custom.document).relation_name, 'Stage__dlm');
+  const there = translateDocument(staged('Stage__dlm'), to(SPACE));
+  assert.deepEqual(there.unresolved, []);
+  assert.equal(nodeOf(there.document).relation_name, 'ds2_Stage__dlm');
+  // A standard DMO copy drops ssot__ from its fields: refused.
+  const standard = translateDocument(staged('ssot__Account__dlm'), to(SPACE));
+  assert.deepEqual(unresolvedAt(standard), [`${SQL} line 1:8`]);
+  assert.match(standard.unresolved[0].reason, /columns of a DLO, which keep their names/u);
+  // A * over a DMO into a custom DMO is still refused: its columns can change.
+  const dmo = translateDocument(
+    staged('Stage__dlm', 'SELECT * FROM ssot__Individual__dlm'),
+    to(SPACE),
+  );
+  assert.deepEqual(unresolvedAt(dmo), [`${SQL} line 1:8`]);
+  assert.match(dmo.unresolved[0].reason, /table that is not a DLO/u);
+});
 
 test('a DCSQL node whose relation_name names no output object is an intermediate model', () => {
   // Its columns land by name in its relation; a DLO relation keeps its name and its fields, so an

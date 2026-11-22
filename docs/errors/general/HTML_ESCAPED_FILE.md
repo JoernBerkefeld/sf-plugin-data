@@ -16,6 +16,8 @@ Before a deploy writes an existing component, the plugin compares each text of t
 
 The check is narrow: a text that equals the org's text (also one that holds an entity Salesforce stores itself) or that decodes to anything else is never refused. A new component (create) is not checked, since there is no org text to compare with.
 
+This also refuses a deliberate change from a character to its entity, for example from the org's `A & B` to the literal text `A &amp; B`. The plugin cannot tell that change from an escaped copy, so it never sends it. Make such a change in Data Cloud.
+
 ## Why the plugin stops
 
 Deploying the file would store the entities as literal characters (`AT&amp;T` instead of `AT&T`), and every later retrieve would read them back that way.

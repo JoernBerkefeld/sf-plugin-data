@@ -69,6 +69,8 @@ type Scope = {
   sources: Source[];
   aliases: Set<string>;
   aliasUses?: Map<string, number[]>;
+  /** The ordering clauses after a set operation: uses of names that are no alias, kept apart. */
+  plainUses?: Map<string, number[]>;
   parent?: Scope;
 };
 
@@ -80,11 +82,15 @@ type Scope = {
 type Columns = {
   named: Map<string, FieldAnswer>;
   stars: Source[];
-  names?: Array<{ token: number; aliased: boolean }>;
+  names?: Array<{ token: number; aliased: boolean; ownColumn?: boolean }>;
   /** Token indices of each alias's uses after the select list of its block (alias lowercase). */
   aliasUses?: Map<string, number[]>;
   /** The alias uses of the ordering clauses only (ORDER BY, SORT BY, DISTRIBUTE BY, CLUSTER BY). */
   orderUses?: Map<string, number[]>;
+  /** The other column uses of the ordering clauses after a set operation (name lowercase). */
+  plainOrderUses?: Map<string, number[]>;
+  /** The uses of each alias in GROUP BY, which reads a table column of that name first. */
+  groupUses?: Map<string, number[]>;
   starAt?: Array<{ token: number; sources: Source[] }>;
 };
 
@@ -97,6 +103,8 @@ type Collector = {
   unresolved: Map<number, string>;
   seen: Set<number>;
   userNames: Set<number>;
+  /** A use after a set operation (token index) to the first-branch column it reads. */
+  follows: Map<number, number>;
 };
 
 const clauseWords = new Set([
@@ -297,6 +305,7 @@ class SqlAnalysis {
     unresolved: new Map(),
     seen: new Set(),
     userNames: new Set(),
+    follows: new Map(),
   };
   /** The columns the outermost query of each statement puts out. */
   public readonly statements: Columns[] = [];
@@ -438,6 +447,7 @@ class SqlAnalysis {
             unresolved: new Map(),
             seen: new Set(),
             userNames: new Set(),
+            follows: new Map(),
           };
           const anchor = this.query(p + 1, close, outer, visible);
           this.out = real;
@@ -492,7 +502,7 @@ class SqlAnalysis {
       }
     parts.push([start, to]);
     let first: Columns | undefined;
-    for (const [begin, end] of parts) {
+    for (const [index, [begin, end]] of parts.entries()) {
       let columns: Columns;
       if (this.isPunct(begin, '(', end) && this.holdsQuery(begin)) {
         const close = this.match.get(begin)!;
@@ -500,9 +510,16 @@ class SqlAnalysis {
         if (close + 1 < end)
           this.expression(close + 1, end, outer ?? { sources: [], aliases: new Set() }, ctes);
       } else if (this.upper(begin, end) === 'SELECT')
-        columns = this.selectBlock(begin, end, outer, ctes);
+        columns = this.selectBlock(
+          begin,
+          end,
+          outer,
+          ctes,
+          index > 0 && index === parts.length - 1,
+        );
       else columns = this.expressionQuery(begin, end, outer, ctes);
-      if (first && columns.orderUses) this.setOrderUses(first, columns.orderUses);
+      if (first && (columns.orderUses || columns.plainOrderUses))
+        this.setOrderUses(first, columns.orderUses ?? new Map(), columns.plainOrderUses);
       first ??= columns;
     }
     return first!;
@@ -511,29 +528,57 @@ class SqlAnalysis {
   /**
    * The ORDER BY (SORT BY, …) at the end of a set operation reads the columns the operation puts
    * out, which its first branch names, not the aliases of the last branch it is written in. A use
-   * of a last-branch alias the first branch also has as an alias follows that one; any other is
-   * not placed.
+   * of a last-branch alias, or of any other name, follows the column of that name the first
+   * branch puts out (its alias, or its column), never a table of the last branch; a name the
+   * first branch does not put out is not placed.
    * @param {Columns} first The columns of the first branch, changed in place.
    * @param {ReadonlyMap<string, number[]>} uses Alias uses in the trailing clauses (token indices).
+   * @param {ReadonlyMap<string, number[]>} [plainUses] The other names in those clauses.
    */
-  private setOrderUses(first: Columns, uses: ReadonlyMap<string, number[]>): void {
+  private setOrderUses(
+    first: Columns,
+    uses: ReadonlyMap<string, number[]>,
+    plainUses?: ReadonlyMap<string, number[]>,
+  ): void {
+    const firstNames = new Map<string, { token: number; aliased: boolean }>();
+    for (const entry of first.names ?? []) {
+      const name = (tokenName(this.tokens[entry.token]) ?? '').toLowerCase();
+      if (!firstNames.has(name)) firstNames.set(name, entry);
+    }
     const firstAliases = new Set(
       (first.names ?? [])
         .filter((entry) => entry.aliased)
         .map((entry) => (tokenName(this.tokens[entry.token]) ?? '').toLowerCase()),
     );
+    for (const [name, indices] of plainUses ?? []) {
+      const output = firstNames.get(name);
+      for (const index of indices)
+        if (output?.aliased) {
+          this.out.userNames.add(index);
+          first.aliasUses ??= new Map();
+          first.aliasUses.set(name, [...(first.aliasUses.get(name) ?? []), index]);
+        } else if (output) this.out.follows.set(index, output.token);
+        else if (!this.out.unresolved.has(index))
+          this.out.unresolved.set(
+            index,
+            'after a set operation (UNION, …) this clause reads the columns the first branch puts out, and the first branch puts out no column of this name, so its spelling cannot be placed: name a column the first branch puts out',
+          );
+    }
     for (const [name, indices] of uses) {
       if (firstAliases.has(name)) {
         first.aliasUses ??= new Map();
         first.aliasUses.set(name, [...(first.aliasUses.get(name) ?? []), ...indices]);
         continue;
       }
+      // A plain column of the first branch: the use is spelled like that column.
+      const output = firstNames.get(name);
       for (const index of indices) {
         this.out.userNames.delete(index);
-        if (!this.out.unresolved.has(index))
+        if (output) this.out.follows.set(index, output.token);
+        else if (!this.out.unresolved.has(index))
           this.out.unresolved.set(
             index,
-            'after a set operation (UNION, …) this clause reads the columns the first branch names, and this name is an alias of a later branch only, so its spelling cannot be placed: give the first branch the same alias',
+            'after a set operation (UNION, …) this clause reads the columns the first branch puts out, and the first branch puts out no column of this name (it is an alias of a later branch only), so its spelling cannot be placed: give the first branch the same alias',
           );
       }
     }
@@ -544,6 +589,7 @@ class SqlAnalysis {
     to: number,
     outer: Scope | undefined,
     ctes: readonly Cte[],
+    trailing = false,
   ): Columns {
     const clauses: Array<{ word: string; at: number }> = [];
     for (let p = from + 1; p < to; p = this.skip(p)) {
@@ -561,10 +607,23 @@ class SqlAnalysis {
     // Spark reads a name equal to a select alias as that alias only in the clauses above the
     // projection (ORDER BY, SORT BY, DISTRIBUTE BY, CLUSTER BY, and HAVING, which is read against
     // the aggregate's output first; QUALIFY where the dialect has it); there its uses are recorded. WHERE, GROUP BY (a table column
-    // wins over an alias there) and WINDOW read the tables' columns.
-    // The ordering clauses are kept apart: after a set operation they read its output instead.
+    // wins over an alias there) and WINDOW read the tables' columns. A GROUP BY name equal to an
+    // alias is recorded too: when the alias is renamed as an output column over anything but the
+    // column of its own name, which of the two it reads is not known and it is refused (see
+    // outputColumn).
+    // The ordering clauses are kept apart: after a set operation (in its last branch, `trailing`)
+    // they read its output instead, so no name there is placed by this branch's tables.
     scope.aliasUses = new Map();
-    const ordering: Scope = { ...scope, aliasUses: new Map() };
+    const ordering: Scope = trailing
+      ? {
+          sources: [],
+          aliases: scope.aliases,
+          aliasUses: new Map(),
+          plainUses: new Map(),
+          ...(outer ? { parent: outer } : {}),
+        }
+      : { ...scope, aliasUses: new Map() };
+    const groupUses = new Map<string, number[]>();
     const tablesOnly: Scope = { ...scope, aliases: new Set() };
     delete tablesOnly.aliasUses;
     for (const [index, clause] of clauses.entries()) {
@@ -575,13 +634,48 @@ class SqlAnalysis {
           : ordering
         : tablesOnly;
       this.expression(clause.at + 1, endOf(index), inScope, ctes);
+      if (clause.word === 'GROUP')
+        this.aliasNames(clause.at + 1, endOf(index), scope.aliases, groupUses);
     }
     const orderUses = ordering.aliasUses!;
     for (const [name, indices] of orderUses)
       scope.aliasUses.set(name, [...(scope.aliasUses.get(name) ?? []), ...indices]);
     if (scope.aliasUses.size > 0) columns.aliasUses = scope.aliasUses;
     if (orderUses.size > 0) columns.orderUses = orderUses;
+    if (ordering.plainUses && ordering.plainUses.size > 0)
+      columns.plainOrderUses = ordering.plainUses;
+    if (groupUses.size > 0) columns.groupUses = groupUses;
     return columns;
+  }
+
+  /**
+   * Record the names of a range written alone (no qualifier, no call) that equal a select alias.
+   * @param {number} from First position of the range.
+   * @param {number} to End of the range (exclusive).
+   * @param {ReadonlySet<string>} aliases The select aliases of the block (lowercase).
+   * @param {Map<string, number[]>} uses Uses per alias (token indices), changed in place.
+   */
+  private aliasNames(
+    from: number,
+    to: number,
+    aliases: ReadonlySet<string>,
+    uses: Map<string, number[]>,
+  ): void {
+    for (
+      let p = from;
+      p < to;
+      p = this.isPunct(p, '(', to) && this.holdsQuery(p) ? this.skip(p) : p + 1
+    ) {
+      if (
+        !this.isName(p, to) ||
+        this.isPunct(p - 1, '.') ||
+        this.isPunct(p + 1, '.', to) ||
+        this.isPunct(p + 1, '(', to)
+      )
+        continue;
+      const name = this.nameAt(p).toLowerCase();
+      if (aliases.has(name)) uses.set(name, [...(uses.get(name) ?? []), this.sig[p]]);
+    }
   }
 
   private fromClause(
@@ -762,8 +856,25 @@ class SqlAnalysis {
         this.keep(last, hasAs || !nameLike(alias));
         scope.aliases.add(alias.toLowerCase());
         columns.named.set(alias.toLowerCase(), { owns: true, name: alias });
-        (columns.names ??= []).push({ token: this.sig[last], aliased: true });
-        this.expression(begin, hasAs ? before : last, scope, ctes);
+        // `s.Id__c AS Id__c`: the alias names the column of its own name.
+        const exprEnd = hasAs ? before : last;
+        const columnAt =
+          exprEnd === begin + 1 && this.isName(begin, exprEnd)
+            ? begin
+            : exprEnd === begin + 3 &&
+                this.isName(begin, exprEnd) &&
+                this.isPunct(begin + 1, '.', exprEnd) &&
+                this.isName(begin + 2, exprEnd)
+              ? begin + 2
+              : undefined;
+        const ownColumn =
+          columnAt !== undefined && this.nameAt(columnAt).toLowerCase() === alias.toLowerCase();
+        (columns.names ??= []).push({
+          token: this.sig[last],
+          aliased: true,
+          ...(ownColumn ? { ownColumn: true } : {}),
+        });
+        this.expression(begin, exprEnd, scope, ctes);
         continue;
       }
       if (this.isPunct(begin, '*', end) && end === begin + 1) {
@@ -869,6 +980,13 @@ class SqlAnalysis {
       // the use follows the alias (see translateSql).
       this.keep(p, true);
       uses.set(field.toLowerCase(), [...(uses.get(field.toLowerCase()) ?? []), this.sig[p]]);
+      return { owns: true, name: field };
+    }
+    const plain = scope.plainUses;
+    if (plain) {
+      // After a set operation: placed by the first branch's columns (see setOrderUses).
+      this.keep(p);
+      plain.set(field.toLowerCase(), [...(plain.get(field.toLowerCase()) ?? []), this.sig[p]]);
       return { owns: true, name: field };
     }
     const answers: FieldAnswer[] = [];
@@ -1091,13 +1209,27 @@ export function translateSql(
   }
   if (outputField)
     for (const columns of analysis.statements)
-      for (const { token, aliased } of columns.names ?? []) {
+      for (const { token, aliased, ownColumn } of columns.names ?? []) {
         if (found.unresolved.has(token)) continue;
-        const reason = outputColumn(token, aliased, tokens, found, outputField, columns.aliasUses);
+        // An alias over the column of its own name: GROUP BY reads that column either way.
+        const reason = outputColumn(
+          token,
+          aliased,
+          tokens,
+          found,
+          outputField,
+          columns.aliasUses,
+          ownColumn ? undefined : columns.groupUses,
+        );
         if (reason === undefined) continue;
         found.unresolved.set(token, reason);
         found.edits.delete(token);
       }
+  // A use after a set operation is spelled like the first-branch column it reads.
+  for (const [use, column] of found.follows) {
+    const edit = found.edits.get(column);
+    if (edit && !found.unresolved.has(use)) found.edits.set(use, edit);
+  }
   const rewrites: CrossSpaceRewrite[] = [];
   const unresolved: CrossSpaceUnresolved[] = [];
   const parts = tokens.map((token, index) => {
@@ -1157,6 +1289,7 @@ export function translateSql(
  * @param {Collector} found The analysis result, changed in place.
  * @param {OutputField} outputField The output field of a column name.
  * @param {ReadonlyMap<string, number[]>} [aliasUses] The uses of each alias in its query block.
+ * @param {ReadonlyMap<string, number[]>} [groupUses] The uses of each alias in its GROUP BY.
  * @returns {string | undefined} Why the column cannot be placed, or undefined.
  */
 function outputColumn(
@@ -1166,14 +1299,26 @@ function outputColumn(
   found: Collector,
   outputField: OutputField,
   aliasUses?: ReadonlyMap<string, number[]>,
+  groupUses?: ReadonlyMap<string, number[]>,
 ): string | undefined {
   const from = tokenName(tokens[token]) ?? '';
   const field = outputField(from);
   if (aliased) {
-    if (field && field.name.toLowerCase() !== from.toLowerCase())
+    if (field && field.name.toLowerCase() !== from.toLowerCase()) {
       // The alias and every use of it in its query block (ORDER BY ssot__Id__c) take the new name.
       for (const index of [token, ...(aliasUses?.get(from.toLowerCase()) ?? [])])
         found.edits.set(index, { to: field.name, rule: field.rule });
+      // GROUP BY reads a table column of that name when one exists, else the alias: for an alias
+      // over anything but that column, which one it means is not known, so it cannot follow.
+      for (const index of groupUses?.get(from.toLowerCase()) ?? []) {
+        found.edits.delete(index);
+        if (!found.unresolved.has(index))
+          found.unresolved.set(
+            index,
+            `GROUP BY ${from} reads a table column ${from} when one exists and the select alias ${from} otherwise, while the alias takes the output field's target name ${field.name} in the target data space, so which one it means cannot be placed: group by the expression itself`,
+          );
+      }
+    }
     return undefined;
   }
   const to = found.edits.get(token)?.to ?? from;

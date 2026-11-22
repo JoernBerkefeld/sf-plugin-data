@@ -892,6 +892,8 @@ test('a segment file holding an HTML-escaped copy of the org description is bloc
     expectations: { runtime: { segmentStatus: 'ACTIVE' } },
   }));
   assert.equal(result.outcome, 'blocked');
+  // The segment was read, so the target is present, as the data graph reports it.
+  assert.equal(result.target, 'present');
   assert.equal(result.diagnostics[0].code, 'HTML_ESCAPED_FILE');
   assert.match(result.diagnostics[0].message, /HTML-escaped text at spec\.description/u);
 });

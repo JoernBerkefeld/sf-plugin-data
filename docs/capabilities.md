@@ -501,13 +501,15 @@ Step 3b-2 translates DCSQL transforms: both names, `dataSpaceName`, each manifes
 top-level output columns (first `UNION` branch) are checked against the fields of the output object
 its `relation_name` names: an alias spelled like an output field
 takes the field's target name (`AS ssot__Name__c` becomes `AS Name__c` towards `dataspace2`, its
-uses in `ORDER BY`/`HAVING` follow); a column without an alias is refused unless its target
+uses in `ORDER BY`/`HAVING` follow, and a `GROUP BY` name equal to such a renamed alias is
+refused unless the alias names a column of the same name (`s.Id__c AS Id__c`), since Spark reads it as a table column when one exists and as the alias otherwise); a column without an alias is refused unless its target
 name equals its field's target name (write it with `AS` and the source field name, which then
 follows the field), and so is `*` over a table that is not a DLO, or over a DLO when the output
 fields change. A node whose `relation_name` names no output object is an intermediate model:
 its `relation_name` follows the object rules, and its output columns are checked the same way
 against that relation's fields by the relation's own rule (a DLO relation keeps every name, a
-DMO relation's fields follow its rule, as the nodes reading it see them); a missing or non-string `relation_name` is refused. A node's `config` is kept
+DMO relation's fields follow its rule, as the nodes reading it see them; a custom DMO relation
+keeps its fields, so `*` over a DLO into it is kept); a missing or non-string `relation_name` is refused. A node's `config` is kept
 (`materialized` is the only key retrieve shows); a value holding a name-like part (`__c`,
 `__dlm`, `__dll`, `__cio`, `ssot__`, e.g. `unique_key`) is refused rather than translated, since
 no retrieved transform shows such a key. The DCSQL checks are proven by unit tests only. Also
@@ -536,7 +538,7 @@ user names and stay. A name equal to a select alias reads the alias only in the 
 resolves against the projection (`ORDER BY`, `SORT BY`, `DISTRIBUTE BY`, `CLUSTER BY`, `HAVING`,
 `QUALIFY`); in `WHERE`, `GROUP BY` (a table column wins over an alias there) and `WINDOW` it is
 the table's column; after a set operation the trailing `ORDER BY` reads the first branch's
-aliases, and a name that is an alias of a later branch only is refused. A column alias without `AS` is read only after a complete operand (`)`, a
+aliases and columns, and a name the first branch does not put out is refused. A column alias without `AS` is read only after a complete operand (`)`, a
 number, a text, a quoted name or a word that is no operator keyword such as `NOT`, `OR`, `IS`,
 `BETWEEN`, `EXISTS`, `DIV`), as Salesforce accepts it; such an alias that looks like a name
 still goes through the leftover check below.

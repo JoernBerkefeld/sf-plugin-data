@@ -36,7 +36,8 @@ export const plainTextHeaders: Readonly<Record<string, string>> = Object.freeze(
 
 /**
  * The request with {@link plainTextHeaders} when it goes to a Data 360 (`/ssot/`) route; any
- * other request as it is.
+ * other request as it is. Only `/ssot/` routes get the header: a Data 360 read on any other
+ * route still returns HTML-escaped text.
  * @param {Parameters<Connection['request']>[0]} request Request as built.
  * @returns {Parameters<Connection['request']>[0]} Request to send.
  */
