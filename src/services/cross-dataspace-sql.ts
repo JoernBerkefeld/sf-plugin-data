@@ -665,12 +665,9 @@ class SqlAnalysis {
         (hasAs || (!reservedWords.has(this.upper(last, end)) && operand));
       if (aliased) {
         const alias = this.nameAt(last);
-        if (!hasAs && nameLike(alias))
-          this.refuse(
-            last,
-            'it reads as a column alias without AS but looks like an object or field name, so it is not known whether it is a name to place; write AS before the alias',
-          );
-        else this.keep(last, true);
+        // Salesforce accepts a name-like alias without AS after a complete operand; it is a user
+        // name, but still goes through the leftover check (`COUNT(x) ssot__Bad__c` is refused).
+        this.keep(last, hasAs || !nameLike(alias));
         scope.aliases.add(alias.toLowerCase());
         columns.named.set(alias.toLowerCase(), { owns: true, name: alias });
         this.expression(begin, hasAs ? before : last, scope, ctes);

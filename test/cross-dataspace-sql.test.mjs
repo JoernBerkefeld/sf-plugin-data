@@ -372,16 +372,71 @@ test('a word after an operator keyword is an operand, never a column alias', () 
   );
 });
 
-test('a name-like column alias without AS is refused, not kept as a user name', () => {
+test('a name-like column alias without AS after a complete operand is kept, as Salesforce accepts it', () => {
+  // Proven live (data360-ci-sql-alias-without-as-api68): after `)`, a field and a number.
+  for (const [text, expected] of [
+    [
+      'SELECT COUNT(i.ssot__Id__c) cnt__c FROM ssot__Individual__dlm i',
+      'SELECT COUNT(i.Id__c) cnt__c FROM ds2_Individual__dlm i',
+    ],
+    [
+      'SELECT i.ssot__FirstName__c fn__c FROM ssot__Individual__dlm i',
+      'SELECT i.FirstName__c fn__c FROM ds2_Individual__dlm i',
+    ],
+    [
+      'SELECT COUNT(i.ssot__Id__c) * 1 cnt__c FROM ssot__Individual__dlm i',
+      'SELECT COUNT(i.Id__c) * 1 cnt__c FROM ds2_Individual__dlm i',
+    ],
+    [
+      'SELECT SUM(1) total__c FROM ssot__Individual__dlm',
+      'SELECT SUM(1) total__c FROM ds2_Individual__dlm',
+    ],
+    ["SELECT 'a' txt__c FROM ssot__Individual__dlm", "SELECT 'a' txt__c FROM ds2_Individual__dlm"],
+    [
+      'SELECT COUNT(*) OVER (PARTITION BY ssot__A__c) cnt__c FROM ssot__Individual__dlm',
+      'SELECT COUNT(*) OVER (PARTITION BY A__c) cnt__c FROM ds2_Individual__dlm',
+    ],
+    [
+      'SELECT CAST(i.ssot__Id__c AS STRING) id__c FROM ssot__Individual__dlm i',
+      'SELECT CAST(i.Id__c AS STRING) id__c FROM ds2_Individual__dlm i',
+    ],
+  ])
+    assert.equal(clean(text), expected);
+  // The other direction: towards default.
+  const back = to('default', SPACE, { customDmos: new Set(['ds2_Order__dlm']) });
+  for (const [text, expected] of [
+    [
+      'SELECT COUNT(o.Amount__c) cnt__c FROM ds2_Order__dlm o',
+      'SELECT COUNT(o.Amount__c) cnt__c FROM Order__dlm o',
+    ],
+    [
+      'SELECT o.Amount__c amt__c FROM ds2_Order__dlm o',
+      'SELECT o.Amount__c amt__c FROM Order__dlm o',
+    ],
+    [
+      'SELECT COUNT(o.Amount__c) * 1 cnt__c FROM ds2_Order__dlm o',
+      'SELECT COUNT(o.Amount__c) * 1 cnt__c FROM Order__dlm o',
+    ],
+    ['SELECT SUM(1) total__c FROM ds2_Order__dlm', 'SELECT SUM(1) total__c FROM Order__dlm'],
+  ])
+    assert.equal(clean(text, back), expected);
+});
+
+test('a column alias without AS still holding the old spelling is refused', () => {
   for (const text of [
+    'SELECT COUNT(i.ssot__Id__c) ssot__Bad__c FROM ssot__Individual__dlm i',
+    'SELECT COUNT(i.ssot__Id__c) SSOT__Bad__c FROM ssot__Individual__dlm i',
     'SELECT -i.ssot__A__c ssot__B__c FROM ssot__Individual__dlm i',
-    'SELECT IF(ssot__A__c, 1, 2) ssot__B__c FROM ssot__Individual__dlm',
-    'SELECT COUNT(*) OVER (PARTITION BY ssot__A__c) cnt__c FROM ssot__Individual__dlm',
-    'SELECT CAST(i.ssot__Id__c AS STRING) id__c FROM ssot__Individual__dlm i',
   ]) {
     const [first] = refused(text);
-    assert.match(first.reason, /without AS/u, text);
+    assert.match(first.reason, /still spelled as in default|it holds SSOT__/u, text);
   }
+  // Towards default, another data space's prefix is left over.
+  const [first] = refused(
+    'SELECT COUNT(o.Amount__c) ds2_Bad__c FROM ds2_Order__dlm o',
+    to('default', SPACE, { customDmos: new Set(['ds2_Order__dlm']) }),
+  );
+  assert.match(first.reason, /still spelled as in dataspace2/u);
 });
 
 test('names are read without regard to case: another case of a rule part is refused', () => {

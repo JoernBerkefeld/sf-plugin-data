@@ -358,8 +358,11 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
     the same way. Otherwise write the table or alias in front of it.
   - Texts in single quotes and comments never change. `WITH` block names, aliases and column
     aliases are your names and stay. Double quotes and backticks are names.
-  - Write `AS` before a column alias that looks like a name (`SUM(x) AS total__c`): without
-    `AS` it is refused, because it cannot be told apart from a column to rename.
+  - A column alias works without `AS` after a closing bracket, a field, a number or a text
+    (`SUM(x) total__c`, `i.FirstName__c fn__c`), as Salesforce accepts it. Right after an
+    operator word such as `NOT`, `OR`, `IS`, `BETWEEN … AND` or `EXISTS`, the next name is a
+    column to rename, not an alias: write `AS` there if you mean an alias. An alias still
+    spelled like the old data space (`COUNT(x) ssot__Total__c`) is refused.
   - SQL ignores case, the rules do not: a name with its rule part in another case
     (`SSOT__ID__C`, `Individual__DLM`) is refused. Write `ssot__`, `__c` and `__dlm` in lower case.
   - Salesforce accepts an insight left in the `default` spelling in another data space, then

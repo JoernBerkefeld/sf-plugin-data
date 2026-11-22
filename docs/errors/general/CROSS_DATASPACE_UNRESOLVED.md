@@ -31,7 +31,7 @@ A name that no rule places exactly is never guessed. Examples:
   - A column whose table is not known: a qualifier that names no table of the query, or a table not in the query's `FROM`.
   - A column without a table in front when the tables of the query would spell it differently (for example a custom DMO and an identity resolution output towards `default`). Write the table or alias in front of it.
   - A name in a place the rewrite does not read (for example a function name), or a name still in the old spelling after the rewrite.
-  - A column alias without `AS` that looks like a name (`SUM(x) total__c`): write `SUM(x) AS total__c`.
+  - A column alias without `AS` still spelled like the source data space (`SUM(x) ssot__Total__c`): give it a name without `ssot__` or another data space's prefix. (An alias without `AS` such as `SUM(x) total__c` is fine; only right after an operator word such as `NOT`, `OR` or `AND` is the next name read as a column, so write `AS` there.)
   - A table alias that looks like a name (`FROM ssot__Individual__dlm ssot__Individual__dlm`): use a short alias such as `i`.
   - A name whose rule part is in another case (`SSOT__ID__C`, `Individual__DLM`): SQL ignores the case, the rules do not. Write `ssot__`, `__c`, `__dlm` in lower case.
   - SQL the plugin cannot read exactly: a backslash before a quote in a text, a comment inside a comment, or parentheses that do not match.

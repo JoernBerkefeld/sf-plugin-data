@@ -507,7 +507,8 @@ subquery with its own scope or a table group, `LEFT(`/`RIGHT(` stay functions; `
 (also `RECURSIVE`, read by the columns of their first block), aliases and column aliases are
 user names and stay. A column alias without `AS` is read only after a complete operand (`)`, a
 number, a text, a quoted name or a word that is no operator keyword such as `NOT`, `OR`, `IS`,
-`BETWEEN`, `EXISTS`, `DIV`), and one that looks like a name is refused rather than kept.
+`BETWEEN`, `EXISTS`, `DIV`), as Salesforce accepts it; such an alias that looks like a name
+still goes through the leftover check below.
 Name-likeness and the leftover check ignore case as SQL does; a name whose rule part (`__c`,
 `__dlm`, `__cio`, `__dll`, `ssot__`, `KQ_`, `Unified`, a data space prefix) is in another case
 is refused, not placed. A column is placed by its table through the
