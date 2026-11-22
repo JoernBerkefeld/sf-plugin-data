@@ -360,11 +360,23 @@ test('a word after an operator keyword is an operand, never a column alias', () 
       'SELECT i.A__c DIV B__c FROM ds2_Individual__dlm i',
     ],
     [
+      'SELECT ssot__A__c SIMILAR TO ssot__B__c FROM ssot__Individual__dlm',
+      'SELECT A__c SIMILAR TO B__c FROM ds2_Individual__dlm',
+    ],
+    [
       'SELECT CASE WHEN ssot__A__c = 1 THEN ssot__B__c ELSE ssot__C__c END AS x__c FROM ssot__Individual__dlm',
       'SELECT CASE WHEN A__c = 1 THEN B__c ELSE C__c END AS x__c FROM ds2_Individual__dlm',
     ],
   ])
     assert.equal(clean(text), expected);
+  // Towards default the leftover check cannot catch a missed field, so TO must end no operand.
+  assert.equal(
+    clean(
+      'SELECT LastName__c SIMILAR TO FirstName__c FROM ds2_UnifiedIndividual__dlm',
+      to('default', SPACE),
+    ),
+    'SELECT ssot__LastName__c SIMILAR TO ssot__FirstName__c FROM UnifiedssotIndividual__dlm',
+  );
   // After a complete operand a plain word is an alias; one that is not name-like stays.
   assert.equal(
     clean('SELECT CASE WHEN i.ssot__A__c = 1 THEN 2 END total FROM ssot__Individual__dlm i'),

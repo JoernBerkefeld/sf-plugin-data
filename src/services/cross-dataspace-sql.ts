@@ -189,6 +189,7 @@ export const operatorWords: ReadonlySet<string> = new Set([
   'SIMILAR',
   'SOME',
   'THEN',
+  'TO',
   'WHEN',
   'XOR',
   'ZONE',
