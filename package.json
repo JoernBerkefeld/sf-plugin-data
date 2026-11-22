@@ -62,7 +62,9 @@
     "smoke": "node scripts/run-tests.mjs test/cli.test.mjs",
     "smoke:package": "node scripts/package-smoke.mjs",
     "prepare": "husky || true",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "verify:own-dependencies-latest": "node scripts/verify-own-dependencies-latest.mjs",
+    "preversion": "npm run verify:own-dependencies-latest"
   },
   "publishConfig": {
     "access": "public",
@@ -72,7 +74,8 @@
     "@inquirer/select": "5.2.8",
     "@oclif/core": "4.13.2",
     "@salesforce/core": "8.31.3",
-    "@salesforce/sf-plugins-core": "12.2.0"
+    "@salesforce/sf-plugins-core": "12.2.0",
+    "salesforce-data360-rules": "0.2.0"
   },
   "devDependencies": {
     "@eslint/js": "9.39.4",
