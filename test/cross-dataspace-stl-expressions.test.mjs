@@ -392,3 +392,27 @@ test('an expression name the translation cannot place exactly is refused', () =>
     'upper(&quot;R.ssot__Name__c&quot;) || Name__c',
   );
 });
+
+test('the lineage of each node is worked out once per transform', () => {
+  // A chain of appends, each reading the one before twice: walked again per path, the lineage of
+  // the last node would take 2^40 steps.
+  const nodes = { LOAD0: load('ssot__Individual__dlm', ['ssot__FirstName__c']) };
+  let previous = 'LOAD0';
+  for (let index = 0; index < 40; index++) {
+    const append = clone(probe.validatedOnly.appendV2);
+    append.parameters.fieldMappings = [];
+    append.sources = [previous, previous];
+    previous = `APPEND${index}`;
+    nodes[previous] = append;
+  }
+  const sqlFilter = clone(probe.validatedOnly.sqlFilter);
+  sqlFilter.sources = [previous];
+  sqlFilter.parameters.sqlFilterExpression = "ssot__FirstName__c = 'x'";
+  nodes.SQLFILTER0 = sqlFilter;
+  const result = translateDocument(transformFile(nodes), to(SPACE));
+  assert.deepEqual(result.unresolved, []);
+  assert.equal(
+    result.document.definition.definition.nodes.SQLFILTER0.parameters.sqlFilterExpression,
+    "FirstName__c = 'x'",
+  );
+});

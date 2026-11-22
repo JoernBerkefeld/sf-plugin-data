@@ -370,13 +370,24 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
     fails it about three minutes after activation without a message. So after the rewrite
     every name of the SQL outside texts and comments must be placed, and none may keep the old
     spelling.
+  - A name equal to a column alias reads that alias in `ORDER BY` and `HAVING` (also `SORT BY`,
+    `DISTRIBUTE BY`, `CLUSTER BY`, `QUALIFY`), as Spark reads it. In `WHERE` and `GROUP BY` it
+    reads the table's column. After `UNION`, `ORDER BY` reads the names of the first branch:
+    an alias only a later branch has is refused there.
   - In a DCSQL transform the columns land by name in the fields of the node's output object
-    (`relation_name`). An alias spelled like an output field follows that field
+    (`relation_name`). An alias spelled like an output field follows that field, and so do its
+    uses in `ORDER BY` and `HAVING`
     (`AS ssot__Name__c` becomes `AS Name__c` when the field becomes `Name__c`). A column without
     an alias is refused when its name and its field's name no longer match in the target (an
     output DLO keeps its fields, so `SELECT ssot__Id__c …` into it is refused): write it with
     `AS` and the field name as the source data space spells it. `*` over a table that is not a
     DLO is refused too, and so is `*` over a DLO when the output fields change: list the columns.
+  - A DCSQL node whose `relation_name` names no output object of the transform is an
+    intermediate model: its `relation_name` follows the object rules, and its columns are
+    checked the same way against that object's fields as the other nodes read them (a DLO keeps
+    its fields; a DMO's fields follow its rule). A node without a `relation_name` is refused. A node's `config`
+    (`materialized: table`) is kept, but a value in it that holds an object or field name
+    (`unique_key: Id__c`) is refused.
   - Positions are reported per SQL file, line and column.
 - **Nothing is guessed.** A name no rule places exactly is listed, and the whole deploy is
   refused before any write (`CROSS_DATASPACE_UNRESOLVED`). For example, `ds2_Order__dlm`

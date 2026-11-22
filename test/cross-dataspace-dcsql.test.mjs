@@ -347,12 +347,139 @@ test('a * over a DLO is refused when the output fields change, and kept when the
   assert.equal(sqlOf(kept.document), 'SELECT * FROM SyntheticSrc__dll');
 });
 
-test('a DCSQL node whose relation_name names no output object is refused', () => {
-  const file = dcsqlFile();
-  file.definition.definitions[0].manifest.nodes['model.input1'].relation_name = 'Other__dll';
+test('an output alias reused in ORDER BY follows its field; WHERE and GROUP BY read the table', () => {
+  // The ORDER BY name is the alias (Spark reads select aliases there first), not the column.
+  const ordered = translateDocument(
+    intoObject(
+      'SELECT i.ssot__Id__c AS ssot__Id__c FROM ssot__Individual__dlm i ORDER BY ssot__Id__c',
+      ...ACCOUNT,
+    ),
+    to(SPACE),
+  );
+  assert.deepEqual(ordered.unresolved, []);
+  assert.equal(
+    sqlOf(ordered.document),
+    'SELECT i.Id__c AS Id__c FROM ds2_Individual__dlm i ORDER BY Id__c',
+  );
+  // A WHERE or GROUP BY name equal to an alias is the table's column: the DLO column keeps its
+  // name while the alias and its ORDER BY and HAVING uses take the field's target name.
+  const back = translateDocument(
+    intoObject(
+      "SELECT s.Id__c AS Id__c FROM SyntheticSrc__dll s WHERE Id__c <> 'x' GROUP BY Id__c HAVING Id__c <> 'y' ORDER BY Id__c",
+      'ds2_UnifiedIndividualB__dlm',
+      ['Id__c'],
+      SPACE,
+    ),
+    to('default', SPACE),
+  );
+  assert.deepEqual(back.unresolved, []);
+  assert.equal(
+    sqlOf(back.document),
+    "SELECT s.Id__c AS ssot__Id__c FROM SyntheticSrc__dll s WHERE Id__c <> 'x' GROUP BY Id__c HAVING ssot__Id__c <> 'y' ORDER BY ssot__Id__c",
+  );
+  // After UNION the ORDER BY reads the first branch's names: a use of an alias the first branch
+  // has too follows it; an alias of the last branch only is refused.
+  const union = translateDocument(
+    intoObject(
+      'SELECT i.ssot__Id__c AS ssot__Id__c FROM ssot__Individual__dlm i UNION ALL SELECT i.ssot__Id__c AS ssot__Id__c FROM ssot__Individual__dlm i ORDER BY ssot__Id__c',
+      ...ACCOUNT,
+    ),
+    to(SPACE),
+  );
+  assert.deepEqual(union.unresolved, []);
+  assert.match(sqlOf(union.document), /ORDER BY Id__c$/u);
+  const lastOnly = translateDocument(
+    intoObject(
+      'SELECT i.ssot__Id__c AS ssot__Id__c FROM ssot__Individual__dlm i UNION ALL SELECT i.ssot__Id__c AS Other__c FROM ssot__Individual__dlm i ORDER BY Other__c',
+      ...ACCOUNT,
+    ),
+    to(SPACE),
+  );
+  assert.deepEqual(unresolvedAt(lastOnly), [`${SQL} line 1:147`]);
+  assert.match(lastOnly.unresolved[0].reason, /alias of a later branch only/u);
+});
+
+const nodeOf = (document) => document.definition.definitions[0].manifest.nodes['model.input1'];
+
+test('a DCSQL node whose relation_name names no output object is an intermediate model', () => {
+  // Its columns land by name in its relation; a DLO relation keeps its name and its fields, so an
+  // alias stays and an unaliased column whose name changes is refused.
+  const file = dcsqlFile('SELECT i.ssot__Id__c AS ssot__Id__c FROM ssot__Individual__dlm i');
+  nodeOf(file).relation_name = 'Other__dll';
   const result = translateDocument(file, to(SPACE));
-  assert.deepEqual(unresolvedAt(result), [`${D}.manifest.nodes.model.input1.relation_name`]);
-  assert.match(result.unresolved[0].reason, /names no output object of this definition/u);
+  assert.deepEqual(result.unresolved, []);
+  assert.equal(sqlOf(result.document), 'SELECT i.Id__c AS ssot__Id__c FROM ds2_Individual__dlm i');
+  assert.equal(nodeOf(result.document).relation_name, 'Other__dll');
+  const plain = dcsqlFile('SELECT ssot__Id__c FROM ssot__Individual__dlm');
+  nodeOf(plain).relation_name = 'Other__dll';
+  assert.deepEqual(unresolvedAt(translateDocument(plain, to(SPACE))), [`${SQL} line 1:8`]);
+  // A node reading an intermediate DMO relation and the node writing it agree on its columns:
+  // the writer's alias follows the relation's field rule like the reader's column.
+  const staged = intoObject(
+    'SELECT m.ssot__Id__c AS ssot__Id__c FROM Stage__dlm m',
+    'ssot__Account__dlm',
+    ['ssot__Id__c'],
+  );
+  staged.definition.definitions[0].manifest.nodes['model.stage'] = {
+    compiled_code: 'SELECT i.ssot__Id__c AS ssot__Id__c FROM ssot__Individual__dlm i',
+    config: { materialized: 'table' },
+    name: 'stage',
+    relation_name: 'Stage__dlm',
+  };
+  const chained = translateDocument(staged, to(SPACE));
+  assert.deepEqual(chained.unresolved, []);
+  const chainedNodes = chained.document.definition.definitions[0].manifest.nodes;
+  assert.equal(
+    chainedNodes['model.stage'].compiled_code,
+    'SELECT i.Id__c AS Id__c FROM ds2_Individual__dlm i',
+  );
+  assert.equal(chainedNodes['model.stage'].relation_name, 'ds2_Stage__dlm');
+  assert.equal(sqlOf(chained.document), 'SELECT m.Id__c AS Id__c FROM ds2_Stage__dlm m');
+  // A DMO name is placed by the object rules.
+  const dmo = dcsqlFile();
+  nodeOf(dmo).relation_name = 'ssot__Account__dlm';
+  const placed = translateDocument(dmo, to(SPACE));
+  assert.deepEqual(placed.unresolved, []);
+  assert.equal(nodeOf(placed.document).relation_name, 'ds2_Account__dlm');
+  // Back to default the standard copy could be the standard DMO or a custom one: refused.
+  const back = dcsqlFile();
+  nodeOf(back).relation_name = 'ds2_Account__dlm';
+  assert.deepEqual(unresolvedAt(translateDocument(back, to('default', SPACE))), [
+    `${D}.manifest.nodes.model.input1.relation_name`,
+  ]);
+  // A missing or non-string relation_name is still refused.
+  for (const relation of [undefined, 3]) {
+    const missing = dcsqlFile();
+    if (relation === undefined) delete nodeOf(missing).relation_name;
+    else nodeOf(missing).relation_name = relation;
+    const refused = translateDocument(missing, to(SPACE));
+    assert.ok(
+      refused.unresolved.some(
+        (entry) =>
+          entry.at === `${D}.manifest.nodes.model.input1.relation_name` &&
+          /relation_name is missing/u.test(entry.reason),
+      ),
+      JSON.stringify(refused.unresolved),
+    );
+  }
+});
+
+test('a DCSQL node config is kept unless a value holds a name', () => {
+  const file = dcsqlFile();
+  const node = file.definition.definitions[0].manifest.nodes['model.input1'];
+  node.config = { materialized: 'table', unique_key: 'Id__c', tags: ['nightly'] };
+  const result = translateDocument(file, to(SPACE));
+  assert.deepEqual(unresolvedAt(result), [`${D}.manifest.nodes.model.input1.config.unique_key`]);
+  assert.match(result.unresolved[0].reason, /holds an object or field name/u);
+  assert.deepEqual(
+    result.document.definition.definitions[0].manifest.nodes['model.input1'].config,
+    node.config,
+  );
+  // A name in a list value is refused too.
+  node.config = { materialized: 'table', unique_key: ['ssot__Id__c'] };
+  assert.deepEqual(unresolvedAt(translateDocument(file, to(SPACE))), [
+    `${D}.manifest.nodes.model.input1.config.unique_key[0]`,
+  ]);
 });
 
 test('DCSQL SQL the translation cannot place exactly is refused', () => {

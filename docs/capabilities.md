@@ -499,12 +499,19 @@ Step 3b-2 translates DCSQL transforms: both names, `dataSpaceName`, each manifes
 `compiled_code` (and `raw_code`) by the SQL rewrite below, `relation_name` and
 `outputDataObjects` (with their `dataspaceName`) by the object rules, DLOs kept. Each node's
 top-level output columns (first `UNION` branch) are checked against the fields of the output object
-its `relation_name` names (a node naming none is refused): an alias spelled like an output field
-takes the field's target name (`AS ssot__Name__c` becomes `AS Name__c` towards `dataspace2`, uses
-of the alias in its query block follow); a column without an alias is refused unless its target
+its `relation_name` names: an alias spelled like an output field
+takes the field's target name (`AS ssot__Name__c` becomes `AS Name__c` towards `dataspace2`, its
+uses in `ORDER BY`/`HAVING` follow); a column without an alias is refused unless its target
 name equals its field's target name (write it with `AS` and the source field name, which then
 follows the field), and so is `*` over a table that is not a DLO, or over a DLO when the output
-fields change (unit tests only). Also translated (Step 3a): calculated
+fields change. A node whose `relation_name` names no output object is an intermediate model:
+its `relation_name` follows the object rules, and its output columns are checked the same way
+against that relation's fields by the relation's own rule (a DLO relation keeps every name, a
+DMO relation's fields follow its rule, as the nodes reading it see them); a missing or non-string `relation_name` is refused. A node's `config` is kept
+(`materialized` is the only key retrieve shows); a value holding a name-like part (`__c`,
+`__dlm`, `__dll`, `__cio`, `ssot__`, e.g. `unique_key`) is refused rather than translated, since
+no retrieved transform shows such a key. The DCSQL checks are proven by unit tests only. Also
+translated (Step 3a): calculated
 insights (`apiName` and `sourceCiDevName` by the prefix rule, `dataSpace`, and the SQL of
 classic and `DC_SQL` insights) and DBT segments (name, `segmentOn` and every model's SQL). The
 SQL is tokenized: single-quoted texts and `--` / `/* */` comments are skipped, double quotes and
@@ -516,7 +523,11 @@ Salesforce returns for a DBT segment, and the read after a deploy compares it de
 kept (`__dll`); a parenthesis after a join word (`JOIN (SELECT …) a`, `JOIN (t a)`) is a
 subquery with its own scope or a table group, `LEFT(`/`RIGHT(` stay functions; `WITH` blocks
 (also `RECURSIVE`, read by the columns of their first block), aliases and column aliases are
-user names and stay. A column alias without `AS` is read only after a complete operand (`)`, a
+user names and stay. A name equal to a select alias reads the alias only in the clauses Spark
+resolves against the projection (`ORDER BY`, `SORT BY`, `DISTRIBUTE BY`, `CLUSTER BY`, `HAVING`,
+`QUALIFY`); in `WHERE`, `GROUP BY` (a table column wins over an alias there) and `WINDOW` it is
+the table's column; after a set operation the trailing `ORDER BY` reads the first branch's
+aliases, and a name that is an alias of a later branch only is refused. A column alias without `AS` is read only after a complete operand (`)`, a
 number, a text, a quoted name or a word that is no operator keyword such as `NOT`, `OR`, `IS`,
 `BETWEEN`, `EXISTS`, `DIV`), as Salesforce accepts it; such an alias that looks like a name
 still goes through the leftover check below.

@@ -83,6 +83,8 @@ type Columns = {
   names?: Array<{ token: number; aliased: boolean }>;
   /** Token indices of each alias's uses after the select list of its block (alias lowercase). */
   aliasUses?: Map<string, number[]>;
+  /** The alias uses of the ordering clauses only (ORDER BY, SORT BY, DISTRIBUTE BY, CLUSTER BY). */
+  orderUses?: Map<string, number[]>;
   starAt?: Array<{ token: number; sources: Source[] }>;
 };
 
@@ -112,6 +114,8 @@ const clauseWords = new Set([
   'DISTRIBUTE',
   'SORT',
 ]);
+// The clauses in which a name equal to a select alias reads the alias.
+const aliasClauseWords = new Set(['HAVING', 'QUALIFY', 'ORDER', 'CLUSTER', 'DISTRIBUTE', 'SORT']);
 const setWords = new Set(['UNION', 'INTERSECT', 'EXCEPT', 'MINUS']);
 const joinWords = new Set([
   'JOIN',
@@ -498,9 +502,41 @@ class SqlAnalysis {
       } else if (this.upper(begin, end) === 'SELECT')
         columns = this.selectBlock(begin, end, outer, ctes);
       else columns = this.expressionQuery(begin, end, outer, ctes);
+      if (first && columns.orderUses) this.setOrderUses(first, columns.orderUses);
       first ??= columns;
     }
     return first!;
+  }
+
+  /**
+   * The ORDER BY (SORT BY, …) at the end of a set operation reads the columns the operation puts
+   * out, which its first branch names, not the aliases of the last branch it is written in. A use
+   * of a last-branch alias the first branch also has as an alias follows that one; any other is
+   * not placed.
+   * @param {Columns} first The columns of the first branch, changed in place.
+   * @param {ReadonlyMap<string, number[]>} uses Alias uses in the trailing clauses (token indices).
+   */
+  private setOrderUses(first: Columns, uses: ReadonlyMap<string, number[]>): void {
+    const firstAliases = new Set(
+      (first.names ?? [])
+        .filter((entry) => entry.aliased)
+        .map((entry) => (tokenName(this.tokens[entry.token]) ?? '').toLowerCase()),
+    );
+    for (const [name, indices] of uses) {
+      if (firstAliases.has(name)) {
+        first.aliasUses ??= new Map();
+        first.aliasUses.set(name, [...(first.aliasUses.get(name) ?? []), ...indices]);
+        continue;
+      }
+      for (const index of indices) {
+        this.out.userNames.delete(index);
+        if (!this.out.unresolved.has(index))
+          this.out.unresolved.set(
+            index,
+            'after a set operation (UNION, …) this clause reads the columns the first branch names, and this name is an alias of a later branch only, so its spelling cannot be placed: give the first branch the same alias',
+          );
+      }
+    }
   }
 
   private selectBlock(
@@ -522,12 +558,29 @@ class SqlAnalysis {
       this.fromClause(clauses[fromIndex].at + 1, endOf(fromIndex), outer, ctes, scope, deferred);
     for (const run of deferred) run();
     const columns = this.selectList(from + 1, clauses[0]?.at ?? to, scope, ctes);
-    // Uses of an alias are recorded after the select list, where a name equal to an alias reads
-    // it (ORDER BY); inside the list such a name is still the table's column of that name.
+    // Spark reads a name equal to a select alias as that alias only in the clauses above the
+    // projection (ORDER BY, SORT BY, DISTRIBUTE BY, CLUSTER BY, and HAVING, which is read against
+    // the aggregate's output first; QUALIFY where the dialect has it); there its uses are recorded. WHERE, GROUP BY (a table column
+    // wins over an alias there) and WINDOW read the tables' columns.
+    // The ordering clauses are kept apart: after a set operation they read its output instead.
     scope.aliasUses = new Map();
-    for (const [index, clause] of clauses.entries())
-      if (clause.word !== 'FROM') this.expression(clause.at + 1, endOf(index), scope, ctes);
+    const ordering: Scope = { ...scope, aliasUses: new Map() };
+    const tablesOnly: Scope = { ...scope, aliases: new Set() };
+    delete tablesOnly.aliasUses;
+    for (const [index, clause] of clauses.entries()) {
+      if (clause.word === 'FROM') continue;
+      const inScope = aliasClauseWords.has(clause.word)
+        ? ['HAVING', 'QUALIFY'].includes(clause.word)
+          ? scope
+          : ordering
+        : tablesOnly;
+      this.expression(clause.at + 1, endOf(index), inScope, ctes);
+    }
+    const orderUses = ordering.aliasUses!;
+    for (const [name, indices] of orderUses)
+      scope.aliasUses.set(name, [...(scope.aliasUses.get(name) ?? []), ...indices]);
     if (scope.aliasUses.size > 0) columns.aliasUses = scope.aliasUses;
+    if (orderUses.size > 0) columns.orderUses = orderUses;
     return columns;
   }
 
@@ -810,7 +863,17 @@ class SqlAnalysis {
       else this.edit(p, placed);
       return undefined;
     }
+    const uses = scope.aliasUses;
+    if (uses && scope.aliases.has(field.toLowerCase())) {
+      // A clause that reads select aliases (ORDER BY): the alias wins over a table column, and
+      // the use follows the alias (see translateSql).
+      this.keep(p, true);
+      uses.set(field.toLowerCase(), [...(uses.get(field.toLowerCase()) ?? []), this.sig[p]]);
+      return { owns: true, name: field };
+    }
     const answers: FieldAnswer[] = [];
+    // In the select list a later item may read an earlier alias (lateral alias) or the table's
+    // column of that name: both readings must agree.
     if (scope.aliases.has(field.toLowerCase())) answers.push({ owns: true, name: field });
     for (let current: Scope | undefined = scope; current; current = current.parent)
       for (const source of current.sources) answers.push(source.columns(field));
@@ -822,11 +885,8 @@ class SqlAnalysis {
       );
       return undefined;
     }
-    if (scope.aliases.has(field.toLowerCase()) && 'name' in answer && answer.name === field) {
+    if (scope.aliases.has(field.toLowerCase()) && 'name' in answer && answer.name === field)
       this.keep(p, true);
-      const uses = scope.aliasUses;
-      uses?.set(field.toLowerCase(), [...(uses.get(field.toLowerCase()) ?? []), this.sig[p]]);
-    }
     return this.applyAnswer(p, field, answer, field);
   }
 
@@ -949,7 +1009,7 @@ function entityOutsideTexts(tokens: SqlToken[]): { token: SqlToken; text: string
  * With `outputField` (a DCSQL transform, whose output columns land in output fields by name) each
  * named column the outermost query of a statement puts out (its first set branch) is checked
  * against the field of its source name: an alias spelled like that field takes the field's target
- * name; a column without an alias is placed only when its name in the target equals the field's
+ * name, and so do its uses in the clauses that read select aliases (ORDER BY, HAVING); a column without an alias is placed only when its name in the target equals the field's
  * target name, or when it changes from no field's name to none.
  * @param {string} sql SQL text.
  * @param {string} label What the positions are reported against (the SQL file name).
