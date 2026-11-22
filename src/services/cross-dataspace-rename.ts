@@ -1,6 +1,6 @@
 import type { OrgDataSpace } from './data-space-check.js';
 import { unescapeSalesforceHtml } from '../artifacts/native-calculated-insight-document.js';
-import type { ExpressionNamer, SqlNamer } from './cross-dataspace-sql.js';
+import type { ExpressionNamer, OutputField, SqlNamer } from './cross-dataspace-sql.js';
 import {
   htmlEntityOutsideTexts,
   translateSql,
@@ -561,7 +561,8 @@ class Recorder {
    * the SQL puts out land in the fields of its output object by name (a DCSQL node): each field of
    * that object (source name, lowercase) with its target name and rule. Each output column is then
    * checked against its field (see translateSql), and `*` over a table that is not a DLO is not
-   * placed.
+   * placed. For an object whose fields are not listed (an intermediate model's relation), the
+   * field of each name by the object's rule and whether those fields can change.
    * @returns {string} The rewritten SQL.
    */
   public sql(
@@ -569,23 +570,25 @@ class Recorder {
     sql: string,
     file: string,
     item: string,
-    outputs?: ReadonlyMap<string, { name: string; rule?: CrossSpaceRule }>,
+    outputs?:
+      | ReadonlyMap<string, { name: string; rule?: CrossSpaceRule }>
+      | { field: OutputField; fieldsChange: boolean },
   ): string {
     this.visited.add(at);
     this.ownCheck.add(at);
-    const result = translateSql(
-      sql,
-      file,
-      sqlNamer(this.context),
-      outputs && ((name) => outputs.get(name.toLowerCase())),
-      item,
-    );
+    const listed = outputs instanceof Map ? outputs : undefined;
+    const outputField: OutputField | undefined = listed
+      ? (name): ReturnType<OutputField> => listed.get(name.toLowerCase())
+      : outputs && 'field' in outputs
+        ? outputs.field
+        : undefined;
+    const result = translateSql(sql, file, sqlNamer(this.context), outputField, item);
     this.rewrites.push(...result.rewrites);
     this.unresolved.push(...result.unresolved);
     if (outputs && result.outputs) {
-      const fieldsChange = [...outputs].some(
-        ([source, field]) => field.name.toLowerCase() !== source,
-      );
+      const fieldsChange = listed
+        ? [...listed].some(([source, field]) => field.name.toLowerCase() !== source)
+        : 'fieldsChange' in outputs && outputs.fieldsChange;
       for (const star of result.outputs.stars)
         if (!star.dlo || fieldsChange)
           this.unresolved.push({
@@ -1457,19 +1460,31 @@ function translateStl(
   }
   // A node takes the lineage of its one source. A join or append mixes its sources: its columns
   // keep one spelling only when every source is a DLO, or every source a DMO of the same kind
-  // (the field rule reads nothing else); otherwise its lineage is unknown.
+  // (the field rule reads nothing else); otherwise its lineage is unknown. Each node's lineage is
+  // worked out once (the loads are all placed above); a result reached through a cycle is not kept.
+  const memo = new Map<string, Lineage>();
+  let cycles = 0;
   const lineageOf = (key: string, seen = new Set<string>()): Lineage => {
     if (lineage.has(key)) return lineage.get(key);
+    if (memo.has(key)) return memo.get(key);
     const node = nodes[key];
-    if (!node || seen.has(key)) return undefined;
+    if (!node) return undefined;
+    if (seen.has(key)) {
+      cycles++;
+      return undefined;
+    }
     seen.add(key);
+    const before = cycles;
     const sides = sourcesOf(node).map((source) => lineageOf(source, new Set(seen)));
     const [first] = sides;
-    if (first === undefined) return undefined;
-    const same = sides.every((side) =>
-      side === 'dlo' || first === 'dlo' ? side === first : side?.kind === first.kind,
-    );
-    return same ? first : undefined;
+    const same =
+      first !== undefined &&
+      sides.every((side) =>
+        side === 'dlo' || first === 'dlo' ? side === first : side?.kind === first.kind,
+      );
+    const result = same ? first : undefined;
+    if (cycles === before) memo.set(key, result);
+    return result;
   };
   // The qualifiers of the nearest join above a node (`leftQualifier`, `rightQualifier`), each with
   // the lineage of its side.
@@ -1632,9 +1647,12 @@ function translateOutputObjects(
  * per manifest node the SQL (`compiled_code`, and `raw_code` when present) by the SQL rules and
  * the output object (`relation_name`) by its name. The columns a node's SQL puts out land by name
  * in the fields of the output object its `relation_name` names, so each is checked against that
- * object's fields (see translateSql); a node whose `relation_name` names no output object of the
- * definition is not placed. The node's `name` and `config` are kept; anything else name-like is
- * left to the full-coverage check.
+ * object's fields (see translateSql). A node whose `relation_name` names no output object of the
+ * definition is an intermediate model: its `relation_name` follows the object rules, and its
+ * columns are checked against the fields of that relation by its own rule (other nodes read them
+ * so). A node without a `relation_name` is not placed. The
+ * node's `name` is kept, its `config` checked (see dcsqlConfig); anything else name-like is left
+ * to the full-coverage check.
  * @param {Record<string, unknown>} definition DCSQL definition, changed in place.
  * @param {string} at JSON path.
  * @param {Recorder} recorder Collects changes.
@@ -1652,12 +1670,30 @@ function translateDcsql(
   for (const [key, node] of Object.entries(dcsqlNodes(definition) ?? {})) {
     const nodeAt = `${at}.manifest.nodes.${key}`;
     const relation = typeof node.relation_name === 'string' ? node.relation_name : undefined;
-    const fields = relation === undefined ? undefined : objects.get(relation.toLowerCase());
-    if (!fields)
+    const placedRelation =
+      relation === undefined
+        ? undefined
+        : transformObject(`${nodeAt}.relation_name`, relation, recorder);
+    // A relation_name that names no output object is an intermediate model: its columns land by
+    // name in that relation, whose fields other nodes read by the relation's own rule, so each
+    // column is checked against that rule (a DLO relation keeps every name).
+    const lineage = placedRelation?.lineage;
+    const fields =
+      relation === undefined
+        ? new Map()
+        : (objects.get(relation.toLowerCase()) ?? {
+            field: (name: string): ReturnType<OutputField> => {
+              const placed = recorder.placeLineage(lineage, name);
+              return 'reason' in placed ? undefined : placed;
+            },
+            fieldsChange: lineage !== 'dlo',
+          });
+    if (relation === undefined)
       recorder.unresolved.push({
         at: `${nodeAt}.relation_name`,
-        name: relation ?? '(none)',
-        reason: `the node's relation_name ${relation === undefined ? 'is missing' : 'names no output object of this definition'}, so the output fields its SQL columns land in are not known and the column names cannot be placed`,
+        name: '(none)',
+        reason:
+          "the node's relation_name is missing, so it is not known whether its SQL columns land in an output object, and the column names cannot be placed",
       });
     for (const sqlKey of dcsqlSqlKeys)
       if (typeof node[sqlKey] === 'string')
@@ -1666,13 +1702,38 @@ function translateDcsql(
           node[sqlKey] as string,
           `${nodeAt}.${sqlKey}`,
           'data transform',
-          fields ?? new Map(),
+          fields,
         );
-    if (relation !== undefined)
-      node.relation_name = transformObject(`${nodeAt}.relation_name`, relation, recorder).name;
+    if (placedRelation) node.relation_name = placedRelation.name;
     if (typeof node.name === 'string') recorder.keep(`${nodeAt}.name`);
-    if (node.config !== undefined) recorder.keepAll(node.config, `${nodeAt}.config`);
+    if (node.config !== undefined) dcsqlConfig(node.config, `${nodeAt}.config`, recorder);
   }
+}
+
+// An object or field name inside a DCSQL config value.
+const configNameLike = /__(?:c|dlm|dll|cio)\b|ssot__/iu;
+
+/**
+ * Check the `config` of a DCSQL node. The only key retrieve shows is `materialized` (`table`),
+ * which holds no name; a name-like value under any key (`unique_key: 'Id__c'`) is not placed,
+ * since which object's field it means is not known to the translation. Everything else is kept.
+ * @param {unknown} value The config value, or a part of it.
+ * @param {string} at Its JSON path.
+ * @param {Recorder} recorder Collects changes.
+ */
+function dcsqlConfig(value: unknown, at: string, recorder: Recorder): void {
+  recorder.keep(at);
+  if (Array.isArray(value))
+    for (const [index, entry] of value.entries()) dcsqlConfig(entry, `${at}[${index}]`, recorder);
+  else if (value && typeof value === 'object')
+    for (const [key, entry] of Object.entries(value)) dcsqlConfig(entry, `${at}.${key}`, recorder);
+  else if (typeof value === 'string' && configNameLike.test(value))
+    recorder.unresolved.push({
+      at,
+      name: value,
+      reason:
+        "this DCSQL config value holds an object or field name; the translation does not place names in a node's config, so it cannot be placed",
+    });
 }
 
 /**
