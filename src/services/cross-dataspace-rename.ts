@@ -233,7 +233,13 @@ export function translateFieldName(
       ? { name: field.slice('ssot__'.length), rule: 'field-ssot' }
       : { name: field };
   }
-  if (context.target === 'default' && kind === 'unified' && !unifiedFieldsWithoutSsot.has(field))
+  // A field already spelled with ssot__ is the default spelling (a mis-spelled file): kept.
+  if (
+    context.target === 'default' &&
+    kind === 'unified' &&
+    !field.startsWith('ssot__') &&
+    !unifiedFieldsWithoutSsot.has(field)
+  )
     return { name: `ssot__${field}`, rule: 'field-ssot' };
   return { name: field };
 }

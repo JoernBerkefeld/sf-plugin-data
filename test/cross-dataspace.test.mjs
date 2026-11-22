@@ -135,6 +135,10 @@ test('field names follow the ssot__ rule; KQ_ and link fields keep their names',
     name: 'ssot__FirstName__c',
     rule: 'field-ssot',
   });
+  // Already spelled with ssot__: no second ssot__.
+  assert.deepEqual(translateFieldName(to('default', SPACE), 'unified', 'ssot__FirstName__c'), {
+    name: 'ssot__FirstName__c',
+  });
   for (const kept of ['UnifiedRecordId__c', 'SourceRecordId__c', 'KQ_SourceRecordId__c'])
     assert.deepEqual(translateFieldName(to('default', SPACE), 'unified', kept), { name: kept });
   assert.deepEqual(translateFieldName(to('default', SPACE), 'custom', 'Total__c'), {
