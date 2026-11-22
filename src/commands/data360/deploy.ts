@@ -181,6 +181,7 @@ import { verifySegmentInputDigest } from '../../artifacts/read-deploy-input.js';
 import type { SegmentDeployInput } from '../../artifacts/read-deploy-input.js';
 import type { DeployExecutionResult, DeployPreviewResult } from '../../services/deploy-result.js';
 import { plugin as packageMetadata } from '../../plugin.js';
+import { silentSqlFailureWarnings } from '../../services/calculated-insight-sql-checks.js';
 import { GitSelectionError, selectGitDeployInputs } from '../../artifacts/git-deploy-selection.js';
 import type { GitDeploySelection } from '../../artifacts/git-deploy-selection.js';
 import {
@@ -896,6 +897,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     const families = new Map<string, string>();
     // Prefix rule warnings of existing components, shown in the human output too.
     const prefixWarnings = new Set<string>();
+    // Calculated insight SQL that fails after publish, shown in the human output too.
+    const sqlWarnings = new Set<string>();
     const mappingNames = new Map<string, string>();
     const processingDlos = new Set<string>();
     const mappingChanges = new Map<
@@ -991,7 +994,11 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
             `Not deleted: ${deletion.family}:${deletion.apiName} (file deleted in the Git range; deploy never deletes; delete it with sf data360 delete --changed-since ${envelope.result.selection.changedSince ?? '<ref>'} --confirm-delete after a --preview).`,
           );
         for (const warning of envelope.diagnostics.warnings)
-          if (warning.startsWith('Skipped ') || prefixWarnings.has(warning))
+          if (
+            warning.startsWith('Skipped ') ||
+            prefixWarnings.has(warning) ||
+            sqlWarnings.has(warning)
+          )
             this.log(`Warning: ${warning}`);
         for (const item of envelope.result.items) {
           const family =
@@ -1206,6 +1213,22 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         }
         resolvedInputs = plan.inputs;
       }
+      // SQL Salesforce accepts but cannot run: a warning per finding, read from the authored files
+      // (their lines and columns); the deploy goes ahead.
+      for (const input of authoredInputs)
+        if (input.document.kind === 'calculated-insight') {
+          const { native, companionPath } = input as Partial<CalculatedInsightDeployInput>;
+          // An injected planning-only input carries no SQL.
+          if (typeof native?.expression !== 'string' || companionPath === undefined) continue;
+          for (const warning of silentSqlFailureWarnings(
+            native.expression,
+            native.queryDialect,
+            shown(companionPath),
+          )) {
+            sqlWarnings.add(warning);
+            envelope.diagnostics.warnings.push(warning);
+          }
+        }
       if (
         flags.async &&
         !resolvedInputs.some((input) => input.document.kind === 'identity-resolution')

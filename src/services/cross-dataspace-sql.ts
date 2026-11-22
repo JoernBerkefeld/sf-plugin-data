@@ -96,7 +96,7 @@ const joinWords = new Set([
   'LATERAL',
 ]);
 // Words that end an expression but are never an alias.
-const reservedWords = new Set([
+export const reservedWords: ReadonlySet<string> = new Set([
   ...clauseWords,
   ...setWords,
   ...joinWords,
@@ -160,7 +160,7 @@ const joinOnlyWords = new Set([
 ]);
 // Words after which the next word is an operand, never a column alias (NULL, TRUE, FALSE and END
 // end an operand, so a word after them can be an alias).
-const operatorWords = new Set([
+export const operatorWords: ReadonlySet<string> = new Set([
   'ALL',
   'AND',
   'ANY',

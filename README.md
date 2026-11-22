@@ -459,6 +459,10 @@ The few things to know per type. Each type page has the full rules and error cod
 
 - The SQL is kept in its own `.sql` file. `--draft` deploys a draft; `sf data360 publish`
   activates it.
+- Some SQL is accepted by Salesforce but fails a few minutes after publish without a message,
+  for example a table alias or a `--` comment in a classic insight. Deploy warns about each such
+  spot with file, line and column, and still deploys
+  ([`CI_SQL_FAILS_SILENTLY`](docs/errors/calculated-insight/CI_SQL_FAILS_SILENTLY.md)).
 - Reference: [Calculated insights](docs/types/calculated-insight.md).
 
 ### Segments

@@ -35,11 +35,27 @@ Deploy, publish and delete read both files: `-m calculated-insight:<Name>__cio`,
 ### SQL dialects and builders
 
 - **Legacy SQL** insights store `queryDialect` `ANSI_SQL`.
-  - A `--` comment line in the SQL of such an insight is accepted on deploy and publish, but about three minutes after activation the insight ends in `ERROR` (`CREATE_FAILED`) without a message. Leave comments out of legacy SQL insights. (Seen live on API 68 in a non-default data space; a `DC_SQL` insight with a comment was not tested.)
 - **SQL Insights Builder** insights use `queryDialect` `DC_SQL` and are sent as written, like any other insight. Retrieve, deploy and publish handle both dialects the same way.
 - **Visual Builder** drafts have no SQL in the API (the GET returns a placeholder sentence). Retrieve writes such a draft as Salesforce returns it (a verbatim file with reason `CI_VISUAL_DRAFT_WITHOUT_SQL`, no SQL file), and deploy refuses that file. An insight whose GET has no SQL at all (`expression` null or empty) is written the same way with reason `INVALID_CI_DOCUMENT`. Once published, its generated `ANSI_SQL` retrieves like any other insight, and deploying that file creates a SQL insight with the same result; the visual layout is not carried.
 - **Real-Time Insights** (`definitionType` `GRAPH_METRIC`, built on a Real-Time Data Graph) store generated `ANSI_SQL` with `publishScheduleInterval` `STREAMING`; the GET does not name the graph. Retrieve, update and delete work. Salesforce does not create one through the API ("The Definition Type is not supported", `ARGUMENT_OBJECT_PARSE_ERROR`, reported as `rejected`): create it in the UI, then retrieve it and deploy updates.
 - **Streaming insights** (`definitionType` `STREAMING_METRIC`) use windows in their SQL (`WINDOW.START`, `window(<DateTime>, '5 MINUTE')`). Salesforce refuses every schedule field on their PATCH, so an update leaves out schedule fields that equal the org value. Their build can take longer than the 120-second wait, so publish can end with `CI_SETTLEMENT_TIMEOUT` while Salesforce is still building: rerun publish later.
+
+### SQL that fails after publish
+
+Salesforce accepts some SQL on deploy and publish, then about three minutes later the insight ends in `ERROR` (`CREATE_FAILED`) without a message. In legacy SQL insights (`ANSI_SQL`) these are:
+
+- A table alias in `FROM` or `JOIN`, also with `AS` (`FROM ssot__Individual__dlm i`). Write the full object name in front of each field instead: `ssot__Individual__dlm.ssot__Id__c`.
+- A quoted column alias: `AS "cnt__c"`, `"cnt__c"` without `AS`, or `` AS `cnt__c` ``. Write it without quotes: `AS cnt__c`.
+- A text literal as a column: `'x' AS lbl__c` or `'x' lbl__c`. Remove it, or build the insight in the SQL Insights Builder.
+- A `--` comment line, even one that names nothing. Remove it.
+
+In SQL Insights Builder insights (`DC_SQL`):
+
+- A column alias in backticks: `` AS `cnt__c` ``. Write it without quotes.
+
+Both dialects run an alias without `AS` after a closing bracket, a field or a number (`COUNT(...) cnt__c`). `DC_SQL` also runs a table alias, a double-quoted alias and a text literal column.
+
+`sf data360 deploy` (also with `--preview`) warns about each of these with the SQL file, line and column ([`CI_SQL_FAILS_SILENTLY`](../errors/calculated-insight/CI_SQL_FAILS_SILENTLY.md)). The deploy still goes ahead: Salesforce decides. Text in quotes and comments is not mistaken for code. Block comments (`/* … */`) and insights without a `queryDialect` are not checked.
 
 ## Deploy
 

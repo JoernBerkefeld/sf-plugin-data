@@ -1179,3 +1179,74 @@ test('an insight file of another data space without the flag names the flag', as
     assert.equal(result.diagnostics.errors[0].code, 'CI_DATASPACE_MISMATCH');
     assert.match(result.diagnostics.errors[0].message, /add --allow-cross-dataspace \(-c\)/u);
   }));
+
+// SQL Salesforce accepts but fails a few minutes after publish (live API 68, DB entry
+// data360:ci-sql-alias-without-as-api68): a warning per finding, and the deploy goes ahead.
+const sqlFile = path.join(
+  'data360',
+  'calculatedInsights',
+  'CliSpend__cio.calculatedInsight-meta.sql',
+);
+const silent = (result) =>
+  result.diagnostics.warnings.filter((line) => line.startsWith('CI_SQL_FAILS_SILENTLY: '));
+
+test('--preview -c warns about classic insight SQL that fails silently, at the authored file position', async () =>
+  withSpaces(async () => {
+    const { result, calls, logs } = await deploy(
+      [
+        insightFile(
+          '-- spend\nSELECT COUNT(i.ssot__Id__c) AS cnt__c\nFROM ssot__Individual__dlm i',
+        ),
+      ],
+      { preview: true },
+    );
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.ok(calls.includes(`preflight:calculated-insight:ds2_CliSpend__cio:${SPACE}`));
+    const warnings = silent(result);
+    assert.equal(warnings.length, 2, JSON.stringify(warnings));
+    assert.ok(warnings[0].startsWith(`CI_SQL_FAILS_SILENTLY: ${sqlFile} line 1:1: a -- comment`));
+    assert.ok(
+      warnings[1].startsWith(
+        `CI_SQL_FAILS_SILENTLY: ${sqlFile} line 3:28: the table alias i of ssot__Individual__dlm`,
+      ),
+    );
+    for (const warning of warnings)
+      assert.ok(logs.includes(`Warning: ${warning}`), logs.join('\n'));
+  }));
+
+/**
+ * An insight file of the run's data space, so no translation happens.
+ * @param {string} expression SQL.
+ * @param {string} [queryDialect] Dialect; 'none' leaves the key out.
+ * @returns {object} Insight document.
+ */
+const own = (expression, queryDialect = 'ANSI_SQL') => {
+  const file = { ...insightFile(expression), apiName: 'ds2_CliSpend__cio', dataSpace: SPACE };
+  if (queryDialect === 'none') delete file.queryDialect;
+  else file.queryDialect = queryDialect;
+  return file;
+};
+
+test('deploy without -c warns and still sends the insight; accepted forms and DC_SQL aliases do not warn', async () =>
+  withSpaces(async () => {
+    const quoted = await deploy(
+      [own('SELECT COUNT(ds2_Individual__dlm.Id__c) AS "cnt__c" FROM ds2_Individual__dlm')],
+      { 'allow-cross-dataspace': false },
+    );
+    assert.equal(quoted.result.status, 'success', JSON.stringify(quoted.result.diagnostics));
+    assert.ok(
+      quoted.calls.some((call) => call.startsWith('execute:calculated-insight:ds2_CliSpend__cio:')),
+    );
+    assert.equal(silent(quoted.result).length, 1);
+    assert.match(silent(quoted.result)[0], /line 1:44: a quoted column alias "cnt__c"/u);
+    for (const [expression, dialect] of [
+      ['SELECT COUNT(ds2_Individual__dlm.Id__c) cnt__c FROM ds2_Individual__dlm', 'ANSI_SQL'],
+      ['SELECT \'x\' lbl__c, COUNT(i.Id__c) AS "cnt__c" FROM ds2_Individual__dlm i', 'DC_SQL'],
+      ['-- x\nSELECT 1 AS "a" FROM ds2_Individual__dlm i', 'none'],
+    ]) {
+      const clean = await deploy([own(expression, dialect)], { 'allow-cross-dataspace': false });
+      assert.equal(clean.result.status, 'success', JSON.stringify(clean.result.diagnostics));
+      assert.deepEqual(silent(clean.result), [], expression);
+      assert.ok(clean.logs.every((line) => !line.includes('CI_SQL_FAILS_SILENTLY')));
+    }
+  }));

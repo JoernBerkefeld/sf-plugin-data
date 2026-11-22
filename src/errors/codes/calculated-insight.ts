@@ -28,6 +28,8 @@ export const hints: Readonly<Record<string, string>> = {
     'After the write, the calculated insight in the org differs from the files that were sent. Do not resend; retrieve it and compare before another attempt.',
   CI_SETTLEMENT_TIMEOUT:
     'The calculated insight did not reach the expected state within 120 seconds after the write. Do not resend; check later and rerun the same command to confirm.',
+  CI_SQL_FAILS_SILENTLY:
+    'The SQL holds something Salesforce accepts on deploy and publish but cannot run, so the insight ends in ERROR a few minutes later without a message. The deploy goes ahead; change the SQL as the warning says.',
   CI_UNEXPECTED_ABSENCE:
     'After the write, the calculated insight was not found in the org. Do not resend; check the org, then rerun the same command to see the current state.',
   CI_UNEXPECTED_STATE:
