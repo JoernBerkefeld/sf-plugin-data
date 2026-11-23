@@ -115,6 +115,11 @@ test('resolveSegment finds a segment by API name or by record ID without reading
     marketSegmentId: '1sgaj000000PveDAAS',
   });
   assert.equal(byId.apiName, 'Spring');
+  const byShortId = await resolveSegment(org, {
+    dataSpace: 'default',
+    marketSegmentId: '1sgaj000000PveD',
+  });
+  assert.equal(byShortId.apiName, 'Spring');
   assert.ok(urls.every((url) => !url.includes('data-spaces')));
 });
 
@@ -144,4 +149,16 @@ test('resolveSegment answers SEGMENT_NOT_FOUND when no data space has the segmen
       return true;
     },
   );
+});
+
+test('resolveSegment refuses a value that is no segment ID before reading anything', async () => {
+  const urls = [];
+  await assert.rejects(
+    resolveSegment(orgOf({ default: [spring] }, urls), {
+      dataSpace: 'default',
+      marketSegmentId: '001aj000000PveDAAS',
+    }),
+    (error) => error instanceof SegmentError && error.code === 'SEGMENT_NOT_FOUND',
+  );
+  assert.deepEqual(urls, []);
 });

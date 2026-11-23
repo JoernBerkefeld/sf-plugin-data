@@ -95,15 +95,16 @@ export async function listSegments(
 }
 
 /**
- * Whether a row is the segment a lookup names (exact, case matters).
+ * Whether a row is the segment a lookup names (exact, case matters; a record ID in its 15- or
+ * 18-character form).
  * @param {SegmentRow} row Listed segment.
  * @param {SegmentLookup} lookup What is looked for.
  * @returns {boolean} Match.
  */
 function matches(row: SegmentRow, lookup: SegmentLookup): boolean {
-  return 'apiName' in lookup
-    ? row.apiName === lookup.apiName
-    : row.marketSegmentId === lookup.marketSegmentId;
+  if ('apiName' in lookup) return row.apiName === lookup.apiName;
+  // A record ID may come in its 15-character form (the 18-character one adds a case checksum).
+  return row.marketSegmentId.slice(0, 15) === lookup.marketSegmentId.slice(0, 15);
 }
 
 /**
@@ -120,6 +121,11 @@ export async function resolveSegment(
   connection: LookupConnection,
   lookup: SegmentLookup,
 ): Promise<SegmentRow> {
+  if ('marketSegmentId' in lookup && !segmentId.test(lookup.marketSegmentId))
+    throw explainInput(
+      lookupError('SEGMENT_NOT_FOUND'),
+      `The record ID ${shown(lookup.marketSegmentId)} is not a segment ID (1sg followed by 12 or 15 letters and digits); nothing was read.`,
+    );
   const rows = await listSegments(connection, lookup);
   const found = rows.find((row) => matches(row, lookup));
   if (found) return found;
