@@ -52,6 +52,10 @@ export const hints: Readonly<Record<string, string>> = {
     'The segment names no membership DMO or source DMO, or Salesforce lists no single relationship between them, so --include-details cannot join them. Export without it.',
   SEGMENT_NAME_NOT_STORED:
     "In a non-default data space Salesforce stores a segment as <prefix>_<Name>; this file's name lacks the prefix, so a create could not be read back. Nothing was sent; add the prefix to the file name and identity.apiName.",
+  SEGMENT_NOT_FOUND:
+    'No segment of the org has this API name or record ID in the data space asked for or any other. Check the exact value (case matters; <prefix>_<Name> outside default) and deploy the segment first.',
+  SEGMENT_OTHER_DATASPACE:
+    'The segment with this API name or record ID exists, but in another data space than the one asked for. Use the segment of the right data space, or look it up in the data space the message names.',
   SEGMENT_PUBLISH_ADMISSION_FAILED:
     'The segment could not be read before the publish, or it does not exist in the org, so nothing was published. Deploy or check the segment, then rerun.',
   SEGMENT_PUBLISH_DEFINITION_MISMATCH:

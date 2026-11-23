@@ -17,6 +17,10 @@
   },
   "type": "module",
   "exports": {
+    "./api": {
+      "types": "./lib/api.d.ts",
+      "default": "./lib/api.js"
+    },
     "./path-selector": {
       "types": "./lib/artifacts/path-selector.d.ts",
       "default": "./lib/artifacts/path-selector.js"

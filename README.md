@@ -539,6 +539,20 @@ The few things to know per type. Each type page has the full rules and error cod
 - Not every Salesforce behaviour is tested for every type, data space or org; the type pages
   name what is untested.
 
+## Use it from another plugin
+
+Other plugins can import `sf-plugin-data/api` and call it with a `Connection` from
+`@salesforce/core` (`(await Org.create({ aliasOrUsername })).getConnection()`). The functions read
+with API 68, print nothing and never exit; a refusal is thrown as an error with a `code` that has
+a page under [docs/errors](docs/errors/README.md).
+
+- `listSegments(connection, { dataSpace })`: every segment of one data space with `apiName`,
+  `marketSegmentId` (the record ID, `1sg…`), `dataSpace`, `segmentOnApiName`, `segmentStatus` and
+  `publishStatus`. An incomplete list fails with `SEGMENT_ACQUISITION_FAILED`.
+- `resolveSegment(connection, { dataSpace, apiName })` or `{ dataSpace, marketSegmentId }`: one
+  segment, matched exactly. A segment of another data space fails with `SEGMENT_OTHER_DATASPACE`,
+  no segment at all with `SEGMENT_NOT_FOUND`.
+
 ## Local development
 
 ```sh

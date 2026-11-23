@@ -557,19 +557,27 @@ export async function listSegmentNames(
  * @param {Pick<Connection, 'instanceUrl' | 'request'>} connection Authenticated API 68 connection.
  * @param {string[]} [warnings] Receives one warning per skipped entry.
  * @param {string} [dataSpace] Data space to keep; undefined keeps every one.
+ * @param {object} [options] Options.
+ * @param {boolean} [options.queryDataSpace] Also send the data space as `dataspace` query parameter
+ * (the list filters by it); only the segment lookup asks for it.
  * @returns {Promise<Array<Record<string, unknown> & {apiName: string}>>} Listed segments.
  */
-async function listSegmentEntries(
+export async function listSegmentEntries(
   connection: Pick<Connection, 'instanceUrl' | 'request'>,
   warnings?: string[],
   dataSpace?: string,
+  options: { queryDataSpace?: boolean } = {},
 ): Promise<Array<Record<string, unknown> & { apiName: string }>> {
+  const scope =
+    options.queryDataSpace === true && dataSpace !== undefined
+      ? `&dataspace=${encodeURIComponent(dataSpace)}`
+      : '';
   const client = new ConnectClient(connection, '68.0');
   const seen = new Set<string>();
   const names: Array<Record<string, unknown> & { apiName: string }> = [];
   for (let offset = 0; ;) {
     const page = await client.get<unknown>(
-      `/services/data/v68.0/ssot/segments?batchSize=${segmentPageSize}&offset=${offset}`,
+      `/services/data/v68.0/ssot/segments?batchSize=${segmentPageSize}&offset=${offset}${scope}`,
     );
     const entries = (page as { segments?: unknown } | undefined)?.segments;
     if (!page || typeof page !== 'object' || !Array.isArray(entries))
