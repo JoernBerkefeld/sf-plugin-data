@@ -213,12 +213,14 @@ for (const [label, change] of Object.entries({
     assert.deepEqual(f.calls, ['POST']);
   });
 
-test('a non-unified root keeps the exact node label comparison', async () => {
+// Salesforce keeps its own node label on any node type: a PUT relabelling a standard node, a
+// link node and a unified root changed none of them (live API68, 2026-11-23).
+test('a non-unified root whose label Salesforce set is confirmed too', async () => {
   const f = fixture((graph) => {
     graph.sourceObject.type = 'standard';
   });
   const input = authored();
   input.definition.sourceObject.type = 'standard';
   const result = await operateNativeDataGraph(input, f.context, f.client, options());
-  assert.deepEqual(result, { outcome: 'failed', mutation: 'unknown', failedCheck: 'response' });
+  assert.deepEqual(result, { outcome: 'created', mutation: 'confirmed-created' });
 });

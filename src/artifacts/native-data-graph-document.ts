@@ -748,6 +748,8 @@ function joinChange(jsonPath: string): DataGraphError {
  * by another field's keyQualifierName) are kept when the file leaves them out: a PUT without them
  * keeps them (live, API 68). Omitted settings of the graph, a retained node or a retained field
  * keep the target's values. Entries keep the target's order; new ones follow in authored order.
+ * A retained node keeps the target's label: Salesforce sets node labels itself, from the object's
+ * label, and keeps them when a POST or PUT sends another one (live, API 68, 2026-11-22/23).
  * Refused: a different name or data space (they identify the target graph), a join change of a
  * retained related object (DATA_GRAPH_JOIN_CHANGE; Salesforce ignores it), and a different type,
  * reference or projected name of a retained node (assigned by the API: a recorded API68 create
@@ -813,7 +815,7 @@ export function buildNativeDataGraphUpdateRequest(
   ): Record<string, unknown> {
     for (const key of ['type', 'referenceDeveloperName', 'projectedName'])
       if (Object.hasOwn(next, key)) graphRequire(isDeepStrictEqual(current[key], next[key]));
-    for (const key of ['label', 'recencyCriteria', 'filterCriteria', 'topKFilterCriteria'])
+    for (const key of ['recencyCriteria', 'filterCriteria', 'topKFilterCriteria'])
       if (Object.hasOwn(next, key)) current[key] = next[key];
     const joins = (path: unknown): unknown[] =>
       (path as Record<string, unknown>[]).map((p) => pick(p, ['fieldName', 'parentFieldName']));

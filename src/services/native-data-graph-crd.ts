@@ -168,7 +168,7 @@ async function nativeGraphMetadataStatus(
  * Take the node types the API assigned on create. A recorded API68 create sent `standard` for a
  * unified root and the echo read `derived` (2026-11-12); later reads keep the assigned type, so
  * the created graph is compared with the assigned types, matched by node path. A `derived`
- * (unified DMO) root also takes its assigned node devName and label.
+ * (unified DMO) root also takes its assigned node devName (node labels are always the target's).
  * @param {NativeDataGraphDocument} document Exact native intent.
  * @param {unknown} echoed Untrusted echoed root node.
  * @returns {NativeDataGraphDocument} Detached intent carrying the assigned node types.
@@ -192,16 +192,12 @@ function nativeGraphAssignedTypes(
   };
   const top = graphRecord(result.definition.sourceObject);
   visit(top, echoed);
-  // A unified DMO root (assigned `derived`) gets Salesforce's own node devName and label on
-  // create (recorded live at API68, 2026-11-13); every other authored setting must still hold.
+  // A unified DMO root (assigned `derived`) gets Salesforce's own node devName on create
+  // (recorded live at API68, 2026-11-13); every other authored setting must still hold.
   const echo = graphRecord(echoed);
-  if (echo.type === 'derived') {
-    graphText(echo.label);
-    top.label = echo.label;
-    if (Object.hasOwn(echo, 'devName')) {
-      graphText(echo.devName);
-      top.devName = echo.devName;
-    }
+  if (echo.type === 'derived' && Object.hasOwn(echo, 'devName')) {
+    graphText(echo.devName);
+    top.devName = echo.devName;
   }
   return validateNativeDataGraphDocument(result);
 }
@@ -821,13 +817,14 @@ export async function updateNativeDataGraph(
       for (const key of Object.keys(desired).filter((key) => key !== 'sourceObject'))
         graphRequire(isDeepStrictEqual(actual[key], desired[key]));
       /**
-       * Match every retained binding; only new projections/nodes may gain generated names.
+       * Match every retained binding; only new projections/nodes may gain generated names. Node
+       * labels are Salesforce's (the object's label), also on a node the PUT added.
        * @param {Record<string, unknown>} wanted Complete dispatched node.
        * @param {Record<string, unknown>} found Independent settled node.
        */
       function preserved(wanted: Record<string, unknown>, found: Record<string, unknown>): void {
         for (const key of Object.keys(wanted).filter(
-          (key) => !['fields', 'relatedObjects', 'path'].includes(key),
+          (key) => !['fields', 'relatedObjects', 'path', 'label'].includes(key),
         ))
           graphRequire(isDeepStrictEqual(wanted[key], found[key]));
         const wantedPaths = wanted.path as Record<string, unknown>[];

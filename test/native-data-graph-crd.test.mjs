@@ -1184,6 +1184,60 @@ test('native create sends a related-object 7-day document and settles on the ass
   assert.deepEqual(f.calls, ['POST']);
 });
 
+/**
+ * Give a server graph the node labels of the target objects, as Salesforce stores them.
+ * @param {object} graph GET-shaped graph.
+ * @returns {object} The same graph.
+ */
+function relabel(graph) {
+  graph.sourceObject.label = 'Target root label';
+  graph.sourceObject.relatedObjects[0].label = 'Target label';
+  return graph;
+}
+
+test('native create confirms a graph whose node labels Salesforce set from the target objects', async () => {
+  // A copy into another data space keeps the source labels; Salesforce stored the target DMO
+  // labels instead (live API68, 2026-11-22), which once failed the create's response check.
+  const f = fixture();
+  const authored = document();
+  authored.definition.fullRefreshConfig = { schedule: { frequency: 1, timeGranularity: 'Day' } };
+  authored.definition.incrementalRefreshConfig = { enabled: false };
+  authored.definition.sourceObject.relatedObjects.push({
+    name: 'ssot__ContactPointEmail__dlm',
+    label: 'Source label',
+    jsonPath: '$.ssot__ContactPointEmail__dlm',
+    path: [{ fieldName: 'ssot__PartyId__c', parentFieldName: 'ssot__Id__c' }],
+    type: 'standard',
+    fields: ['ssot__Id__c', 'ssot__PartyId__c'].map((sourceFieldName, index) => ({
+      sourceFieldName,
+      dataType: 'Text',
+      isKeyColumn: index === 0,
+      isProjected: true,
+      usageTag: 'NONE',
+    })),
+    relatedObjects: [],
+  });
+  authored.definition.sourceObject.label = 'Source root label';
+  f.client.create = async (definition) => {
+    f.calls.push('POST');
+    const body = buildDataGraphCreateRequest(definition);
+    f.setGraph(relabel(serverGraph(body, 'ready')));
+    return relabel(serverGraph(body, 'creating'));
+  };
+  const result = await operateNativeDataGraph(authored, f.context, f.client, options());
+  assert.deepEqual(result, { outcome: 'created', mutation: 'confirmed-created' });
+  assert.deepEqual(f.calls, ['POST']);
+});
+
+test('a node label other than the stored one is unchanged, with no PUT', async () => {
+  const f = updateFixture(runtime());
+  const desired = nativeDataGraphDocumentFromResponse(runtime());
+  desired.definition.sourceObject.label = 'Label of another data space';
+  const outcome = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+  assert.deepEqual(outcome, { outcome: 'unchanged', mutation: 'not-attempted' });
+  assert.deepEqual(f.calls, []);
+});
+
 test('native deploy sends a schedule change and confirms it from independent reads', async () => {
   const f = updateFixture(runtime());
   const desired = nativeDataGraphDocumentFromResponse(runtime());
@@ -1251,6 +1305,7 @@ test('native PUT sends authored changes the API decides instead of refusing them
   d.incrementalRefreshConfig = { enabled: true };
   d.idDmoName = 'Foreign_ID__dlm';
   d.sourceObject.label = 'Relabelled';
+  d.sourceObject.relatedObjects[0].label = 'Relabelled child';
   d.sourceObject.fields[0].isKeyColumn = false;
   d.sourceObject.fields[0].keyQualifierName = 'Other';
   d.sourceObject.fields[2].dataType = 'Number';
@@ -1272,7 +1327,13 @@ test('native PUT sends authored changes the API decides instead of refusing them
   });
   assert.deepEqual(request.incrementalRefreshConfig, { enabled: true });
   assert.equal(request.idDmoName, baseline.idDmoName);
-  assert.equal(request.sourceObject.label, 'Relabelled');
+  // Node labels are Salesforce's: a POST or PUT with another label kept the stored one on a
+  // unified root, a link node and a standard node (live API68, 2026-11-22/23).
+  assert.equal(request.sourceObject.label, baseline.sourceObject.label);
+  assert.equal(
+    request.sourceObject.relatedObjects[0].label,
+    baseline.sourceObject.relatedObjects[0].label,
+  );
   assert.equal(request.sourceObject.devName, baseline.sourceObject.devName);
   assert.equal(request.sourceObject.fields[0].isKeyColumn, false);
   assert.equal(request.sourceObject.fields[0].keyQualifierName, 'Other');
@@ -3916,6 +3977,28 @@ test('a related object added by PUT settles although Salesforce gave it a key-qu
   assert.deepEqual(f.calls, ['PUT']);
   const added = f.payloads[0].sourceObject.relatedObjects[0];
   assert.ok(!added.fields.some((field) => field.sourceFieldName === 'KQ_Id__c'));
+});
+
+test('a related object added by PUT settles with the label Salesforce gave it', async () => {
+  const f = updateFixture(runtime());
+  f.client.update = async (_apiName, payload) => {
+    f.calls.push('PUT');
+    f.payloads.push(structuredClone(payload));
+    const read = await f.context.get(name);
+    // The server stores the new related objects with their objects' labels.
+    const settled = recursiveRuntime();
+    settled.version = String(Number(read.body.version) + 1);
+    const child = settled.sourceObject.relatedObjects[0];
+    child.label = 'Object label';
+    child.relatedObjects[0].label = 'Other object label';
+    f.setGraph(settled);
+    return { accepted: true };
+  };
+  const desired = nativeDataGraphDocumentFromResponse(recursiveRuntime());
+  desired.definition.sourceObject.relatedObjects[0].label = 'Label of another data space';
+  const result = await operateNativeDataGraph(desired, f.context, f.client, f.intent);
+  assert.deepEqual(result, { outcome: 'updated', mutation: 'confirmed-updated' });
+  assert.deepEqual(f.calls, ['PUT']);
 });
 
 /**

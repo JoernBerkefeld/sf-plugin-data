@@ -60,8 +60,9 @@ schedule). Creating needs `--allow-processing`, because Salesforce starts buildi
 
 - Salesforce adjusts what it stores: it adds the key-qualifier field to related objects and can
   report another node `type` (a unified root reads `derived`). On a unified root it also renames
-  the root object (devName and label) and its fields. Retrieve after a create and keep the
-  retrieved file.
+  the root object (devName) and its fields. Retrieve after a create and keep the retrieved file.
+- Node labels are set by Salesforce: every node gets the label of its object, whatever label the
+  file holds. A graph copied from another data space therefore shows the target objects' labels.
 - A node's `type`, reference and projected name are assigned by Salesforce. A hand-written
   create file may leave the node `type` out; none is sent then.
 - Deploy waits while Salesforce builds the graph, up to `--wait-timeout` (default `1800`
@@ -78,8 +79,8 @@ schedule). Creating needs `--allow-processing`, because Salesforce starts buildi
 
 For an existing graph: edit the retrieved file, run `--preview`, then deploy with
 `--allow-processing`. The file is the desired state and goes to Salesforce in one PUT; Salesforce
-decides. Label, description, refresh schedule, incremental refresh, the fields and related
-objects as listed, field settings and the root object are sent as written.
+decides. The graph's label, description, refresh schedule, incremental refresh, the fields and
+related objects as listed, field settings and the root object are sent as written.
 
 - A field or related object left out of the file is not sent. Salesforce refuses removed fields
   and related objects, a root change and another related object in place of an existing one
@@ -94,8 +95,11 @@ objects as listed, field settings and the root object are sent as written.
   [`DATA_GRAPH_CHANGE_NOT_APPLIED`](../errors/data-graph/DATA_GRAPH_CHANGE_NOT_APPLIED.md),
   never `updated`.
 - Key-qualifier fields Salesforce added are kept when the file leaves them out.
-- Settings left out of the file (description, schedule, a node's label or criteria, field
-  settings) keep their org values. To clear one, give it an explicit value.
+- A node's label is not sent: Salesforce keeps its own label even when a PUT names another one,
+  and a related object added by the update gets its object's label. Node labels alone never make
+  an update. The graph's own label is sent.
+- Settings left out of the file (description, schedule, a node's criteria, field settings) keep
+  their org values. To clear one, give it an explicit value.
 - On an update, a stated node `type` must match the org. A related object added without `type`
   is sent without one.
 - The name and data space identify the graph. A file with another name creates or addresses
