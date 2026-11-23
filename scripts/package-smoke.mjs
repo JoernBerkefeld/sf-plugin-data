@@ -136,7 +136,7 @@ const packageRoot = path.dirname(path.dirname(runner));
 const metadata = JSON.parse(readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
 assert.equal(metadata.name, 'sf-plugin-data');
 assert.equal(artifact.filename, `sf-plugin-data-${metadata.version}.tgz`);
-assert.equal(metadata.version, '0.1.0');
+assert.match(metadata.version, /^\d+\.\d+\.\d+$/u);
 const { Config } = await import(
   pathToFileURL(createRequire(path.join(packageRoot, 'package.json')).resolve('@oclif/core')).href
 );

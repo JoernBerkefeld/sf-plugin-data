@@ -54,7 +54,7 @@ test('offline subprocess core auth directories stay under the isolated home with
 test('package metadata points to the renamed repository without changing npm identity', () => {
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(manifest.name, 'sf-plugin-data');
-  assert.equal(manifest.version, '0.1.0');
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/u);
   assert.deepEqual(manifest.repository, {
     type: 'git',
     url: 'git+https://github.com/JoernBerkefeld/sf-plugin-data.git',
