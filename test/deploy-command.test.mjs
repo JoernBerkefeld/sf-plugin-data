@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DeployInputError, readDeployInputs } from '../lib/artifacts/read-deploy-input.js';
 import Deploy from '../lib/commands/data360/deploy.js';
+import { plugin as packagePlugin } from '../lib/plugin.js';
 import { dataSpaceDirectory } from '../lib/services/data-space-check.js';
 import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
 
@@ -210,9 +211,9 @@ test('preview resolves local input before org inspection and returns advisory ve
   assert.equal(result.metadata.operation, 'deploy');
   assert.deepEqual(result.metadata.plugin, {
     name: 'sf-plugin-data',
-    version: '0.1.0',
+    version: packagePlugin.version,
   });
-  assert.equal(result.provenance.pluginVersion, '0.1.0');
+  assert.equal(result.provenance.pluginVersion, packagePlugin.version);
   assert.equal(result.provenance.targetOrgId, 'synthetic-target');
   assert.ok(Number.isFinite(Date.parse(result.provenance.generatedAt)));
   assert.equal(result.result.items[0].operation, 'preview');

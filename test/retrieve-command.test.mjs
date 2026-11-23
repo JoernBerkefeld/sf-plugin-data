@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { errorCodeInfo } from '../lib/errors/registry.js';
 import Retrieve from '../lib/commands/data360/retrieve.js';
+import { plugin as packagePlugin } from '../lib/plugin.js';
 import { NativeDmoError } from '../lib/artifacts/native-dmo-document.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
 import { SegmentError } from '../lib/artifacts/segment-document.js';
@@ -570,9 +571,9 @@ test('command delegates acquisition and authored-only output without duplicating
   assert.equal(result.status, 'success');
   assert.deepEqual(result.metadata.plugin, {
     name: 'sf-plugin-data',
-    version: '0.1.0',
+    version: packagePlugin.version,
   });
-  assert.equal(result.provenance.pluginVersion, '0.1.0');
+  assert.equal(result.provenance.pluginVersion, packagePlugin.version);
   assert.equal(result.metadata.apiVersion, '65.0');
   assert.equal(result.provenance.sourceOrgId, 'synthetic-org');
   assert.equal(result.result.items[0].outcome, 'retrieved');
