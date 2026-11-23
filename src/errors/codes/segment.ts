@@ -9,7 +9,7 @@ export const hints: Readonly<Record<string, string>> = {
   PARTIAL_SEGMENT_OUTPUT:
     'A segment file was written, but a later step of saving the JSON and SQL files failed, so the files on disk may not be complete. Inspect the .segment.json and .sql files and retrieve again with --overwrite.',
   SEGMENT_ACQUISITION_FAILED:
-    'The plugin could not read the segment from the org. Check the segment name, the target org login and the Salesforce API detail in the message, then rerun the retrieve.',
+    'The plugin could not read the segment, or a complete segment list, from the org. Check the segment name, the target org login and the Salesforce API detail in the message, then rerun.',
   SEGMENT_ADMISSION_FAILED:
     'The checks right before the segment write failed, so nothing was sent. Make sure the .segment.json file did not change during the run, check the org, and run the deploy again.',
   SEGMENT_CHILD_NOT_FOUND:
@@ -53,7 +53,7 @@ export const hints: Readonly<Record<string, string>> = {
   SEGMENT_NAME_NOT_STORED:
     "In a non-default data space Salesforce stores a segment as <prefix>_<Name>; this file's name lacks the prefix, so a create could not be read back. Nothing was sent; add the prefix to the file name and identity.apiName.",
   SEGMENT_NOT_FOUND:
-    'No segment of the org has this API name or record ID in the data space asked for or any other. Check the exact value (case matters; <prefix>_<Name> outside default) and deploy the segment first.',
+    'No segment of the org has this API name or record ID in any data space, or the value is not a segment record ID (1sg…). Check the exact value (case matters; <prefix>_<Name> outside default) and deploy the segment first.',
   SEGMENT_OTHER_DATASPACE:
     'The segment with this API name or record ID exists, but in another data space than the one asked for. Use the segment of the right data space, or look it up in the data space the message names.',
   SEGMENT_PUBLISH_ADMISSION_FAILED:
