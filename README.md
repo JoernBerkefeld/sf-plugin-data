@@ -552,6 +552,12 @@ a page under [docs/errors](docs/errors/README.md).
 - `resolveSegment(connection, { dataSpace, apiName })` or `{ dataSpace, marketSegmentId }`: one
   segment, matched exactly. A segment of another data space fails with `SEGMENT_OTHER_DATASPACE`,
   no segment at all with `SEGMENT_NOT_FOUND`.
+- `crossSpaceContext(connection, { from, to, names? })`: what the rename rules of
+  [salesforce-data360-rules](https://www.npmjs.com/package/salesforce-data360-rules) need to turn
+  names of one data space into those of another (`placeDmo` for DMO names, `translateSegmentName`, …): the org's
+  data spaces with their prefixes and, when a name in `names` is an identity resolution output
+  (or `names` is left out), its rulesets. A data space the org lacks fails with
+  `UNKNOWN_DATASPACE`.
 
 ## Local development
 
