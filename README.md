@@ -45,6 +45,16 @@ example `sf dc retrieve`.
   and the Command Palette in VS Code, and groups your files by data space in a side panel.
 - It brings its own copy of this plugin, so no `sf plugins install` or link is needed there.
 
+## Get started
+
+```sh
+# 1. See which data spaces the org has
+sf data360 list dataspace --target-org <alias>
+
+# 2. Retrieve the components of one of them
+sf data360 retrieve --dataspace <name> --target-org <alias>
+```
+
 ## Quick start
 
 ```sh
@@ -75,6 +85,7 @@ The commands:
 | `sf data360 delete`                 | Deletes components by name, or the ones whose files a Git range deleted. |
 | `sf data360 publish`                | Publishes one segment or one calculated insight.                         |
 | `sf data360 segment members export` | Writes the members of a published segment to a CSV or JSON file.         |
+| `sf data360 list dataspace`         | Lists the org's data spaces with name, label and prefix.                 |
 
 Every command has `--help` with all flags, and `--json` for machine-readable output.
 
@@ -263,7 +274,8 @@ upgrading. The other types accept `auto` or `68.0`. `--api-version latest` is no
 Every command runs in one data space, chosen with the optional `--dataspace NAME`;
 `--data-space` is a compatibility alias. Neither spelling has a CLI default of its own: leave
 both out and the command works in `default`. A command never works on all data spaces at once,
-and an unknown data space stops it before any read or write.
+and an unknown data space stops it before any read or write. `sf data360 list dataspace` shows
+the names the org has.
 
 - **The file names its data space.** Every file carries the top-level key `c__dataSpace`. Deploy
   and delete refuse a file of another data space than the run's, before any write. Deploy can
@@ -552,6 +564,9 @@ a page under [docs/errors](docs/errors/README.md).
 - `resolveSegment(connection, { dataSpace, apiName })` or `{ dataSpace, marketSegmentId }`: one
   segment, matched exactly. A segment of another data space fails with `SEGMENT_OTHER_DATASPACE`,
   no segment at all with `SEGMENT_NOT_FOUND`.
+- `listDataSpaces(connection)`: every data space of the org with `name`, `label` (the name when
+  Salesforce gives none) and `prefix` (every data space but `default` has one). An incomplete
+  list fails with `DATASPACE_READ_FAILED`, a refused session with `AUTHENTICATION_FAILED`.
 - `crossSpaceContext(connection, { from, to, names? })`: what the rename rules of
   [salesforce-data360-rules](https://www.npmjs.com/package/salesforce-data360-rules) need to turn
   names of one data space into those of another (`placeDmo` for DMO names, `translateSegmentName`, …): the org's

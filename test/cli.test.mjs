@@ -565,6 +565,7 @@ for (const command of topics.flatMap((topic) => [
   `${topic} deploy`,
   `${topic} delete`,
   `${topic} publish`,
+  `${topic} list dataspace`,
 ])) {
   test(`${command} help loads without org authentication`, () => {
     const result = spawnSync(process.execPath, ['bin/run.js', ...command.split(' '), '--help'], {
@@ -954,7 +955,7 @@ test('Git selector flag declares parser exclusivity against both existing modes'
   assert.ok(Deploy.flags.metadata.exclusive.includes('changed-since'));
 });
 
-test('oclif discovers twenty IDs backed by exactly five canonical implementations', async () => {
+test('oclif discovers twenty-four IDs backed by exactly six canonical implementations', async () => {
   const config = await Config.load({ root: process.cwd() });
   assert.deepEqual(
     config.commandIDs.toSorted(),
@@ -965,9 +966,17 @@ test('oclif discovers twenty IDs backed by exactly five canonical implementation
         `${topic}:delete`,
         `${topic}:publish`,
         `${topic}:segment:members:export`,
+        `${topic}:list:dataspace`,
       ])
       .toSorted(),
   );
+  const list = await config.findCommand('data360:list:dataspace', { must: true }).load();
+  assert.deepEqual(
+    list.aliases,
+    topics.slice(1).map((topic) => `${topic}:list:dataspace`),
+  );
+  for (const topic of topics.slice(1))
+    assert.equal(await config.findCommand(`${topic}:list:dataspace`, { must: true }).load(), list);
   const members = await config.findCommand('data360:segment:members:export', { must: true }).load();
   assert.deepEqual(
     members.aliases,
@@ -1018,7 +1027,8 @@ test('oclif discovers twenty IDs backed by exactly five canonical implementation
     }
   }
   implementations.add(members);
-  assert.equal(implementations.size, 5);
+  implementations.add(list);
+  assert.equal(implementations.size, 6);
 });
 
 for (const topic of topics) {
@@ -1061,3 +1071,24 @@ test('segment members export refuses an invalid selection in a subprocess before
   assert.equal(envelope.diagnostics.errors[0].code, 'INVALID_SELECTION');
   assert.equal(envelope.result.rowsWritten, 0);
 });
+
+for (const topic of topics)
+  test(`${topic} list dataspace without a usable org stops before any read, exit 1`, () => {
+    const result = spawnSync(
+      process.execPath,
+      ['bin/run.js', topic, 'list', 'dataspace', '--json'],
+      {
+        encoding: 'utf8',
+        env: environment,
+      },
+    );
+    assert.equal(result.status, 1, result.stderr);
+    const output = JSON.parse(result.stdout);
+    const envelope = output.result;
+    assert.equal(envelope.contract, 'sf-data360-list-dataspace');
+    assert.equal(envelope.provenance.command, 'sf data360 list dataspace');
+    assert.equal(envelope.metadata.plugin.name, 'sf-plugin-data');
+    assert.equal(envelope.status, 'blocked');
+    assert.equal(envelope.diagnostics.errors[0].code, 'TARGET_ORG_REQUIRED');
+    assert.deepEqual(envelope.result.items, []);
+  });

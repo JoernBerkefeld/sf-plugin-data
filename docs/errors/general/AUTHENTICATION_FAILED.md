@@ -2,11 +2,11 @@
 
 > Salesforce rejected the session or the org could not be loaded. Check the org with sf org display, log in again with sf org login web if needed, then rerun.
 
-|              |                                                                              |
-| ------------ | ---------------------------------------------------------------------------- |
-| **Family**   | General                                                                      |
-| **Commands** | `sf data360 retrieve`, `sf data360 segment members export`                   |
-| **Outcome**  | `failed` — the affected component was not retrieved; the org was not changed |
+|              |                                                                                         |
+| ------------ | --------------------------------------------------------------------------------------- |
+| **Family**   | General                                                                                 |
+| **Commands** | `sf data360 retrieve`, `sf data360 segment members export`, `sf data360 list dataspace` |
+| **Outcome**  | `failed` — the affected component was not retrieved; the org was not changed            |
 
 ## What it means
 

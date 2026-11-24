@@ -74,6 +74,8 @@ for (const member of [
   'services/delete-calculated-insight',
   'commands/data360/segment/members/export',
   'services/segment-members',
+  'commands/data360/list/dataspace',
+  'services/list-data-spaces',
 ])
   for (const extension of ['js', 'd.ts'])
     assert.ok(artifact.files.some((file) => file.path === `lib/${member}.${extension}`));
@@ -150,6 +152,7 @@ assert.deepEqual(
       `${topic}:delete`,
       `${topic}:publish`,
       `${topic}:segment:members:export`,
+      `${topic}:list:dataspace`,
     ])
     .toSorted(),
 );

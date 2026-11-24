@@ -2,11 +2,11 @@
 
 > The list of data spaces could not be read completely from the org, so nothing was read or written. Check the org session and Data Cloud access, then rerun.
 
-|              |                                                                     |
-| ------------ | ------------------------------------------------------------------- |
-| **Family**   | General                                                             |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`     |
-| **Outcome**  | `blocked` — nothing was read from, written to or deleted in the org |
+|              |                                                                                                                |
+| ------------ | -------------------------------------------------------------------------------------------------------------- |
+| **Family**   | General                                                                                                        |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`, `sf data360 list dataspace`                   |
+| **Outcome**  | `blocked` (`failed` for `sf data360 list dataspace`) — nothing was read from, written to or deleted in the org |
 
 ## What it means
 

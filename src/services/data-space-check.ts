@@ -25,11 +25,12 @@ const pageSize = 50;
 const pageLimit = 40;
 
 /**
- * One data space of the org: its name and, for every space but `default`, the prefix Salesforce
- * gives the copies of standard DMOs in it (`ds2` for `ds2_Individual__dlm`). Only this route
- * names the prefix (live API 68, DB entry data360:dataspace-name-spelling-api68).
+ * One data space of the org: its name, its label (the name when the list gives none) and, for
+ * every space but `default`, the prefix Salesforce gives the copies of standard DMOs in it (`ds2`
+ * for `ds2_Individual__dlm`). Only this route names the prefix (live API 68, DB entries
+ * data360:dataspace-name-spelling-api68 and data360:dataspace-list-fields-api68).
  */
-export type OrgDataSpace = { name: string; prefix?: string };
+export type OrgDataSpace = { name: string; label: string; prefix?: string };
 
 /**
  * Read the names of every data space of the org with `GET /ssot/data-spaces`, page by page
@@ -44,8 +45,9 @@ export async function readOrgDataSpaces(open: DataSpaceSender): Promise<string[]
 }
 
 /**
- * Read every data space of the org as readOrgDataSpaces does, keeping each one's prefix when it
- * names a usable one (letters and digits).
+ * Read every data space of the org as readOrgDataSpaces does, keeping each one's label (the name
+ * when the entry has no usable label) and its prefix when it names a usable one (letters and
+ * digits).
  * @param {DataSpaceSender} open Opens the command's shared bound sender.
  * @returns {Promise<OrgDataSpace[]>} Data spaces.
  */
@@ -79,12 +81,22 @@ export async function readOrgDataSpaceEntries(open: DataSpaceSender): Promise<Or
     )
       throw new DataSpaceError('DATASPACE_READ_FAILED');
     for (const entry of entries) {
-      const { name, prefix } = (entry ?? {}) as { name?: unknown; prefix?: unknown };
+      const { name, label, prefix } = (entry ?? {}) as {
+        name?: unknown;
+        label?: unknown;
+        prefix?: unknown;
+      };
       if (!isDataSpaceName(name)) throw new DataSpaceError('DATASPACE_READ_FAILED');
+      // A label is printed as it is: one without text or with control characters is not used.
+      const shown =
+        // eslint-disable-next-line no-control-regex -- control characters are refused, not matched
+        typeof label === 'string' && label.trim() && !/[\u0000-\u001F\u007F]/u.test(label)
+          ? label
+          : name;
       names.push(
         typeof prefix === 'string' && /^[A-Za-z][A-Za-z0-9]{0,39}$/u.test(prefix)
-          ? { name, prefix }
-          : { name },
+          ? { name, label: shown, prefix }
+          : { name, label: shown },
       );
     }
     if (names.length === total) return names;
@@ -95,7 +107,7 @@ export async function readOrgDataSpaceEntries(open: DataSpaceSender): Promise<Or
 
 /**
  * Reads the org's data spaces; tests replace `read` with an offline fake, which may answer plain
- * names (no prefixes).
+ * names (no labels, no prefixes).
  */
 export const dataSpaceDirectory: {
   read: (open: DataSpaceSender) => Promise<Array<string | OrgDataSpace>>;
@@ -190,7 +202,7 @@ export class DataSpaceCheck {
     this.known ??= dataSpaceDirectory
       .read(this.sender)
       .then((entries) =>
-        entries.map((entry) => (typeof entry === 'string' ? { name: entry } : entry)),
+        entries.map((entry) => (typeof entry === 'string' ? { name: entry, label: entry } : entry)),
       );
     return this.known;
   }
