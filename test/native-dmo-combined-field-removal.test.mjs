@@ -276,8 +276,10 @@ async function deploy({ dmos = [], mappings = [], dlos = [], flags = {}, service
   const previousCwd = process.cwd();
   const previousExit = process.exitCode;
   process.chdir(root);
+  process.exitCode = undefined;
   try {
-    return { result: await command.run(), cwd: root };
+    const result = await command.run();
+    return { result, cwd: root, exitCode: process.exitCode };
   } finally {
     process.chdir(previousCwd);
     process.exitCode = previousExit;
@@ -571,7 +573,7 @@ test('a failed removal fails the one DMO item without another write', async () =
 
 test('a batch that stops at the mapping keeps the completed removal on the DMO item', async () => {
   const org1 = single();
-  const { result } = await deploy({
+  const { result, exitCode } = await deploy({
     dmos: [dmoFile(D, keep, 'Changed')],
     mappings: [mappingFile(M, 'SrcA__dll', D, keep)],
     services: {
@@ -583,7 +585,9 @@ test('a batch that stops at the mapping keeps the completed removal on the DMO i
       }),
     },
   });
-  assert.equal(result.status, 'blocked', JSON.stringify(result));
+  // The DMO update was confirmed and the mapping blocked: partial, exit 68.
+  assert.equal(result.status, 'partial', JSON.stringify(result));
+  assert.equal(exitCode, 68);
   assert.deepEqual(org1.writes(), [`dmo:patch:${D}`, `dmo:remove:${D}:Note__c`]);
   const [item, mapping] = result.result.items;
   assert.equal(item.outcome, 'updated');

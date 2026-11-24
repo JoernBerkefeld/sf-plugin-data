@@ -209,10 +209,14 @@ const setup = (overrides = {}, selected = [ir()]) => {
   };
   return { command, calls, flags };
 };
+let lastExitCode;
 const run = async (command) => {
   const previous = process.exitCode;
+  process.exitCode = undefined;
   try {
-    return await command.run();
+    const result = await command.run();
+    lastExitCode = process.exitCode;
+    return result;
   } finally {
     process.exitCode = previous;
   }
@@ -618,7 +622,9 @@ test('--async passes through to IR execution and reports accepted-but-processing
       };
     };
     const result = await run(command);
+    // --async: accepted by Salesforce is success, exit 0.
     assert.equal(result.status, 'success');
+    assert.equal(lastExitCode, undefined);
     assert.equal(result.result.items[0].outcome, 'creation-processing');
     assert.equal(result.result.items[0].mutation, 'acknowledged-processing');
     assert.ok(calls.includes('create'));
@@ -657,7 +663,7 @@ test('--async without an IR in the selection is refused before any target access
   assert.deepEqual(calls, []);
 });
 
-test('rerun of an async IR while PUBLISHING is blocked with NOT_SETTLED and writes nothing', async () => {
+test('rerun of an async IR while PUBLISHING is processing with NOT_SETTLED and writes nothing', async () => {
   for (const async of [false, true]) {
     const { command, calls } = setup({ async });
     command.preflightIdentityResolution = async () => ({
@@ -671,7 +677,9 @@ test('rerun of an async IR while PUBLISHING is blocked with NOT_SETTLED and writ
       ],
     });
     const result = await run(command);
-    assert.equal(result.status, 'blocked');
+    // Salesforce is still processing the ruleset: processing, exit 69.
+    assert.equal(result.status, 'processing', JSON.stringify(result));
+    assert.equal(lastExitCode, 69);
     const codes = JSON.stringify(result);
     assert.match(codes, /IDENTITY_RESOLUTION_NOT_SETTLED/u);
     assert.ok(!calls.some((call) => call.includes('write')));

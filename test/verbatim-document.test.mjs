@@ -110,10 +110,14 @@ const retrieveCommand = (metadata, outputDirectory, overwrite) => {
   });
   return command;
 };
+let lastExitCode;
 const run = async (command) => {
   const previous = process.exitCode;
+  process.exitCode = undefined;
   try {
-    return await command.run();
+    const result = await command.run();
+    lastExitCode = process.exitCode;
+    return result;
   } finally {
     process.exitCode = previous;
   }
@@ -590,11 +594,16 @@ test('deploy refuses a named verbatim file before any org call, naming kind, nam
   );
 });
 
-test('a deployed folder holding only verbatim files deploys nothing and warns', async () => {
+test('a deployed folder holding only verbatim files deploys nothing, warns and is blocked', async () => {
   const cwd = await root('deploy-only');
   await writeNativeDmoDocument(verbatimDmo(), cwd, false);
   const result = await run(deployCommand(cwd, { 'source-dir': ['data360/dmo'] }));
-  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(result.status, 'blocked', JSON.stringify(result.diagnostics));
+  assert.equal(lastExitCode, 1);
+  assert.deepEqual(
+    result.diagnostics.errors.map((error) => error.code),
+    ['NOTHING_TO_DEPLOY'],
+  );
   assert.deepEqual(result.result.items, []);
   assert.equal(result.diagnostics.warnings.length, 1);
   assert.match(result.diagnostics.warnings[0], /^Skipped .*Example__dlm\.dmo-meta\.json: the dmo/u);

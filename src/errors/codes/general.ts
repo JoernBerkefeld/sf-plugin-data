@@ -72,6 +72,8 @@ export const hints: Readonly<Record<string, string>> = {
     'A parent DLO or DMO was written but could not be confirmed ready, so dependent items were not deployed. Wait, check the parent with deploy --preview, then rerun.',
   NATIVE_RETRIEVE_FAILED:
     'This DLO, DMO, mapping or relationship could not be retrieved for a reason without a more specific code. Read the message, check the org session, then rerun.',
+  NOTHING_TO_DEPLOY:
+    'Every selected file was a verbatim file and was skipped, so there was nothing to deploy and nothing was sent. Select files the plugin can represent, or retrieve the objects again.',
   OUTPUT_CHANGED:
     'The target file changed on disk while the plugin was writing it, so the write stopped. Make sure nothing else edits the project during the run, then rerun.',
   OUTPUT_FAILED:

@@ -73,10 +73,14 @@ const rawMapping = (pairs = mapping.spec.fieldMappings) => ({
   fieldMappings: pairs.map((pair, index) => ({ ...pair, developerName: `target_${index}` })),
 });
 const org = { getOrgId: () => 'org', getUsername: () => 'target' };
+let lastExitCode;
 const run = async (command) => {
   const prior = process.exitCode;
+  process.exitCode = undefined;
   try {
-    return await command.run();
+    const result = await command.run();
+    lastExitCode = process.exitCode;
+    return result;
   } finally {
     process.exitCode = prior;
   }
@@ -251,7 +255,7 @@ test('human deployment identifies each created component and keeps JSON unchange
   }
 });
 
-test('DLO processing evidence is private and cleared only by existing parent settlement', async () => {
+test('DLO processing evidence is reported and cleared only by existing parent settlement', async () => {
   for (const withMapping of [false, true])
     for (const pending of [false, true]) {
       const { command, inputs } = await fixture({ pending: pending ? 'dlo' : undefined });
@@ -275,18 +279,25 @@ test('DLO processing evidence is private and cleared only by existing parent set
         assert.equal(result.status, 'failed');
         assert.ok(!lines.some((line) => line.includes('(server is still processing)')));
       } else {
-        assert.equal(result.status, 'success', JSON.stringify(result));
+        // A DLO still processing at the end is processing (69); a settled parent is success.
+        assert.equal(result.status, withMapping ? 'success' : 'processing', JSON.stringify(result));
+        assert.equal(lastExitCode, withMapping ? undefined : 69);
         assert.ok(
           lines.includes(
             `created dlo Example__dll${withMapping ? '' : ' (server is still processing)'}`,
           ),
         );
       }
-      assert.ok(!JSON.stringify(result).includes('serverProcessing'));
+      assert.equal(
+        JSON.stringify(result).includes('serverProcessing'),
+        // Only an independently settled parent drops the processing evidence.
+        !withMapping || pending,
+        JSON.stringify(result.result.items),
+      );
     }
 });
 
-test('mixed batch deployment carries DLO processing without changing JSON', async () => {
+test('mixed batch deployment carries DLO processing into status and JSON', async () => {
   const { command, inputs } = await fixture({ version: 'auto' });
   command.resolveInputs = async () => [
     inputs.find((input) => input.document.kind === 'dlo'),
@@ -347,10 +358,11 @@ test('mixed batch deployment carries DLO processing without changing JSON', asyn
   command.jsonEnabled = () => false;
   command.log = (line) => lines.push(line);
   const result = await run(command);
-  assert.equal(result.status, 'success', JSON.stringify(result));
+  assert.equal(result.status, 'processing', JSON.stringify(result));
+  assert.equal(lastExitCode, 69);
   assert.ok(lines.includes('created dlo Example__dll (server is still processing)'));
   assert.ok(lines.includes('Unchanged: segment:Audience; mutation: not-attempted.'));
-  assert.ok(!JSON.stringify(result).includes('serverProcessing'));
+  assert.equal(result.result.items[0].serverProcessing, true);
 });
 
 test('mapping update human name is independently resolved, not the authored alias', async () => {

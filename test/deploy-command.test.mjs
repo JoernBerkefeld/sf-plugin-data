@@ -331,8 +331,10 @@ test('sequential execution retains prior creation, stops and distinguishes remai
     };
     const { result, exitCode } = await run(command);
     assert.equal(count, 2);
-    assert.equal(result.status, stop === 'blocked' ? 'blocked' : 'failed');
-    assert.equal(exitCode, 1);
+    // A confirmed creation beside a failure without unknown write is partial (68).
+    const unknown = ['unknown', 'throw'].includes(stop);
+    assert.equal(result.status, unknown ? 'failed' : 'partial');
+    assert.equal(exitCode, unknown ? 1 : 68);
     assert.equal(result.result.items[0].mutation, 'confirmed-created');
     assert.equal(result.result.items[0].outcome, 'created');
     assert.equal(

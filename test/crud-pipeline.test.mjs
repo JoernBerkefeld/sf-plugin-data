@@ -319,7 +319,8 @@ test('a failed or blocked stage stops every later stage', async () => {
     throw new Error('refused before dispatch');
   };
   const second = await run(blockedTransform.command);
-  assert.equal(second.status, 'blocked');
+  // The stream and mapping before it were written: blocked after confirmed writes is partial.
+  assert.equal(second.status, 'partial');
   assert.deepEqual(blockedTransform.calls, [
     'stream-execute',
     'mapping-execute',

@@ -319,6 +319,12 @@ type ExecutionItem = Omit<DeployExecutionResult, 'outcome'> & {
   path: string;
 };
 
+/** Item codes that mean Salesforce is still processing a write of this run, not a failure. */
+const processingCodes: ReadonlySet<string> = new Set([
+  'IDENTITY_RESOLUTION_NOT_SETTLED',
+  'TRANSFORM_SCHEDULE_NOT_SENT',
+]);
+
 export type DeployEnvelope = {
   contract: 'sf-data360-deploy';
   contractVersion: '1.1.0';
@@ -907,6 +913,45 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       string,
       Parameters<NonNullable<Parameters<typeof executeMapping>[3]>>[0]
     >();
+    /**
+     * Final status of a run that reached its end: an unknown mutation keeps the run status; some
+     * item confirmed written beside a failed or blocked one (or an unwritten copy file) is partial;
+     * otherwise a server still processing (a DLO, segment or transform, an identity resolution
+     * not yet settled, a transform schedule not sent while processing) is processing.
+     * @param {CrudStageResult['status']} status Status of the stages.
+     * @param {boolean} copyNotWritten A cross-data-space copy file was not written.
+     * @returns {string} Envelope status (one of DeployEnvelope status values).
+     */
+    const settledStatus = (
+      status: CrudStageResult['status'],
+      copyNotWritten: boolean,
+    ): DeployEnvelope['status'] => {
+      if (flags.preview) return status;
+      const executed = envelope.result.items.filter((item) => item.operation === 'execute');
+      const mutations = executed.map((item) => ('mutation' in item ? item.mutation : undefined));
+      if (mutations.includes('unknown')) return status;
+      // The code is on the item, or on the preflight that stopped it before its write.
+      const stillProcessing = (item: (typeof executed)[number]): boolean =>
+        [
+          ...item.diagnostics,
+          ...('preflight' in item && item.preflight ? item.preflight.diagnostics : []),
+        ].some((diagnostic) => processingCodes.has(diagnostic.code));
+      const written = mutations.some(
+        (mutation) => mutation === 'confirmed-created' || mutation === 'confirmed-updated',
+      );
+      const failed =
+        executed.some(
+          (item) =>
+            (item.outcome === 'failed' || item.outcome === 'blocked') && !stillProcessing(item),
+        ) ||
+        // A stop without a failed item is a failure unless an item still processing caused it.
+        (status !== 'success' && !executed.some((item) => stillProcessing(item)));
+      if (failed) return written ? 'partial' : status;
+      if (copyNotWritten) return 'partial';
+      return processingDlos.size > 0 || executed.some((item) => stillProcessing(item))
+        ? 'processing'
+        : status;
+    };
     const finish = (
       status: DeployEnvelope['status'],
       code?: string,
@@ -1259,7 +1304,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           input.document.kind === 'native-data-graph' ? 'data-graph' : input.document.kind,
         );
       // Every selected file was a skipped verbatim file: nothing to deploy.
-      if (resolvedInputs.length === 0 && skipped.length > 0) return finish('success');
+      if (resolvedInputs.length === 0 && skipped.length > 0)
+        return finish('blocked', 'NOTHING_TO_DEPLOY');
       if (resolvedInputs.length === 0 && changedSince === undefined)
         return finish('blocked', 'INVALID_SELECTION');
       const graphInputs = resolvedInputs.filter(
@@ -1591,6 +1637,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           if (kind === 'dlo' && serverProcessing) processingDlos.add(input.path);
           envelope.result.items.push({
             ...execution,
+            ...(kind === 'dlo' && serverProcessing ? { serverProcessing: true as const } : {}),
             family: kind as 'mapping' | 'relationship' | 'dlo' | 'dmo',
             identity,
             operation: 'execute',
@@ -1652,6 +1699,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 ) {
                   settled = true;
                   processingDlos.delete(input.path);
+                  delete (envelope.result.items.at(-1) as ExecutionItem).serverProcessing;
                   break;
                 }
               }
@@ -2429,9 +2477,10 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 const { serverProcessing, ...execution } = result as typeof result & {
                   serverProcessing?: true;
                 };
-                if (['dlo', 'segment'].includes(input.document.kind) && serverProcessing)
-                  processingDlos.add(input.path);
-                Object.assign(item, execution);
+                const processing =
+                  ['dlo', 'segment'].includes(input.document.kind) && serverProcessing === true;
+                if (processing) processingDlos.add(input.path);
+                Object.assign(item, execution, processing ? { serverProcessing: true } : {});
               } catch (error) {
                 item.diagnostics = [
                   {
@@ -3289,7 +3338,16 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         }
         envelope.result.crossDataSpace.copies = copies;
       }
-      return finish(outcome.status, outcome.code, outcome.error);
+      return finish(
+        settledStatus(
+          outcome.status,
+          (envelope.result.crossDataSpace?.copies ?? []).some(
+            (copy) => copy.outcome === 'not-written',
+          ),
+        ),
+        outcome.code,
+        outcome.error,
+      );
     } catch (error: unknown) {
       if (error instanceof GitSelectionError) {
         envelope.diagnostics.errors.push({

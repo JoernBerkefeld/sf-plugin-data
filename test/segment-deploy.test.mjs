@@ -518,7 +518,8 @@ test('public API68 CREATE preview is read-only and execution requires processing
     };
     const result = await run(command);
     assert.equal(writes, !preview && acknowledge ? 1 : 0);
-    assert.equal(result.status, !preview && !acknowledge ? 'blocked' : 'success');
+    // A created segment the server is still processing exits 69 (processing).
+    assert.equal(result.status, preview ? 'success' : acknowledge ? 'processing' : 'blocked');
     if (writes) {
       assert.equal(result.result.items[0].outcome, 'created');
       assert.equal(result.result.items[0].route.method, 'POST');
@@ -526,7 +527,7 @@ test('public API68 CREATE preview is read-only and execution requires processing
   }
 });
 
-test('queued Segment uses concise processing suffix and existing machine success semantics', async () => {
+test('queued Segment uses concise processing suffix and reports processing', async () => {
   const p = await pair();
   const [segment] = await readDeployInputs({ cwd: p.cwd, sourceDir: [p.path] });
   for (const json of [false, true]) {
@@ -557,15 +558,15 @@ test('queued Segment uses concise processing suffix and existing machine success
     command.jsonEnabled = () => json;
     command.log = (line) => lines.push(line);
     const result = await run(command);
-    assert.equal(result.status, 'success', JSON.stringify(result));
+    assert.equal(result.status, 'processing', JSON.stringify(result));
     assert.equal(result.result.items[0].mutation, 'confirmed-updated');
-    assert.ok(!JSON.stringify(result).includes('serverProcessing'));
+    assert.equal(result.result.items[0].serverProcessing, true);
     assert.deepEqual(
       lines,
       json
         ? []
         : [
-            'Deploy execution: success. No automatic retry or rollback performed.',
+            'Deploy execution: processing. No automatic retry or rollback performed.',
             `updated segment ${segment.document.identity.apiName} (server is still processing)`,
             'Deployed: 1 (0 created / 1 updated / 0 failed)',
           ],
@@ -757,9 +758,10 @@ test('reverse mixed selection orders prerequisites first and retains partial/unk
       };
     };
     const result = await run(command);
+    // The DMO update was confirmed: a blocked or failed segment without unknown write is partial.
     assert.equal(
       result.status,
-      stop === 'success' ? 'success' : stop === 'blocked' ? 'blocked' : 'failed',
+      stop === 'success' ? 'success' : ['blocked', 'failed'].includes(stop) ? 'partial' : 'failed',
     );
     assert.deepEqual(calls, [
       'dmo',
@@ -855,7 +857,7 @@ test('late pair or prerequisite drift preserves earlier completed DMO and unatte
     const verify = command.verifySegmentInput;
     command.verifySegmentInput = (input) => verify(input === tail ? segment : input);
     const result = await run(command);
-    assert.equal(result.status, 'blocked');
+    assert.equal(result.status, 'partial');
     assert.equal(result.result.items[0].mutation, 'confirmed-updated');
     assert.equal(result.result.items[1].outcome, 'blocked');
     assert.equal(result.result.items[1].mutation, 'not-attempted');

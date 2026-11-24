@@ -648,8 +648,10 @@ const deploy = async (documents, flags = {}, prepare, named = true) => {
   const previous = process.exitCode;
   const previousCwd = process.cwd();
   process.chdir(cwd);
+  process.exitCode = undefined;
   try {
-    return { result: await command.run(), calls, logs, cwd, files };
+    const result = await command.run();
+    return { result, calls, logs, cwd, files, exitCode: process.exitCode };
   } finally {
     process.chdir(previousCwd);
     process.exitCode = previous;
@@ -812,6 +814,9 @@ test('a DLO gets only the membership change and no copy; a mapping copy takes th
     assert.equal(mapping.spec.sourceEntityDeveloperName, 'CliSource__dll');
     // Without a name from Salesforce no copy is written, and the output says so.
     const unnamed = await deploy([mappingFile('CliTarget__dlm')], {}, undefined, false);
+    // The deploy succeeded but its copy file was not written: partial, exit 68.
+    assert.equal(unnamed.result.status, 'partial', JSON.stringify(unnamed.result.diagnostics));
+    assert.equal(unnamed.exitCode, 68);
     assert.deepEqual(
       unnamed.result.result.crossDataSpace.copies.map((entry) => entry.outcome),
       ['not-written'],
@@ -830,7 +835,8 @@ test('a DLO gets only the membership change and no copy; a mapping copy takes th
         false,
       );
     });
-    assert.equal(clash.result.status, 'success', JSON.stringify(clash.result.diagnostics));
+    assert.equal(clash.result.status, 'partial', JSON.stringify(clash.result.diagnostics));
+    assert.equal(clash.exitCode, 68);
     assert.deepEqual(
       clash.result.result.crossDataSpace.copies.map((entry) => entry.outcome),
       ['not-written'],

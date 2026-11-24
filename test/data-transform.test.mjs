@@ -644,8 +644,10 @@ async function deployTransform(flags = {}, h = harness(), configure = () => {}, 
   command.selectGitInputs = () => assert.fail('Git must not expand a Transform request');
   configure(command, published.path);
   const exit = process.exitCode;
+  process.exitCode = undefined;
   try {
-    return { result: await command.run(), h, file: published.path };
+    const result = await command.run();
+    return { result, h, file: published.path, exitCode: process.exitCode };
   } finally {
     process.exitCode = exit;
   }
@@ -689,7 +691,9 @@ for (const existing of [false, true])
 
 test('public Transform deploys by name: create, update, unchanged, without --allow-processing', async () => {
   const created = await deployTransform();
-  assert.equal(created.result.status, 'success', JSON.stringify(created.result.diagnostics));
+  // The definition is written but the server is still processing it: processing, exit 69.
+  assert.equal(created.result.status, 'processing', JSON.stringify(created.result.diagnostics));
+  assert.equal(created.exitCode, 69);
   assert.equal(created.result.result.items[0].outcome, 'created');
   assert.equal(created.result.result.items[0].mutation, 'confirmed-created');
   assert.equal(created.result.result.items[0].serverProcessing, true);
@@ -708,7 +712,7 @@ test('public Transform deploys by name: create, update, unchanged, without --all
   h.set(current);
   h.list([{ id, name: 'SYNTHETICTRANSFORM' }]);
   const updated = await deployTransform({}, h);
-  assert.equal(updated.result.status, 'success');
+  assert.equal(updated.result.status, 'processing');
   assert.equal(updated.result.result.items[0].outcome, 'updated');
   assert.equal(updated.result.result.items[0].mutation, 'confirmed-updated');
   assert.equal(h.calls.find(([op]) => op === 'update')[1], id);
@@ -754,7 +758,7 @@ test('public Transform deploys several transforms one after another', async () =
       command.verifyDataTransformInput = async () => {};
     },
   );
-  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(result.status, 'processing', JSON.stringify(result.diagnostics));
   assert.deepEqual(
     result.result.items.map((item) => [item.identity.apiName, item.outcome]),
     [
@@ -800,7 +804,7 @@ test('public Transform deploys a transform selected by --changed-since', async (
       };
     },
   );
-  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(result.status, 'processing', JSON.stringify(result.diagnostics));
   assert.equal(result.result.selection.changedSince, 'main');
   assert.deepEqual(
     result.result.items.map((item) => [item.family, item.outcome]),
@@ -885,7 +889,10 @@ test('public Transform human output reports server processing honestly', async (
     command.jsonEnabled = () => false;
     command.log = (line) => lines.push(line);
   });
-  assert.equal(confirmed.result.status, 'success');
+  assert.equal(confirmed.result.status, 'processing');
+  assert.ok(
+    lines.includes('Deploy execution: processing. No automatic retry or rollback performed.'),
+  );
   assert.ok(lines.some((line) => /server is still processing/u.test(line)));
   assert.ok(lines.some((line) => /Computation completion is not established/u.test(line)));
 });
@@ -2496,8 +2503,10 @@ test('public Transform deploy: a schedule rejected after the definition write is
   };
   const file = { ...document(), schedule: daily() };
   file.definition.description = 'Changed';
-  const { result } = await deployTransform({}, h, () => {}, file);
-  assert.equal(result.status, 'failed');
+  const { result, exitCode } = await deployTransform({}, h, () => {}, file);
+  // The definition was written and the schedule refused: the org changed, part failed.
+  assert.equal(result.status, 'partial');
+  assert.equal(exitCode, 68);
   const item = result.result.items[0];
   assert.equal(item.outcome, 'failed');
   assert.equal(item.mutation, 'confirmed-updated');
@@ -2508,6 +2517,33 @@ test('public Transform deploy: a schedule rejected after the definition write is
   );
   assert.equal(result.diagnostics.errors.at(-1).code, 'TRANSFORM_SCHEDULE_REJECTED');
   assert.match(result.diagnostics.errors.at(-1).message, /HTTP 400/u);
+});
+
+test('public Transform deploy: a schedule not sent while the transform still processes is processing (69)', async () => {
+  const { result, exitCode } = await deployTransform({}, scheduleHarness(), (command) => {
+    command.executeDataTransform = async (_document, _selection, _client, options) => {
+      options.onDispatch();
+      throw new DataTransformScheduleError('TRANSFORM_SCHEDULE_NOT_SENT', 'update');
+    };
+  });
+  assert.equal(result.status, 'processing', JSON.stringify(result.diagnostics));
+  assert.equal(exitCode, 69);
+  const item = result.result.items[0];
+  assert.equal(item.mutation, 'confirmed-updated');
+  assert.equal(item.diagnostics[0].code, 'TRANSFORM_SCHEDULE_NOT_SENT');
+});
+
+test('public Transform deploy: a settled transform without processing is success (0)', async () => {
+  const h = harness();
+  const { result, exitCode } = await deployTransform({}, h, (command) => {
+    command.executeDataTransform = async (_document, _selection, _client, options) => {
+      options.onDispatch();
+      return { operation: 'update', observation: {} };
+    };
+  });
+  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  assert.equal(exitCode, undefined);
+  assert.equal(result.result.items[0].serverProcessing, undefined);
 });
 
 test('an unscheduled transform retrieved and deployed into an org with a schedule leaves that schedule alone', async () => {
