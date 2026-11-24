@@ -33,7 +33,7 @@ Read failures (HTTP and connection errors), a missing object, an answer that nam
 ## How to fix
 
 1. Nothing is required: the file records the object as it is in the org.
-2. To deploy the object, change it in the org to a variant the plugin supports, then retrieve it again with `--overwrite`.
+2. To deploy the object, change it in the org to a variant the plugin supports, then retrieve it again.
 3. If the object looks ordinary, report the output of `--json` so the plugin can learn its shape.
 
 ## Example output

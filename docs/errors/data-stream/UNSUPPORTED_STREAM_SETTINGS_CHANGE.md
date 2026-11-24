@@ -20,7 +20,7 @@ Salesforce answers a stream update of the refresh mode (`REPLACE`, `INCREMENTAL`
 
 ## How to fix
 
-1. Retrieve the existing stream: `sf data360 retrieve -m data-stream:<ApiName> --overwrite`.
+1. Retrieve the existing stream: `sf data360 retrieve -m data-stream:<ApiName>`.
 2. Keep the retrieved refresh mode, `newDlo` values and plain mappings; change mappings and formulas only.
 3. Change the DLO in Salesforce if you need to.
 

@@ -39,7 +39,7 @@ export const hints: Readonly<Record<string, string>> = {
   INCOMPLETE_IDENTITY_RESOLUTION:
     'The answer for the ruleset was incomplete, so no file was written. Rerun the retrieve; if it repeats, check the ruleset in Data Cloud.',
   PARTIAL_IDENTITY_RESOLUTION_OUTPUT:
-    'The ruleset file was written, but the final check of it failed, so it may not match the org. Inspect the .identityResolution.json file and retrieve again with --overwrite.',
+    'The ruleset file was written, but the final check of it failed, so it may not match the org. Inspect the .identityResolution.json file and retrieve again.',
   UNSUPPORTED_IDENTITY_RESOLUTION_CONFIGURATION:
     'The ruleset lacks a required key or has a shape, value or name deploy cannot send. Retrieve keeps unknown keys and nulls, or writes the ruleset as-is; deploy refuses and names the key path.',
 };

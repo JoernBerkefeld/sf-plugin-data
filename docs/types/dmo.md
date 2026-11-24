@@ -67,7 +67,7 @@ Each DMO is one file, `data360/dmo/<ApiName>__dlm.dmo-meta.json`, beneath the pr
   list entry without `dataSpaceName` stops the listing (`NATIVE_INVENTORY_UNCONFIRMED`).
 - A failed object is not skipped silently: its diagnostic names it, the files already written
   stay, and the run exits nonzero.
-- Identical bytes are `unchanged`; replacing a differing file needs `-x/--overwrite`.
+- Identical bytes are `unchanged`; a differing file is replaced.
 - Standard, namespaced and generated DMOs can be retrieved.
 
 ## What the plugin checks and what Salesforce decides
@@ -292,7 +292,7 @@ check it with `--preview` first; the preview writes nothing, neither in the org 
   DMO, data space) and keeps its name. A missing file is not created and is reported
   `not-present`. When a refresh fails, the item stays `deleted`, the file is reported `failed`
   and the command exits nonzero with `LOCAL_REFRESH_FAILED`: run
-  `sf data360 retrieve --overwrite` for that file, do not repeat the delete.
+  `sf data360 retrieve` for that file, do not repeat the delete.
 - **Result.** One item with operation `delete-field`, `fields`, `removedFields`,
   `unmappedPairs` and `refreshedFiles` (`path` and outcome `refreshed`, `unchanged`,
   `not-present` or `failed`). Human output prints
@@ -356,7 +356,7 @@ relationships, mappings, DMOs, then DLOs.
 | [`MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED`](../errors/mapping/MAPPING_UNMAP_PERSISTENCE_UNCONFIRMED.md) | Retrieve the mappings and check the pair later.                              |
 | [`DMO_DATASPACE_MISMATCH`](../errors/dmo/DMO_DATASPACE_MISMATCH.md)                                   | Run with the file's `--dataspace`.                                           |
 | [`DMO_DELETE_NOT_CONFIRMED`](../errors/dmo/DMO_DELETE_NOT_CONFIRMED.md)                               | Check the org with a read-only retrieve before trying again.                 |
-| [`LOCAL_REFRESH_FAILED`](../errors/general/LOCAL_REFRESH_FAILED.md)                                   | Run `sf data360 retrieve --overwrite` for the named file.                    |
+| [`LOCAL_REFRESH_FAILED`](../errors/general/LOCAL_REFRESH_FAILED.md)                                   | Run `sf data360 retrieve` for the named file.                                |
 
 The full list is in [docs/errors/README.md](../errors/README.md). The API evidence behind these
 rules is on the sfmc.guide

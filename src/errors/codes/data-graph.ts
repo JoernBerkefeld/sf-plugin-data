@@ -33,9 +33,9 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_NATIVE_DATA_GRAPH_SCOPE:
     'Data graphs work only with API version 68.0. Use --api-version auto or 68.0, then rerun.',
   NATIVE_GRAPH_RETRIEVE_BLOCKED:
-    'The data graph could not be retrieved or written to disk. Check the graph name, your org access and the output folder (use --overwrite to replace a changed file), then rerun.',
+    'The data graph could not be retrieved or written to disk. Check the graph name, your org access and the output folder, then rerun.',
   PARTIAL_DATA_GRAPH_OUTPUT:
-    'The graph file was written, but the final check of it failed, so it may not match the org. Inspect the .native-dataGraph.json file and retrieve again with --overwrite.',
+    'The graph file was written, but the final check of it failed, so it may not match the org. Inspect the .native-dataGraph.json file and retrieve again.',
   UNSUPPORTED_DATA_GRAPH_CONFIGURATION:
     'The data graph definition or the answer from the org has a shape the plugin cannot check. Retrieve the graph again to get a supported file, or simplify the definition, then rerun.',
 };

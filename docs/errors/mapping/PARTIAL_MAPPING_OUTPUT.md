@@ -1,6 +1,6 @@
 # `PARTIAL_MAPPING_OUTPUT`
 
-> The mapping file was written, but checking it afterwards failed, so its content may be incomplete. Inspect the file, delete it if needed, and rerun the retrieve with --overwrite.
+> The mapping file was written, but checking it afterwards failed, so its content may be incomplete. Inspect the file, delete it if needed, and rerun the retrieve.
 
 |              |                                                          |
 | ------------ | -------------------------------------------------------- |
@@ -20,14 +20,14 @@ The file on disk may not be the mapping that was read. The plugin reports it ins
 
 1. Open the file and check that it is complete and valid JSON.
 2. Make sure no other tool is writing to the folder.
-3. Rerun the retrieve with `--overwrite`.
+3. Rerun the retrieve.
 
 ## Example output
 
 ```text
 Retrieve: failed.
 mapping:Customer_Home_map: PARTIAL_MAPPING_OUTPUT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Native component retrieval did not complete; no write attempted.
-Hint: The mapping file was written, but checking it afterwards failed, so its content may be incomplete. Inspect the file, delete it if needed, and rerun the retrieve with --overwrite.
+Hint: The mapping file was written, but checking it afterwards failed, so its content may be incomplete. Inspect the file, delete it if needed, and rerun the retrieve.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/mapping/PARTIAL_MAPPING_OUTPUT.md
 Downloaded mapping: 0
 ```

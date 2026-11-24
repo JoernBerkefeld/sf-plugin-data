@@ -83,7 +83,6 @@ const invocation = (overrides = {}) => {
     'api-version': 'auto',
     dataspace: 'default',
     'output-dir': 'synthetic-project',
-    overwrite: true,
     ...overrides,
   };
   command.parse = async () => ({ flags });
@@ -130,7 +129,7 @@ const invocation = (overrides = {}) => {
   };
   const writer = async (value, root, overwrite) => {
     assert.equal(root, path.resolve(flags['output-dir']));
-    assert.equal(overwrite, flags.overwrite);
+    assert.equal(overwrite, true);
     calls.push(`write:${value.identity.apiName}`);
     return { path: `${value.identity.apiName}.json`, outcome: 'unchanged' };
   };

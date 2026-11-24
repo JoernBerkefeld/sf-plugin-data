@@ -153,7 +153,6 @@ async function retrieveCommand(body, cwd) {
       'api-version': '68.0',
       metadata: [`data-graph:${name}`],
       'output-dir': root,
-      overwrite: false,
     },
   });
   command.jsonEnabled = () => true;
@@ -373,13 +372,13 @@ test('schedule granularities keep their request spelling, OnDemand included', ()
 
 test('the item failure names the code behind NATIVE_GRAPH_RETRIEVE_BLOCKED', async () => {
   const cwd = await project();
-  await mkdir(path.dirname(graphFile(cwd)), { recursive: true });
-  await writeFile(graphFile(cwd), '{}\n');
+  // A folder where the graph file belongs cannot be written.
+  await mkdir(graphFile(cwd), { recursive: true });
   const { result } = await retrieveCommand(graph(), cwd);
   assert.notEqual(result.status, 'success');
   const [diagnostic] = result.diagnostics.errors;
   assert.equal(diagnostic.code, 'NATIVE_GRAPH_RETRIEVE_BLOCKED');
-  assert.match(diagnostic.message, /Cause: OVERWRITE_REQUIRED\.$/u);
+  assert.match(diagnostic.message, /Cause: UNSAFE_PATH\.$/u);
 });
 
 test('a graph GET answering with another name is an identity failure, never verbatim', async () => {

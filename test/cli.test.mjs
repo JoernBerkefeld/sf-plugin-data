@@ -620,12 +620,12 @@ for (const command of topics.flatMap((topic) => [
       for (const flag of [
         '--metadata',
         '--output-dir',
-        '--overwrite',
         '--target-org',
         '--api-version',
         '--dataspace',
       ])
         assert.ok(result.stdout.includes(flag), flag);
+      assert.ok(!result.stdout.includes('--overwrite'), '--overwrite');
     }
   });
 }
@@ -677,6 +677,18 @@ test('retrieve parser accepts repeatable exact, type and omitted selectors witho
     },
   );
   assert.equal(JSON.parse(invalid.stdout).result.diagnostics.errors[0].code, 'TARGET_ORG_REQUIRED');
+});
+
+test('retrieve has no overwrite flag: --overwrite and -x are flag errors', () => {
+  for (const flag of ['--overwrite', '-x']) {
+    const result = spawnSync(
+      process.execPath,
+      ['bin/run.js', 'data360', 'retrieve', '-m', 'dmo', flag, '--json'],
+      { encoding: 'utf8', env: environment },
+    );
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(Object.hasOwn(JSON.parse(result.stdout), 'result'), false);
+  }
 });
 
 test('deploy wait-timeout parser requires positive integer seconds and help describes native Graph scope', async () => {

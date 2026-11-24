@@ -61,7 +61,6 @@ function invocation(flags = {}) {
     flags: {
       metadata: ['data-transform:Zulu', 'data-transform:Alpha', 'data-transform:Alpha'],
       'api-version': 'auto',
-      overwrite: false,
       ...flags,
     },
   });
@@ -93,7 +92,7 @@ function invocation(flags = {}) {
   command.writeDataTransform = async (value, root, overwrite) => {
     assert.deepEqual(Object.keys(value), ['c__dataSpace', 'definition']);
     assert.equal(path.isAbsolute(root), true);
-    assert.equal(overwrite, false);
+    assert.equal(overwrite, true);
     return { path: `${value.definition.name}.json`, outcome: 'retrieved' };
   };
   command.listNativeNames = () => assert.fail('no inventory fallback');

@@ -21,7 +21,7 @@ Without the name, data space and SQL the plugin cannot write the two files or co
 ## How to fix
 
 1. Rerun the command; if the org answer stays the same, check the calculated insight in Data 360.
-2. For a local file, retrieve the calculated insight again with `--overwrite` instead of editing its structure.
+2. For a local file, retrieve the calculated insight again instead of editing its structure.
 
 ## Example output
 

@@ -196,7 +196,7 @@ function mappedRemovalMessage(
   ];
   return [
     `${lead}${summary}. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) from the mapping file(s) and deploy the mapping(s) and the DMO in one command:`,
-    `sf data360 retrieve${scope}${selectors} -m dmo:${apiName} --overwrite`,
+    `sf data360 retrieve${scope}${selectors} -m dmo:${apiName}`,
     edits.join(' '),
     `sf data360 deploy${scope}${selectors} -m dmo:${apiName} --allow-field-removal`,
     '',

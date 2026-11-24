@@ -66,7 +66,7 @@ Each relationship is one file, `data360/relationship/<Name>.relationship-meta.js
 - Labels come from the Metadata API (`FieldSrcTrgtRelationship`), ten relationships per read,
   so a bare retrieve stays well below the org's hourly Metadata API request limit. A failed
   label read fails only the DMOs whose relationships it carried.
-- Identical files are `unchanged`; a differing file needs `--overwrite`.
+- Identical files are `unchanged`; a differing file is replaced.
 
 ## Deploy
 

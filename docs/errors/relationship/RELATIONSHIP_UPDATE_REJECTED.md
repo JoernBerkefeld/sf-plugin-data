@@ -26,7 +26,7 @@ The plugin sends the file as written and Salesforce decides; apart from the one 
 
 1. Read Salesforce's answer in the message.
 2. To change the target object or owner, delete the relationship with `sf data360 delete -m relationship:<SourceDmo__dlm>:<Name>`, then deploy the file again.
-3. To keep the org, retrieve the source DMO's relationships with `--overwrite` instead.
+3. To keep the org, retrieve the source DMO's relationships instead.
 
 ## Example output
 

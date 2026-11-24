@@ -22,7 +22,7 @@ A `--changed-since` range without any change is different: there is nothing to d
 
 1. Read the `Skipped` warnings: each names a verbatim file and the reason it was retrieved as-is.
 2. Select the folders or files of the components you meant to deploy.
-3. To deploy one of the skipped objects, change it in the org to a variant the plugin supports, then retrieve it again with `--overwrite`.
+3. To deploy one of the skipped objects, change it in the org to a variant the plugin supports, then retrieve it again.
 
 ## Example output
 

@@ -34,6 +34,5 @@ Downloaded calculated-insight: 0
 
 ## Related codes
 
-- [`OVERWRITE_REQUIRED`](../general/OVERWRITE_REQUIRED.md) — the file differs and `--overwrite` was not given.
 - [`OUTPUT_FAILED`](../general/OUTPUT_FAILED.md) — writing the file failed for another reason.
 - [`PARTIAL_DATA_GRAPH_OUTPUT`](../data-graph/PARTIAL_DATA_GRAPH_OUTPUT.md) — a file was placed but could not be confirmed.

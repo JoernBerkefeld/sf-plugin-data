@@ -36,7 +36,7 @@ For `delete --field`, the mapping list could not be read: rerun the command once
 Deploy execution: blocked. No automatic retry or rollback performed.
 Blocked: dmo:Customer__dlm; mutation: not-attempted.
 DMO_FIELD_REMOVAL_MAPPED: Field removal refused for Customer__dlm: Nickname__c is mapped by Customer_Map. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) from the mapping file(s) and deploy the mapping(s) and the DMO in one command:
-sf data360 retrieve -o my-org -m mapping:Customer_Map -m dmo:Customer__dlm --overwrite
+sf data360 retrieve -o my-org -m mapping:Customer_Map -m dmo:Customer__dlm
 In data360/mapping/Customer_Map.mapping-meta.json remove the pair(s) whose targetFieldDeveloperName is Nickname__c; keep all other pairs. In data360/dmo/Customer__dlm.dmo-meta.json remove the field(s) Nickname__c.
 sf data360 deploy -o my-org -m mapping:Customer_Map -m dmo:Customer__dlm --allow-field-removal
 No write attempted; correct the reported check before another attempt.

@@ -1,6 +1,6 @@
 # `PARTIAL_DMO_OUTPUT`
 
-> The DMO file was written but could not be verified afterwards. Check the file under data360/dmo, then rerun the retrieve with --overwrite.
+> The DMO file was written but could not be verified afterwards. Check the file under data360/dmo, then rerun the retrieve.
 
 |              |                                                                                                                              |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -22,14 +22,14 @@ The plugin reports a file as written only after reading it back. Here it could n
 
 1. Open `data360/dmo/<Name>__dlm.dmo-meta.json` and check that it is complete, valid JSON.
 2. Make sure no other tool (editor, sync client, formatter) is writing to the project folder.
-3. Rerun `sf data360 retrieve -m dmo:<Name>__dlm --overwrite`.
+3. Rerun `sf data360 retrieve -m dmo:<Name>__dlm`.
 
 ## Example output
 
 ```text
 Retrieve: failed.
 dmo:Customer__dlm: PARTIAL_DMO_OUTPUT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Native component retrieval did not complete; no write attempted.
-Hint: The DMO file was written but could not be verified afterwards. Check the file under data360/dmo, then rerun the retrieve with --overwrite.
+Hint: The DMO file was written but could not be verified afterwards. Check the file under data360/dmo, then rerun the retrieve.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dmo/PARTIAL_DMO_OUTPUT.md
 Downloaded dmo: 0
 ```

@@ -293,7 +293,7 @@ const single = () =>
   world({ [D]: all }, [{ name: M, source: 'SrcA__dll', target: D, fields: all }]);
 const command = `sf data360 deploy -o my-org -m mapping:${M} -m dmo:${D} --allow-field-removal`;
 const refusal = (nextAction) =>
-  `Field removal refused for ${D}: Note__c is mapped by ${M}. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) from the mapping file(s) and deploy the mapping(s) and the DMO in one command:\nsf data360 retrieve -o my-org -m mapping:${M} -m dmo:${D} --overwrite\nIn data360/mapping/${M}.mapping-meta.json remove the pair(s) whose targetFieldDeveloperName is Note__c; keep all other pairs. In data360/dmo/${D}.dmo-meta.json remove the field(s) Note__c.\n${command}\n${nextAction}`;
+  `Field removal refused for ${D}: Note__c is mapped by ${M}. Salesforce would drop the mapping pair(s) together with the field(s), so remove the pair(s) from the mapping file(s) and deploy the mapping(s) and the DMO in one command:\nsf data360 retrieve -o my-org -m mapping:${M} -m dmo:${D}\nIn data360/mapping/${M}.mapping-meta.json remove the pair(s) whose targetFieldDeveloperName is Note__c; keep all other pairs. In data360/dmo/${D}.dmo-meta.json remove the field(s) Note__c.\n${command}\n${nextAction}`;
 
 test('one command edits the DMO, removes the field with its pair, then deploys the mapping', async () => {
   const org1 = single();

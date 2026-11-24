@@ -57,7 +57,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_STREAM_TARGET_ID:
     'The stream record ID or delete option for an update or delete request was not valid. Nothing was sent; rerun the command and report it if it happens again.',
   PARTIAL_STREAM_OUTPUT:
-    'The stream file was written, but the final check of its contents failed. Open data360/data-stream/<ApiName>.data-stream-meta.json, then retrieve again with --overwrite.',
+    'The stream file was written, but the final check of its contents failed. Open data360/data-stream/<ApiName>.data-stream-meta.json, then retrieve again.',
   STREAM_BINDING_DRIFT:
     'The stream, its event or its connection changed between two reads, or reads disagreed. Wait until nobody changes the stream, then rerun; inspect the org first if mutation is unknown.',
   STREAM_CHANGE_NOT_APPLIED:

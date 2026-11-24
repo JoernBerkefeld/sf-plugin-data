@@ -123,12 +123,14 @@ for (const command of ['data360', 'datacloud', 'd360', 'dc'].flatMap((topic) => 
       '--api-version',
       '--data-space',
       ...(command[1] === 'retrieve'
-        ? ['--output-dir', '--overwrite']
+        ? ['--output-dir']
         : command[1] === 'deploy'
           ? ['--source-dir', '--preview']
           : ['--preview']),
     ])
       assert.ok(result.stdout.includes(flag), flag);
+    // Retrieve always replaces differing files; it has no overwrite flag.
+    if (command[1] === 'retrieve') assert.ok(!result.stdout.includes('--overwrite'));
   }
   helpChecks++;
 }
@@ -319,7 +321,6 @@ for (const operation of ['retrieve', 'deploy', 'delete']) {
     metadata: [`data-graph:InstalledGraph`],
     // Delete admits --output-dir only together with --field.
     'output-dir': operation === 'delete' ? undefined : graphProject,
-    overwrite: true,
     preview: false,
     'allow-processing': operation === 'deploy',
   };

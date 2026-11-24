@@ -1,6 +1,6 @@
 # `PARTIAL_IDENTITY_RESOLUTION_OUTPUT`
 
-> The ruleset file was written, but the final check of it failed, so it may not match the org. Inspect the .identityResolution.json file and retrieve again with --overwrite.
+> The ruleset file was written, but the final check of it failed, so it may not match the org. Inspect the .identityResolution.json file and retrieve again.
 
 |              |                                                           |
 | ------------ | --------------------------------------------------------- |
@@ -20,14 +20,14 @@ The plugin cannot vouch for a file it could not confirm, and it does not delete 
 
 1. Open the file and check it, or delete it.
 2. Make sure no other tool writes to the output folder at the same time.
-3. Rerun `sf data360 retrieve --metadata identity-resolution:<Name> --overwrite`.
+3. Rerun `sf data360 retrieve --metadata identity-resolution:<Name>`.
 
 ## Example output
 
 ```text
 Retrieve: blocked.
 identity-resolution:Individual_Main: PARTIAL_IDENTITY_RESOLUTION_OUTPUT: This component was not retrieved. Resolve its capability, acquisition or output diagnostic.
-Hint: The ruleset file was written, but the final check of it failed, so it may not match the org. Inspect the .identityResolution.json file and retrieve again with --overwrite.
+Hint: The ruleset file was written, but the final check of it failed, so it may not match the org. Inspect the .identityResolution.json file and retrieve again.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/identity-resolution/PARTIAL_IDENTITY_RESOLUTION_OUTPUT.md
 ```
 

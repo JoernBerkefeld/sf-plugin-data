@@ -39,7 +39,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_DMO_RESPONSE:
     'Salesforce returned a DMO answer the plugin could not read. Inspect the DMO in the org, especially if a write was sent, then rerun.',
   PARTIAL_DMO_OUTPUT:
-    'The DMO file was written but could not be verified afterwards. Check the file under data360/dmo, then rerun the retrieve with --overwrite.',
+    'The DMO file was written but could not be verified afterwards. Check the file under data360/dmo, then rerun the retrieve.',
   UNSUPPORTED_DMO_DATASPACE:
     'The DMO in the org is not in the data space of the run. Pass the --dataspace that holds the DMO (its c__dataSpace), or leave the flag out for default, and rerun.',
   UNSUPPORTED_DMO_FIELD_ADDITION:

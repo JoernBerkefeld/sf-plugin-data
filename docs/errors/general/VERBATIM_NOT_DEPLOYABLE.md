@@ -33,8 +33,8 @@ A verbatim file inside a selected folder or a Git range (`--changed-since`) is s
 ## How to fix
 
 1. Leave the file out of the selection, or select its folder so it is skipped with a warning.
-2. To deploy the object, change it in the org to a variant the plugin supports, then retrieve it again with `--overwrite`.
-3. Once a newer plugin version supports the variant, retrieve it again with `--overwrite`; the normal file replaces the verbatim one.
+2. To deploy the object, change it in the org to a variant the plugin supports, then retrieve it again.
+3. Once a newer plugin version supports the variant, retrieve it again; the normal file replaces the verbatim one.
 
 ## Example output
 

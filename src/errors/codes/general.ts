@@ -63,7 +63,7 @@ export const hints: Readonly<Record<string, string>> = {
   LOCAL_FILE_REMOVAL_FAILED:
     'The deletion in the org is confirmed, but a local file was not removed. Do not repeat the delete; check the file named in the message and remove it yourself.',
   LOCAL_REFRESH_FAILED:
-    'The fields were deleted in the org, but some project files were not refreshed. Do not repeat the delete; run sf data360 retrieve with --overwrite for the DMO and its mappings.',
+    'The fields were deleted in the org, but some project files were not refreshed. Do not repeat the delete; run sf data360 retrieve for the DMO and its mappings.',
   NATIVE_INVENTORY_FAILED:
     'Listing the DLOs, DMOs or mappings in the org failed, so nothing was retrieved. Check the org session and permissions in the message, then rerun or select exact type:ApiName members.',
   NATIVE_INVENTORY_UNCONFIRMED:
@@ -79,7 +79,7 @@ export const hints: Readonly<Record<string, string>> = {
   OUTPUT_FAILED:
     'The retrieved definition could not be written to the project. Check that the output folder is writable, has free space and that the temp folder settings are valid, then rerun.',
   OVERWRITE_REQUIRED:
-    'A different version of this file already exists in the project. Compare it with the org, then rerun with --overwrite (-x) to replace it, or keep your local file.',
+    'A file of that name already exists in the project with other content. A deploy never changes an existing file when it writes a cross-data-space copy: compare the two, then move or remove the existing file and rerun.',
   PREFLIGHT_FAILED:
     'Checking this item against the target failed, so nothing was deployed. Read the message for the cause, such as session, permissions or input, fix it and run deploy --preview again.',
   PROCESSING_ACKNOWLEDGEMENT_REQUIRED:

@@ -11,7 +11,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_RELATIONSHIP_RESPONSE:
     'Salesforce answered the relationship list in a shape the plugin does not expect. Rerun the command; if it repeats, inspect the raw list response for the DMO.',
   PARTIAL_RELATIONSHIP_OUTPUT:
-    'The relationship file was written, but a later step of saving it failed, so the file may not be complete. Inspect it under data360/relationship and retrieve again with --overwrite.',
+    'The relationship file was written, but a later step of saving it failed, so the file may not be complete. Inspect it under data360/relationship and retrieve again.',
   RELATIONSHIP_DELETION_UNCONFIRMED:
     "The relationship delete was sent, but the relationship still appears in the source DMO's list. Check it in the org before deleting again; nothing is retried.",
   RELATIONSHIP_DEPENDENCIES_PLANNED:

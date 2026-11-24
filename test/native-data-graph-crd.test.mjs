@@ -788,7 +788,6 @@ test('public native68 retrieve deploy delete route through real services with se
     'api-version': '68.0',
     metadata: [`data-graph:${name}`],
     'output-dir': cwd,
-    overwrite: true,
   });
   assert.equal(read.status, 'success');
   assert.equal(read.result.items[0].routes[0].transport, 'native');
@@ -872,7 +871,6 @@ test('graph retrieve, deploy and delete use native API68 at auto and with no fla
         'api-version': parsed,
         metadata: [`data-graph:${name}`],
         'output-dir': cwd,
-        overwrite: true,
       },
       seams,
     );
@@ -3022,7 +3020,6 @@ test('native68 Graph retrieve resolves a relative --output-dir against the cwd b
       'api-version': '68.0',
       metadata: [`data-graph:${name}`],
       'output-dir': relative,
-      overwrite: false,
     },
   });
   command.jsonEnabled = () => true;

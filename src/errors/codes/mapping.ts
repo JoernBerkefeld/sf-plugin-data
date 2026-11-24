@@ -73,7 +73,7 @@ export const hints: Readonly<Record<string, string>> = {
   MAPPING_UNMAP_PLAN_CHANGED:
     "The DMO's mappings changed between planning and the first write, so nothing was removed. Rerun the command to plan again against the current org.",
   PARTIAL_MAPPING_OUTPUT:
-    'The mapping file was written, but checking it afterwards failed, so its content may be incomplete. Inspect the file, delete it if needed, and rerun the retrieve with --overwrite.',
+    'The mapping file was written, but checking it afterwards failed, so its content may be incomplete. Inspect the file, delete it if needed, and rerun the retrieve.',
   UNSUPPORTED_MAPPING_DATASPACE:
     'Salesforce reported the mapping in a different data space than the one this command works in. Rerun with that data space in --dataspace, or select a mapping of this data space.',
   UNSUPPORTED_MAPPING_SELECTION:

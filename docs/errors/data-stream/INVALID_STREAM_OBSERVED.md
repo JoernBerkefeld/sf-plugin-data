@@ -19,7 +19,7 @@ The plugin keeps `observed` as evidence and checks it like the rest of the docum
 ## How to fix
 
 1. Do not edit `observed` by hand.
-2. Retrieve the stream again with `sf data360 retrieve -m data-stream:<ApiName> --overwrite` to refresh it, then reapply your `spec` changes.
+2. Retrieve the stream again with `sf data360 retrieve -m data-stream:<ApiName>` to refresh it, then reapply your `spec` changes.
 
 ## Example output
 

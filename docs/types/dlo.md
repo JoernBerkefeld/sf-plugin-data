@@ -68,7 +68,7 @@ file is not a field removal.
   and save each one. The plugin does not filter that list.
 - A DLO whose read or file fails gets its own diagnostic with its name; the others are still
   written and the run ends `partial` (exit code 68).
-- Identical bytes are reported `unchanged`; replacing a differing file needs `--overwrite`.
+- Identical bytes are reported `unchanged`; a differing file is replaced.
 
 ## Deploy: create and update
 

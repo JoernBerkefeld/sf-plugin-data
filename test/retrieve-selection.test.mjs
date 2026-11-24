@@ -398,7 +398,6 @@ test('the retrieve command defines no dependency flag and publishes exactly the 
       'api-version': '68.0',
       'data-space': 'default',
       'output-dir': 'synthetic-root',
-      overwrite: true,
     };
     command.parse = async () => ({ flags });
     command.jsonEnabled = () => true;
@@ -435,7 +434,6 @@ test('the retrieve command writes every other Segment when one fails to read or 
         'api-version': '68.0',
         'data-space': 'default',
         'output-dir': 'synthetic-root',
-        overwrite: true,
       },
     });
     command.jsonEnabled = () => true;
@@ -483,7 +481,6 @@ test('an explicit Segment and DMO selection reads each family at its own version
             metadata,
             'api-version': requested,
             'output-dir': 'synthetic-root',
-            overwrite: false,
           },
         });
         command.jsonEnabled = () => true;
@@ -510,7 +507,7 @@ test('an explicit Segment and DMO selection reads each family at its own version
         const written = [];
         command.writeNativeDmo = async (value, root, overwrite) => {
           assert.equal(root, path.resolve('synthetic-root'));
-          assert.equal(overwrite, false);
+          assert.equal(overwrite, true);
           written.push(`dmo:${value.identity.apiName}`);
           assert.equal(value.spec.fields[0].dataType, 'Text');
           return { path: 'data360/dmo/Person__dlm.dmo-meta.json', outcome: 'retrieved' };

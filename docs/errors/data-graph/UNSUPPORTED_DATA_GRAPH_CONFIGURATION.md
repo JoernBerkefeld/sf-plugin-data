@@ -20,7 +20,7 @@ A graph the plugin cannot check could be changed or deleted in a way you did not
 
 ## How to fix
 
-1. Retrieve the graph again (`sf data360 retrieve --metadata data-graph:<Name> --overwrite`) and use that file as the base for your changes.
+1. Retrieve the graph again (`sf data360 retrieve --metadata data-graph:<Name>`) and use that file as the base for your changes.
 2. Remove or correct the key the message names; avoid hand-written keys the plugin does not model.
 3. Rerun the command. A verbatim graph file cannot be deployed (`VERBATIM_NOT_DEPLOYABLE`); manage that graph in Salesforce.
 

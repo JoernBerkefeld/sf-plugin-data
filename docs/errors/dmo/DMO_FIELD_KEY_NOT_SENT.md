@@ -20,7 +20,7 @@ The plugin never sends these keys, because Salesforce rejects them as unknown in
 
 ## How to fix
 
-1. If the org value is acceptable, retrieve the DMO with `--overwrite` so the file shows what the org holds; the warning then goes away.
+1. If the org value is acceptable, retrieve the DMO so the file shows what the org holds; the warning then goes away.
 2. If you need the file value, set it in the Data Model UI of the org, then retrieve the DMO to refresh the file.
 
 ## Example output

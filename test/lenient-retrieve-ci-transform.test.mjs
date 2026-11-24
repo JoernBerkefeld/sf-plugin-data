@@ -34,7 +34,6 @@ function command(metadata, cwd) {
     flags: {
       metadata,
       'api-version': 'auto',
-      overwrite: false,
       'target-org': 'synthetic',
       'output-dir': cwd,
     },

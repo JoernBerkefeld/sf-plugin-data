@@ -40,7 +40,7 @@ SELECT ssot__Individual__dlm.ssot__Id__c FROM ssot__Individual__dlm WHERE ssot__
 - Deploy, delete and `--changed-since` join the JSON with exactly one SQL file per model. The JSON or any of its SQL files selects the segment. A missing or extra `<Name>.segment.*` file, or a `sql` key left in the JSON, is refused with `INVALID_SOURCE`.
 - A model name starts with a letter or digit and holds only letters, digits and underscores; two model names may not differ only in letter case (`INVALID_SEGMENT_DOCUMENT`).
 - The SQL file holds plain SQL as Salesforce stores it: the plugin asks Salesforce for plain text, and the read after a deploy compares that SQL with the file. Deploy sends the plain SQL, which Salesforce stores as sent.
-- A repeat retrieve of an unchanged segment writes nothing (`unchanged`). With `--overwrite` the SQL file of a model the segment no longer has is removed.
+- A repeat retrieve of an unchanged segment writes nothing (`unchanged`). When the segment changed, the SQL file of a model it no longer has is removed.
 - The plugin checks the structure only: the keys above, plain text values and a list of models with a name and SQL. The SQL, the model names and whether the DMO suits the segment are not checked locally; the file is sent as written and Salesforce decides. Salesforce requires every SQL column fully qualified as `Table.column` with the DMO API name as the table (for example `ssot__Individual__dlm.ssot__Id__c`) and refuses unqualified columns and table aliases.
 - The lookback (`lookbackPeriod`) is sent as written; Salesforce decides which periods it takes.
 - An unknown key stays in the file, and deploy refuses it (`UNKNOWN_SEGMENT_CONFIGURATION`).

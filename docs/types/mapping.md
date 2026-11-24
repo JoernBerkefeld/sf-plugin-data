@@ -69,7 +69,7 @@ relationship source field). On a standard DMO they target `ssot__DataSourceId__c
   10 names per call), because the native routes carry no label. A label equal to the mapping's
   own name is Salesforce's default and is left out. When that read fails, the label is left out
   with a warning.
-- Identical bytes are `unchanged`; replacing a differing file needs `--overwrite`. Other
+- Identical bytes are `unchanged`; a differing file is replaced. Other
   mappings still save when one fails, and the run exits nonzero.
 
 ## Deploy

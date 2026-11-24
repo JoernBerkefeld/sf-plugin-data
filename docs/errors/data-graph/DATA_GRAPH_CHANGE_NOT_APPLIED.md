@@ -20,7 +20,7 @@ The plugin refuses join changes before any write ([`DATA_GRAPH_JOIN_CHANGE`](../
 
 ## How to fix
 
-1. Retrieve the graph with `--overwrite` to see what the org holds now.
+1. Retrieve the graph to see what the org holds now.
 2. To change a join, delete the graph and deploy the file again to create it.
 
 ## Example output

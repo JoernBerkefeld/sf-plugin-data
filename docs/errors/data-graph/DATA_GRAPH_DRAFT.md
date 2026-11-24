@@ -21,7 +21,7 @@ A normal graph file has no draft status, so a deploy of it would build a graph i
 ## How to fix
 
 1. Build or edit the draft in Salesforce.
-2. Once it is built, retrieve it again (`sf data360 retrieve --metadata data-graph:<Name> --overwrite`) to get a normal file that deploys.
+2. Once it is built, retrieve it again (`sf data360 retrieve --metadata data-graph:<Name>`) to get a normal file that deploys.
 
 A verbatim graph file cannot be deployed: a deploy skips it in a folder or Git range and refuses it when it is named (`VERBATIM_NOT_DEPLOYABLE`).
 

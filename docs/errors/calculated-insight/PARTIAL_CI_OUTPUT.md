@@ -1,6 +1,6 @@
 # `PARTIAL_CI_OUTPUT`
 
-> Only one of the two calculated insight files was written to disk. Check the JSON and SQL files, then rerun the retrieve with --overwrite.
+> Only one of the two calculated insight files was written to disk. Check the JSON and SQL files, then rerun the retrieve.
 
 |              |                                                        |
 | ------------ | ------------------------------------------------------ |
@@ -20,18 +20,18 @@ The JSON and the SQL may now come from different reads. The plugin stops and rep
 
 1. Check the `.calculatedInsight-meta.json` and `.calculatedInsight-meta.sql` files of the calculated insight.
 2. Make sure no other process writes to the output folder.
-3. Rerun the retrieve with `--overwrite`.
+3. Rerun the retrieve.
 
 ## Example output
 
 ```text
 Retrieve: blocked.
 calculated-insight:ExampleInsight__cio: PARTIAL_CI_OUTPUT: This component was not retrieved. Resolve its capability, acquisition or output diagnostic.
-Hint: Only one of the two calculated insight files was written to disk. Check the JSON and SQL files, then rerun the retrieve with --overwrite.
+Hint: Only one of the two calculated insight files was written to disk. Check the JSON and SQL files, then rerun the retrieve.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/calculated-insight/PARTIAL_CI_OUTPUT.md
 Downloaded calculated-insight: 0
 ```
 
 ## Related codes
 
-- [`OVERWRITE_REQUIRED`](../general/OVERWRITE_REQUIRED.md) — existing files differ and `--overwrite` is missing.
+- [`OUTPUT_FAILED`](../general/OUTPUT_FAILED.md) — the files could not be written at all.

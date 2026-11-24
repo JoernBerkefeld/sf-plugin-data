@@ -344,7 +344,6 @@ const invocation = (overrides = {}) => {
     metadata: ['dmo'],
     'api-version': '65.0',
     dataspace: 'default',
-    overwrite: false,
     'target-org': 'synthetic',
     ...overrides,
   };
@@ -386,7 +385,7 @@ const invocation = (overrides = {}) => {
     assert.deepEqual(arguments_, [
       candidate,
       path.resolve(flags['output-dir'] ?? process.cwd()),
-      flags.overwrite,
+      true,
     ]);
     return { path: 'synthetic-output.json', outcome: 'retrieved' };
   };
@@ -503,7 +502,7 @@ for (const apiVersion of ['68.0', 'auto']) {
     };
     command.writeSegment = async (document, root, overwrite) => {
       assert.equal(root, path.resolve('custom-root'));
-      assert.equal(overwrite, false);
+      assert.equal(overwrite, true);
       return {
         path: `${document.identity.apiName}.segment.json`,
         outcome: 'unchanged',
@@ -579,10 +578,9 @@ test('command delegates acquisition and authored-only output without duplicating
   assert.ok(!JSON.stringify(result).includes('never persisted'));
 });
 
-test('output root and changed-only overwrite flow unchanged to the writer', async () => {
+test('output root flows to the writer, which may always replace a differing file', async () => {
   const command = invocation({
     'output-dir': 'project',
-    overwrite: true,
   });
   command.writeNativeDmo = async (value, root, overwrite) => {
     assert.equal(value, candidate);
@@ -620,7 +618,7 @@ test('real selector expansion writes each exact/type/all member once in sorted o
     ['dmo', 'dmo:Zeta__dlm', 'dmo:Alpha__dlm', 'dmo:Zeta__dlm'],
     ['dmo', 'dmo:Alpha__dlm'],
   ]) {
-    const command = invocation({ metadata, 'output-dir': 'project', overwrite: true });
+    const command = invocation({ metadata, 'output-dir': 'project' });
     let inventories = 0;
     command.listNativeNames = async (actualConnection, version, family, scope) => {
       assert.equal(actualConnection, connection);
@@ -784,7 +782,7 @@ test('relationship:Dmo retrieves every source relationship of each DMO, sorted a
   };
   const written = [];
   command.writeRelationship = async (document, root, overwrite) => {
-    assert.deepEqual([root, overwrite], [process.cwd(), false]);
+    assert.deepEqual([root, overwrite], [process.cwd(), true]);
     written.push(document.identity.apiName);
     return { path: `${document.identity.apiName}.json`, outcome: 'retrieved' };
   };

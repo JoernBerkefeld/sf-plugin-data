@@ -1,6 +1,6 @@
 # `PARTIAL_TRANSFORM_OUTPUT`
 
-> The transform file was written, but the final check of its contents failed. Open data360/dataTransforms/<Name>.dataTransform.json, then rerun the retrieve with --overwrite.
+> The transform file was written, but the final check of its contents failed. Open data360/dataTransforms/<Name>.dataTransform.json, then rerun the retrieve.
 
 |              |                                                                                 |
 | ------------ | ------------------------------------------------------------------------------- |
@@ -20,14 +20,14 @@ The plugin cannot promise that the file on disk is the definition it read from t
 
 1. Open `data360/dataTransforms/<Name>.dataTransform.json` and check whether it is complete and valid JSON.
 2. Make sure no editor, sync tool or other process is writing to that folder.
-3. Rerun `sf data360 retrieve --metadata data-transform:<Name> --overwrite`.
+3. Rerun `sf data360 retrieve --metadata data-transform:<Name>`.
 
 ## Example output
 
 ```text
 Retrieve: failed.
 data-transform:Orders_Copy: PARTIAL_TRANSFORM_OUTPUT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Transform retrieval did not complete; no org write attempted.
-Hint: The transform file was written, but the final check of its contents failed. Open data360/dataTransforms/<Name>.dataTransform.json, then rerun the retrieve with --overwrite.
+Hint: The transform file was written, but the final check of its contents failed. Open data360/dataTransforms/<Name>.dataTransform.json, then rerun the retrieve.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-transform/PARTIAL_TRANSFORM_OUTPUT.md
 Downloaded data-transform: 0
 ```

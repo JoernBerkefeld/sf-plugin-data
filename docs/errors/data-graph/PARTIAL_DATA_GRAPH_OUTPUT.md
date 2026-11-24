@@ -1,6 +1,6 @@
 # `PARTIAL_DATA_GRAPH_OUTPUT`
 
-> The graph file was written, but the final check of it failed, so it may not match the org. Inspect the .native-dataGraph.json file and retrieve again with --overwrite.
+> The graph file was written, but the final check of it failed, so it may not match the org. Inspect the .native-dataGraph.json file and retrieve again.
 
 |              |                                                           |
 | ------------ | --------------------------------------------------------- |
@@ -20,7 +20,7 @@ The plugin cannot vouch for a file it could not confirm, and it does not delete 
 
 1. Open the file and check it, or delete it.
 2. Make sure no other tool writes to the output folder at the same time.
-3. Rerun `sf data360 retrieve --metadata data-graph:<Name> --overwrite`.
+3. Rerun `sf data360 retrieve --metadata data-graph:<Name>`.
 
 ## Example output
 
@@ -29,7 +29,7 @@ The plugin cannot vouch for a file it could not confirm, and it does not delete 
 ```text
 Retrieve: blocked.
 data-graph:CustomerGraph: NATIVE_GRAPH_RETRIEVE_BLOCKED: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Retrieval did not complete. Check selection, authenticated org, service capability and output path.
-Hint: The data graph could not be retrieved or written to disk. Check the graph name, your org access and the output folder (use --overwrite to replace a changed file), then rerun.
+Hint: The data graph could not be retrieved or written to disk. Check the graph name, your org access and the output folder, then rerun.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/data-graph/NATIVE_GRAPH_RETRIEVE_BLOCKED.md
 Downloaded data-graph: 0
 ```

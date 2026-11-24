@@ -571,8 +571,8 @@ The few things to know per type. Each type page has the full rules and error cod
   start processing; deletes cannot be undone.
 - Retrieve, delete and field delete write files only below `data360/` and refuse symbolic links
   and paths outside it; `segment members export` writes its CSV or JSON to `--output-file`
-  (by default under `data/<data space>/`). A differing existing file is replaced only with
-  `--overwrite` (`-x`) on retrieve.
+  (by default under `data/<data space>/`). A retrieve replaces a local file whose
+  content differs from the org (Git shows the change) and leaves identical files unchanged.
 - No retry and no rollback of writes: after an `unknown` result, check the org first.
 - Not every Salesforce behaviour is tested for every type, data space or org; the type pages
   name what is untested.
@@ -599,7 +599,7 @@ a page under [docs/errors](docs/errors/README.md).
   data spaces with their prefixes and, when a name in `names` is an identity resolution output
   (or `names` is left out), its rulesets. A data space the org lacks fails with
   `UNKNOWN_DATASPACE`.
-- `runRetrieve(connection, { dataspace?, metadata?, outputDir?, overwrite?, apiVersion? })`: runs
+- `runRetrieve(connection, { dataspace?, metadata?, outputDir?, apiVersion? })`: runs
   `sf data360 retrieve` with those flags and returns the same envelope `--json` shows. It does
   not throw for a refusal; the envelope's `status` and diagnostics say what happened, and
   `exitCodeOf(envelope)` gives the exit code the command would use. The connection's API version

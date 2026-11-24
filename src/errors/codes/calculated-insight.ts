@@ -43,5 +43,5 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_CI_SCOPE:
     'The calculated insight request used an unsupported API version, data space name or option. Use --api-version auto or 68.0 and a valid data space name.',
   PARTIAL_CI_OUTPUT:
-    'Only one of the two calculated insight files was written to disk. Check the JSON and SQL files, then rerun the retrieve with --overwrite.',
+    'Only one of the two calculated insight files was written to disk. Check the JSON and SQL files, then rerun the retrieve.',
 };

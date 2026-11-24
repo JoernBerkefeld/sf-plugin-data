@@ -41,7 +41,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_DLO_TARGET_ID:
     'The org returned a DLO record ID in an unexpected form, so the write or delete was not sent. Inspect the DLO in the org and rerun.',
   PARTIAL_DLO_OUTPUT:
-    'The DLO file was written but could not be verified afterwards. Check the file under data360/dlo, then rerun the retrieve with --overwrite.',
+    'The DLO file was written but could not be verified afterwards. Check the file under data360/dlo, then rerun the retrieve.',
   UNSUPPORTED_DLO_CATEGORY_CHANGE:
     'The category of an existing DLO cannot be changed. Set category in the file back to the org value, or create the DLO under a new name.',
   UNSUPPORTED_DLO_DATASPACE:

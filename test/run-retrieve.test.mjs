@@ -1,7 +1,7 @@
 import '../scripts/check-temporary.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readdir } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -106,6 +106,30 @@ test('runRetrieve returns the success envelope, writes files and prints nothing'
   assert.equal(exitCode, undefined);
   // The caller's Connection keeps its API version.
   assert.equal(connection.getApiVersion(), '62.0');
+});
+
+test('runRetrieve replaces a differing local file and leaves an identical one unchanged', async () => {
+  const outputDirectory = await scratch();
+  const options = { metadata: ['dlo'], outputDir: outputDirectory };
+  const first = await observe(fakeConnection([dloEntry('Alpha__dll')]), options);
+  assert.equal(first.envelope.status, 'success', JSON.stringify(first.envelope.diagnostics));
+  const [{ path: file }] = first.envelope.result.items;
+  const retrieved = await readFile(file, 'utf8');
+
+  const repeat = await observe(fakeConnection([dloEntry('Alpha__dll')]), options);
+  assert.deepEqual(
+    repeat.envelope.result.items.map((item) => item.outcome),
+    ['unchanged'],
+  );
+
+  await writeFile(file, '{"local": "edit"}\n');
+  const replaced = await observe(fakeConnection([dloEntry('Alpha__dll')]), options);
+  assert.equal(replaced.envelope.status, 'success', JSON.stringify(replaced.envelope.diagnostics));
+  assert.deepEqual(
+    replaced.envelope.result.items.map((item) => [item.path, item.outcome]),
+    [[file, 'retrieved']],
+  );
+  assert.equal(await readFile(file, 'utf8'), retrieved);
 });
 
 test('runRetrieve returns partial without setting process.exitCode', async () => {
@@ -240,7 +264,6 @@ test('sf data360 retrieve without -o and --api-version never asks the connection
       'api-version': 'auto',
       metadata: ['dlo', 'segment'],
       'output-dir': await scratch(),
-      overwrite: false,
     },
   });
   command.jsonEnabled = () => true;

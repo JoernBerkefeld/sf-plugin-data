@@ -11,8 +11,6 @@ export type RetrieveOptions = {
   metadata?: string[];
   /** Project root (`--output-dir`); default the current directory. */
   outputDir?: string;
-  /** Permit replacing differing files (`--overwrite`). */
-  overwrite?: boolean;
   /** `--api-version`; default `auto`. */
   apiVersion?: string;
 };
@@ -45,7 +43,6 @@ class ConnectionRetrieve extends Retrieve {
       dataspace: options.dataspace,
       metadata: options.metadata,
       'output-dir': options.outputDir,
-      overwrite: options.overwrite ?? false,
     });
   }
 }
@@ -53,7 +50,9 @@ class ConnectionRetrieve extends Retrieve {
 /**
  * Run `sf data360 retrieve` over a Connection the caller holds and return its envelope (what
  * `--json` shows). Nothing is printed and `process.exitCode` is left alone; use exitCodeOf on the
- * envelope for the Salesforce CLI exit code. The Connection's API version is restored afterwards.
+ * envelope for the Salesforce CLI exit code. A local file whose bytes differ from the retrieved
+ * component is replaced; identical bytes are left unchanged. The Connection's API version is
+ * restored afterwards.
  * @param {Connection} connection Authenticated @salesforce/core Connection of the source org.
  * @param {RetrieveOptions} [options] The command's flags.
  * @returns {Promise<RetrieveEnvelope>} The retrieve envelope.

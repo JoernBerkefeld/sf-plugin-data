@@ -88,16 +88,14 @@ const verbatimDmo = (reason = 'INVALID_DMO_FIELD') =>
  * Offline retrieve command; the org and every client are synthetic.
  * @param {string[]} metadata Selectors.
  * @param {string} outputDirectory Project root.
- * @param {boolean} overwrite Permit replacing differing files.
  * @returns {object} Command.
  */
-const retrieveCommand = (metadata, outputDirectory, overwrite) => {
+const retrieveCommand = (metadata, outputDirectory) => {
   const command = Object.create(Retrieve.prototype);
   command.parse = async () => ({
     flags: {
       metadata,
       'api-version': 'auto',
-      overwrite,
       'target-org': 'synthetic',
       'output-dir': outputDirectory,
     },
@@ -319,8 +317,8 @@ test('retrieve twice: normal, then verbatim, then normal again at the same path'
   const cwd = await root('retrieve');
   let raw = dmoNative();
   const reads = [];
-  const command = (overwrite) => {
-    const value = retrieveCommand([`dmo:${dmoName}`], cwd, overwrite);
+  const command = () => {
+    const value = retrieveCommand([`dmo:${dmoName}`], cwd);
     value.createDmoClient = () => ({
       get: async (name) => {
         reads.push(name);
@@ -329,20 +327,15 @@ test('retrieve twice: normal, then verbatim, then normal again at the same path'
     });
     return value;
   };
-  const first = await run(command(false));
+  const first = await run(command());
   assert.equal(first.status, 'success', JSON.stringify(first.diagnostics));
   const file = first.result.items[0].path;
   assert.equal(JSON.parse(await readFile(file, 'utf8')).kind, 'dmo');
   assert.equal(first.result.items[0].verbatim, undefined);
 
+  // The differing verbatim file replaces the normal one without any flag.
   raw = unmodelledDmo();
-  const refused = await run(command(false));
-  assert.equal(refused.status, 'blocked');
-  assert.deepEqual(
-    refused.diagnostics.errors.map((error) => error.code),
-    ['OVERWRITE_REQUIRED'],
-  );
-  const second = await run(command(true));
+  const second = await run(command());
   assert.equal(second.status, 'success', JSON.stringify(second.diagnostics));
   assert.deepEqual(second.result.items[0].verbatim, { reason: 'INVALID_DMO_DOCUMENT' });
   assert.equal(second.result.items[0].path, file);
@@ -357,7 +350,7 @@ test('retrieve twice: normal, then verbatim, then normal again at the same path'
   assert.equal(await readFile(file, 'utf8'), serializeVerbatimDocument(saved));
 
   raw = dmoNative();
-  const third = await run(command(true));
+  const third = await run(command());
   assert.equal(third.status, 'success', JSON.stringify(third.diagnostics));
   assert.equal(third.result.items[0].verbatim, undefined);
   assert.equal(JSON.parse(await readFile(file, 'utf8')).kind, 'dmo');
@@ -368,7 +361,7 @@ test('retrieve twice: normal, then verbatim, then normal again at the same path'
 
 test('an HTTP failure or a missing object stays an item failure and writes nothing', async () => {
   const cwd = await root('http');
-  const command = retrieveCommand([`dmo:${dmoName}`], cwd, true);
+  const command = retrieveCommand([`dmo:${dmoName}`], cwd);
   command.createDmoClient = () => ({
     get: async () => {
       throw Object.assign(new NativeDmoError('DMO_HTTP_ERROR'), { status: 404 });
@@ -388,7 +381,7 @@ test('a calculated insight read but not represented is written verbatim and its 
   await mkdir(folder, { recursive: true });
   const sql = path.join(folder, `${name}.calculatedInsight-meta.sql`);
   await writeFile(sql, 'SELECT 1\n');
-  const command = retrieveCommand([`calculated-insight:${name}`], cwd, true);
+  const command = retrieveCommand([`calculated-insight:${name}`], cwd);
   command.createCalculatedInsightClient = () => ({
     get: async (apiName) => ({ apiName, draft: true }),
   });
@@ -441,7 +434,7 @@ test('a selection entry, segment or DMO, that is verbatim is written and reporte
   );
 
   const cwd = await root('selection');
-  const command = retrieveCommand(['segment:Audience'], cwd, false);
+  const command = retrieveCommand(['segment:Audience'], cwd);
   command.acquireSelection = async () => selected;
   const result = await run(command);
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));

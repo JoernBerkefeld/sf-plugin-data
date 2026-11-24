@@ -1,6 +1,6 @@
 # `PARTIAL_RELATIONSHIP_OUTPUT`
 
-> The relationship file was written, but a later step of saving it failed, so the file may not be complete. Inspect it under data360/relationship and retrieve again with --overwrite.
+> The relationship file was written, but a later step of saving it failed, so the file may not be complete. Inspect it under data360/relationship and retrieve again.
 
 |              |                                                                      |
 | ------------ | -------------------------------------------------------------------- |
@@ -20,14 +20,14 @@ Once a file has been placed, the plugin cannot claim that nothing was written. I
 
 1. Open the file and check that it is complete JSON.
 2. Make sure no other process writes to the project folder.
-3. Retrieve the source DMO's relationships again with `--overwrite`.
+3. Retrieve the source DMO's relationships again.
 
 ## Example output
 
 ```text
 Retrieve: failed.
 relationship:Order_CustomerId_map_Customer_Id_1794467679481: PARTIAL_RELATIONSHIP_OUTPUT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Relationship retrieval did not complete for this item; the org was not changed.
-Hint: The relationship file was written, but a later step of saving it failed, so the file may not be complete. Inspect it under data360/relationship and retrieve again with --overwrite.
+Hint: The relationship file was written, but a later step of saving it failed, so the file may not be complete. Inspect it under data360/relationship and retrieve again.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/relationship/PARTIAL_RELATIONSHIP_OUTPUT.md
 Downloaded relationship: 0
 ```

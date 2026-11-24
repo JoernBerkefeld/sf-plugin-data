@@ -36,7 +36,6 @@ function invocation(metadata, overrides = {}) {
   const flags = {
     metadata,
     'api-version': 'auto',
-    overwrite: false,
     'target-org': 'synthetic',
     ...overrides,
   };

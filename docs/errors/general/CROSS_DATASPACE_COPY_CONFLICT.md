@@ -41,5 +41,5 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/g
 
 ## Related codes
 
-- [`OVERWRITE_REQUIRED`](../general/OVERWRITE_REQUIRED.md) — retrieve would change a file that already exists.
+- [`OVERWRITE_REQUIRED`](../general/OVERWRITE_REQUIRED.md) — the same conflict for a copy file whose name Salesforce gives at write time.
 - [`CROSS_DATASPACE_UNRESOLVED`](../general/CROSS_DATASPACE_UNRESOLVED.md) — a name in the file cannot be placed.

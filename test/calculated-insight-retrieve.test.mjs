@@ -429,7 +429,6 @@ const command = (metadata, cwd, space = 'default') => {
       'api-version': 'auto',
       'target-org': 'synthetic',
       'output-dir': cwd,
-      overwrite: false,
       ...(space === 'default' ? {} : { dataspace: space }),
     },
   });

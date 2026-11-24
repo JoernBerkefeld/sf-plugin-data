@@ -1218,7 +1218,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     envelope.status = 'failed';
     refuse(
       'LOCAL_REFRESH_FAILED',
-      `The field(s) ${fields.join(', ')} were deleted from ${apiName} in the org, but ${failed.length === 1 ? 'this project file was' : 'these project files were'} not refreshed: ${failed.map((file) => `${file.path} (${file.code})`).join('; ')}. Do not repeat the delete; refresh with sf data360 retrieve and --overwrite.`,
+      `The field(s) ${fields.join(', ')} were deleted from ${apiName} in the org, but ${failed.length === 1 ? 'this project file was' : 'these project files were'} not refreshed: ${failed.map((file) => `${file.path} (${file.code})`).join('; ')}. Do not repeat the delete; refresh with sf data360 retrieve.`,
     );
   }
 

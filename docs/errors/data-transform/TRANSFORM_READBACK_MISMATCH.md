@@ -19,7 +19,7 @@ A deploy only counts as successful when the written transform can be read back a
 ## How to fix
 
 1. Open the transform in Data Cloud and check its name and schedule.
-2. Retrieve it to see what the org holds: `sf data360 retrieve --metadata data-transform:<Name>` (into a separate folder or with care for `--overwrite`).
+2. Retrieve it to see what the org holds: `sf data360 retrieve --metadata data-transform:<Name>` (into a separate folder with `--output-dir`, as a retrieve replaces a differing local file).
 3. Decide whether to deploy again, keeping in mind the write may already have taken effect.
 
 ## Example output

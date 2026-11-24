@@ -15,7 +15,7 @@ export const hints: Readonly<Record<string, string>> = {
   INVALID_TRANSFORM_TARGET_ID:
     'A data transform record ID does not have the expected format (1dt followed by 15 letters or digits). Nothing was changed; check the transform in Data Cloud, then rerun.',
   PARTIAL_TRANSFORM_OUTPUT:
-    'The transform file was written, but the final check of its contents failed. Open data360/dataTransforms/<Name>.dataTransform.json, then rerun the retrieve with --overwrite.',
+    'The transform file was written, but the final check of its contents failed. Open data360/dataTransforms/<Name>.dataTransform.json, then rerun the retrieve.',
   TRANSFORM_CONNECTION_DRIFT:
     'The connection to the org changed while the command was running. Check that your org login is stable, then rerun the command.',
   TRANSFORM_DATASPACE_MISMATCH:

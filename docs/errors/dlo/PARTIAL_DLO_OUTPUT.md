@@ -1,6 +1,6 @@
 # `PARTIAL_DLO_OUTPUT`
 
-> The DLO file was written but could not be verified afterwards. Check the file under data360/dlo, then rerun the retrieve with --overwrite.
+> The DLO file was written but could not be verified afterwards. Check the file under data360/dlo, then rerun the retrieve.
 
 |              |                                                             |
 | ------------ | ----------------------------------------------------------- |
@@ -22,14 +22,14 @@ The plugin only reports a retrieve as done when it has read the file back and co
 
 1. Open the file and check that it is complete, valid JSON.
 2. Make sure no other tool (editor, sync client, formatter) is writing to the project folder.
-3. Rerun the retrieve with `--overwrite` to write it again.
+3. Rerun the retrieve to write it again.
 
 ## Example output
 
 ```text
 Retrieve: failed.
 dlo:Orders__dll: PARTIAL_DLO_OUTPUT: Plugin verification or request completion failed; no Salesforce rejection was confirmed. Native component retrieval did not complete; no write attempted.
-Hint: The DLO file was written but could not be verified afterwards. Check the file under data360/dlo, then rerun the retrieve with --overwrite.
+Hint: The DLO file was written but could not be verified afterwards. Check the file under data360/dlo, then rerun the retrieve.
 Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/dlo/PARTIAL_DLO_OUTPUT.md
 Downloaded dlo: 0
 ```

@@ -104,7 +104,7 @@ file of another data space than the run's is `SEGMENT_DATASPACE_MISMATCH`.
 The file holds no `parameters` (the API has no write for them). A model name must start with a letter or digit and hold only
 letters, digits and underscores, and two model names may not differ only in case; another
 name is refused with `INVALID_SEGMENT_DOCUMENT`. A repeat retrieve of an unchanged segment
-writes nothing (`unchanged`); with `--overwrite`, the SQL file of a model the segment no
+writes nothing (`unchanged`); when the segment changed, the SQL file of a model it no
 longer has is removed.
 
 Deploy, delete and `--changed-since` read the same files. The JSON or any of its SQL files,
@@ -264,7 +264,7 @@ keys or extra keys. Those values are sent as authored and Salesforce decides.
 - Record IDs and other runtime observations of the object are not saved.
 
 The file is indented with two spaces and ends with LF. Identical bytes are
-unchanged; a differing file requires `--overwrite` (DMO names are unique in the org,
+unchanged; a differing file is replaced (DMO names are unique in the org,
 so the file at the path is the same DMO whatever data space it names). The
 writer rejects linked paths and files above 1 MiB, stages the complete file under
 the OS temp directory and publishes it by rename or exclusive hard link. Writer
@@ -305,7 +305,7 @@ codes: `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
   space, which must be the run's: `MAPPING_DATASPACE_MISMATCH` otherwise;
   `LEGACY_DATASPACE_KEY` for the old `identity.dataSpace`), `identity` with `apiName`
   only, and `spec`. Mapping names are unique in the org, so the file at the path is the
-  same mapping whatever data space it names (`--overwrite` replaces it). It may name a
+  same mapping whatever data space it names (a retrieve replaces it). It may name a
   custom or a standard DMO in `spec.targetEntityDeveloperName`, under the name Salesforce
   stores in the mapping's data space (`ds2_ContactPointEmail__dlm` with `EmailAddress__c`
   for a standard DMO copy in `dataspace2`). The first mapping onto a standard DMO copy that
@@ -489,7 +489,7 @@ org's relationship name; if the binding exists only under another name, delete
 refuses with `RELATIONSHIP_NAME_MISMATCH` and names it.
 
 The file is indented with two spaces and ends with LF. Identical bytes are
-unchanged; a differing file requires `--overwrite` (relationship names are unique in the
+unchanged; a differing file is replaced (relationship names are unique in the
 org). Writer codes:
 `UNSAFE_PATH`, `OVERWRITE_REQUIRED`, `OUTPUT_CHANGED`, `OUTPUT_FAILED`,
 `PARTIAL_RELATIONSHIP_OUTPUT`.

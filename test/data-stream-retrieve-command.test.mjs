@@ -20,7 +20,6 @@ function invocation(flags = {}) {
       metadata: ['data-stream:Zulu', 'data-stream:Alpha', 'data-stream:Alpha'],
       'api-version': 'auto',
       'target-org': 'synthetic',
-      overwrite: false,
       ...flags,
     },
   });
@@ -80,7 +79,6 @@ for (const json of [true, false])
     test(`exact streams sort/dedupe and preserve output, overwrite and routes ${json}/${version}`, async () => {
       const { command, calls, lines } = invocation({
         'api-version': version,
-        overwrite: true,
         'output-dir': 'chosen-root',
       });
       command.jsonEnabled = () => json;

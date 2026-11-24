@@ -114,7 +114,7 @@ const guide = (reader, extra = {}) => ({
 });
 const steps = (scope, mappings, fields, perMapping) =>
   [
-    `sf data360 retrieve${scope}${mappings.map((name) => ` -m mapping:${name}`).join('')} -m dmo:${apiName} --overwrite`,
+    `sf data360 retrieve${scope}${mappings.map((name) => ` -m mapping:${name}`).join('')} -m dmo:${apiName}`,
     [
       ...mappings.map(
         (name) =>

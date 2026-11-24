@@ -24,7 +24,6 @@ const retrieve = (overrides = {}) => {
     'api-version': 'auto',
     dataspace: 'default',
     'target-org': 'synthetic',
-    overwrite: false,
     ...overrides,
   };
   command.parse = async () => ({ flags });

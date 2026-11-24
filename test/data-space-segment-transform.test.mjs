@@ -456,7 +456,7 @@ test('the space is resolved before projection: an unmodellable transform of anot
   const written = [];
   const command = Object.create(Retrieve.prototype);
   command.parse = async () => ({
-    flags: { metadata: ['data-transform:T'], 'api-version': 'auto', overwrite: false },
+    flags: { metadata: ['data-transform:T'], 'api-version': 'auto' },
   });
   command.jsonEnabled = () => true;
   command.log = () => {};
