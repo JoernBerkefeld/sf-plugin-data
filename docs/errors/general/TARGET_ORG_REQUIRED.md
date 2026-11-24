@@ -2,11 +2,11 @@
 
 > No usable target org was found. Pass --target-org <alias or username>, or set a default with sf config set target-org, then rerun.
 
-|              |                                                                                                                            |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| **Family**   | General                                                                                                                    |
-| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`, `sf data360 publish`, `sf data360 segment members export` |
-| **Outcome**  | `blocked` — nothing was read, written or deleted                                                                           |
+|              |                                                                                                                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Family**   | General                                                                                                                                                 |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`, `sf data360 publish`, `sf data360 segment members export`, `sf data360 list dataspace` |
+| **Outcome**  | `blocked` — nothing was read, written or deleted                                                                                                        |
 
 ## What it means
 

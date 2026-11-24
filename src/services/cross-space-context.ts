@@ -30,7 +30,11 @@ export async function crossSpaceContext(
 ): Promise<CrossSpaceContext> {
   const sender = openBoundSsot('', '68.0', async () => connection);
   const open = async (): Promise<typeof sender> => sender;
-  const spaces = await readOrgDataSpaceEntries(open);
+  // The context names each space and its prefix only, as the rename rules read them.
+  const entries = await readOrgDataSpaceEntries(open);
+  const spaces = entries.map(({ name, prefix }) =>
+    prefix === undefined ? { name } : { name, prefix },
+  );
   const known = spaces.map((space) => space.name);
   const unknown = sortedDataSpaces([options.from, options.to].filter((s) => !known.includes(s)));
   if (unknown.length > 0)

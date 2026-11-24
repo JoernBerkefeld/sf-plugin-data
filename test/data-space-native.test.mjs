@@ -367,10 +367,11 @@ test('the data space read keeps each prefix; the check answers it from the same 
     totalSize: 3,
   };
   const open = async () => ({ request: async () => structuredClone(page) });
+  // The label falls back to the name when the entry has none.
   assert.deepEqual(await readOrgDataSpaceEntries(open), [
-    { name: 'default' },
-    { name: SPACE, prefix: 'ds2' },
-    { name: 'odd' },
+    { name: 'default', label: 'Default' },
+    { name: SPACE, label: 'Space 2', prefix: 'ds2' },
+    { name: 'odd', label: 'odd' },
   ]);
   assert.deepEqual(await readOrgDataSpaces(open), ['default', SPACE, 'odd']);
   const original = dataSpaceDirectory.read;
