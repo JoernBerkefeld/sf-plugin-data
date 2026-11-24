@@ -73,7 +73,7 @@ sf data360 delete -o target -m segment:Old_Segment
 
 # Deploy what changed in Git since main, and delete what was deleted
 sf data360 deploy -o target --changed-since main --preview
-sf data360 delete -o target --changed-since main --confirm-delete
+sf data360 delete -o target --changed-since main
 ```
 
 The commands:
@@ -218,10 +218,11 @@ first, then identity resolution, calculated insights and segments, transforms, r
 mappings, DMOs, DLOs, and data streams last. Each phase finishes before the next starts.
 
 - Components are selected by name with `-m`. A delete reads no local file, except for a mapping,
-  which it finds through its local file like deploy does. A `-m` delete needs
-  no confirmation flag, so check it with `--preview` first.
-- `--changed-since <ref>` deletes the components whose files were deleted in that Git range. It
-  always needs `--confirm-delete` (not with `--preview`).
+  which it finds through its local file like deploy does.
+- `--changed-since <ref>` deletes the components whose files were deleted in that Git range.
+- Before deleting, the command lists what it would delete and asks once (no answer within 30
+  seconds is no). Without a terminal or with `--json` it refuses unless you pass `--no-prompt`
+  (`-r`); check the selection with `--preview` first.
 - A component the org does not have reports `unchanged`.
 - A data stream keeps its landing DLO unless you add `--delete-dlo`.
 - `sf data360 delete -m dmo:<Name>__dlm --field <Field__c>` removes single fields of a DMO.

@@ -12,7 +12,7 @@ pages.
 - `sf data360 delete -m <type>:<Name> [-m …] --preview` to see what would happen
 - `sf data360 delete -m <type>:<Name> [-m …]` to delete
 - `sf data360 delete --changed-since <ref> --preview` and
-  `sf data360 delete --changed-since <ref> --confirm-delete`
+  `sf data360 delete --changed-since <ref>`
 - `sf data360 delete -m dmo:<Name__dlm> --field <Field__c>` to remove single DMO fields (see
   [DMOs](dmo.md))
 
@@ -87,10 +87,22 @@ also runs with `--preview`; the family checks compare against it.
   `confirmed-deleted`. A mapping that stays readable is `deletion-unconfirmed` with
   [`MAPPING_DELETION_UNCONFIRMED`](../errors/mapping/MAPPING_DELETION_UNCONFIRMED.md).
 
-### No confirmation flag for `-m`
+### Confirmation
 
-A `-m` delete runs without a confirmation flag: check it with `--preview` first.
-`--confirm-delete` belongs to `--changed-since` only.
+Every delete without `--preview` asks once before it sends anything, for `-m`, `--changed-since`
+and `--field` alike. It first runs the same selection read-only, then asks
+`Delete N component(s) from data space X?`, lists each component and notes that dependent
+mappings, DLOs and fields may be found during the run. Only `y` or `yes` deletes.
+
+- No, no answer within 30 seconds, or a failed question: nothing is sent. The result lists the
+  read-only items with `mutation: not-attempted` and
+  [`DELETE_CANCELLED`](../errors/general/DELETE_CANCELLED.md), with a `DELETE_CANCELLED` warning;
+  status `success`, exit code 0.
+- When the read-only run finds nothing to delete, no question is asked.
+- `--no-prompt` (`-r`) deletes without asking. Without a terminal, or with `--json`, a delete
+  without `--no-prompt` is refused before any org call with
+  [`CONFIRMATION_REQUIRED`](../errors/general/CONFIRMATION_REQUIRED.md) (exit code 1).
+- `--preview` never asks.
 
 ```sh
 sf data360 delete -o target -m data-graph:ExampleGraph -m identity-resolution:Individual_5810 --preview
@@ -115,11 +127,11 @@ sf data360 delete -o target -m data-graph:ExampleGraph -m identity-resolution:In
 `--changed-since <ref>` deletes in the org the components whose canonical plugin files were
 deleted since the merge base with `<ref>` (committed or staged; an unstaged deletion blocks).
 Files changed or added in the range are not part of a delete. It cannot be combined with `-m`
-and always needs `--confirm-delete`, even for one family; `--preview` runs without it.
+and asks for confirmation like any delete.
 
 ```sh
 sf data360 delete -o target --changed-since main --preview
-sf data360 delete -o target --changed-since main --confirm-delete
+sf data360 delete -o target --changed-since main
 ```
 
 - The deleted files run through the same phases. Identity and definition come from each file's

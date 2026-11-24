@@ -238,7 +238,7 @@ const harness = (cwd, flags) => {
   const command = Object.create(Delete.prototype);
   h.command = command;
   command.parse = async () => ({
-    flags: { preview: false, 'confirm-delete': true, 'keep-local-files': false, ...flags },
+    flags: { 'no-prompt': true, preview: false, 'keep-local-files': false, ...flags },
   });
   command.jsonEnabled = () => true;
   command.selectGitInputs = async (options) => {
@@ -347,19 +347,19 @@ test('a graph and the IR it needs, deleted in the range, run graph first then th
   assert.equal(result.provenance.git.mergeBase, base);
 });
 
-test('a Git delete needs --confirm-delete before any org call, even in one phase', async () => {
+test('a Git delete with --json needs --no-prompt before any Git or org call', async () => {
   const { cwd, base } = await repository(['dmo']);
-  const h = harness(cwd, { 'changed-since': base, 'confirm-delete': false });
+  const h = harness(cwd, { 'changed-since': base, 'no-prompt': false });
   const result = await run(h.command);
   assert.equal(result.status, 'blocked');
-  assert.deepEqual(codes(result), ['DESTRUCTIVE_CONFIRMATION_REQUIRED']);
-  assert.match(result.diagnostics.errors[0].message, /Git range/u);
-  assert.deepEqual(h.calls, ['git']);
+  assert.deepEqual(codes(result), ['CONFIRMATION_REQUIRED']);
+  assert.match(result.diagnostics.errors[0].message, /--no-prompt/u);
+  assert.deepEqual(h.calls, []);
 });
 
-test('a Git delete preview runs without --confirm-delete and plans the IR after its graph', async () => {
+test('a Git delete preview runs without --no-prompt and plans the IR after its graph', async () => {
   const { cwd, base } = await repository(['ir', 'graph']);
-  const h = harness(cwd, { 'changed-since': base, 'confirm-delete': false, preview: true });
+  const h = harness(cwd, { 'changed-since': base, 'no-prompt': false, preview: true });
   const result = await run(h.command);
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
   assert.deepEqual(h.calls, ['git', 'auth', 'graph:SyntheticGraph']);
@@ -830,13 +830,13 @@ test('retrieved files that keep keys the plugin does not model are deleted from 
   assert.equal(h.desired.transform.definition.futureTransformSetting, 'kept');
 });
 
-test('a lenient Git-range delete still needs --confirm-delete and a name that matches the path', async () => {
+test('a lenient Git-range delete still needs confirmation and a name that matches the path', async () => {
   const { cwd, base } = await repository(lenientNames);
-  const h = lenientHarness(cwd, { 'changed-since': base, 'confirm-delete': false });
+  const h = lenientHarness(cwd, { 'changed-since': base, 'no-prompt': false });
   const result = await run(h.command);
   assert.equal(result.status, 'blocked');
-  assert.deepEqual(codes(result), ['DESTRUCTIVE_CONFIRMATION_REQUIRED']);
-  assert.deepEqual(h.calls, ['git']);
+  assert.deepEqual(codes(result), ['CONFIRMATION_REQUIRED']);
+  assert.deepEqual(h.calls, []);
   // A retrieved file whose identity is not its file name names no org component.
   const renamed = withUnknown(files.lenientDmo[1], (value) => {
     value.identity.apiName = 'Other__dlm';
@@ -918,10 +918,10 @@ test('verbatim source-family files deleted in a range are deleted by type and na
   for (const kind of ['segment', 'ir', 'graph', 'transform'])
     assert.ok('verbatim' in h.desired[kind], kind);
   // The guards before any org call still hold: confirmation and the name of the path.
-  const unconfirmed = verbatimHarness(cwd, { 'changed-since': base, 'confirm-delete': false });
+  const unconfirmed = verbatimHarness(cwd, { 'changed-since': base, 'no-prompt': false });
   const blocked = await run(unconfirmed.command);
-  assert.deepEqual(codes(blocked), ['DESTRUCTIVE_CONFIRMATION_REQUIRED']);
-  assert.deepEqual(unconfirmed.calls, ['git']);
+  assert.deepEqual(codes(blocked), ['CONFIRMATION_REQUIRED']);
+  assert.deepEqual(unconfirmed.calls, []);
   files.verbatimSegmentRenamed = [
     files.verbatimSegment[0],
     verbatim('segment', 'Other', { segments: [] }),

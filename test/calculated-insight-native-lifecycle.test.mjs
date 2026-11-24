@@ -607,7 +607,7 @@ test('delete sends one DELETE in any state, waits through DELETING and needs 404
     'default',
     options(unconfirmed, { confirmDelete: false }),
   );
-  assert.equal(blocked.diagnostics[0].code, 'DESTRUCTIVE_CONFIRMATION_REQUIRED');
+  assert.equal(blocked.diagnostics[0].code, 'CONFIRMATION_REQUIRED');
   const foreign = await deleteCalculatedInsight(
     identity,
     connection,

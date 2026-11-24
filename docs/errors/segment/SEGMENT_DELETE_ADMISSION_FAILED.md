@@ -37,4 +37,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/s
 ## Related codes
 
 - [`SEGMENT_DELETION_UNCONFIRMED`](../segment/SEGMENT_DELETION_UNCONFIRMED.md) — The delete was sent but not confirmed.
-- [`DESTRUCTIVE_CONFIRMATION_REQUIRED`](../general/DESTRUCTIVE_CONFIRMATION_REQUIRED.md) — A delete with --changed-since was run without --confirm-delete.
+- [`CONFIRMATION_REQUIRED`](../general/CONFIRMATION_REQUIRED.md) — a delete without a terminal or with `--json` needs `--no-prompt`.

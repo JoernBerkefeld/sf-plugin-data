@@ -139,7 +139,9 @@ test('DLO still readable after acknowledged DELETE is deletion-unconfirmed, neve
     let deletes = 0;
     const lines = [];
     const command = Object.create(Delete.prototype);
-    command.parse = async () => ({ flags: { metadata: [`dlo:${name}`], preview: false } });
+    command.parse = async () => ({
+      flags: { 'no-prompt': true, metadata: [`dlo:${name}`], preview: false },
+    });
     command.jsonEnabled = () => json;
     command.log = (line) => lines.push(line);
     command.resolveTarget = async () => 'target';
@@ -177,7 +179,9 @@ test('DLO still readable after acknowledged DELETE is deletion-unconfirmed, neve
 test('human output names the reason when a DLO delete is blocked before any write', async () => {
   const lines = [];
   const command = Object.create(Delete.prototype);
-  command.parse = async () => ({ flags: { metadata: [`dlo:${name}`], preview: true } });
+  command.parse = async () => ({
+    flags: { 'no-prompt': true, metadata: [`dlo:${name}`], preview: true },
+  });
   command.jsonEnabled = () => false;
   command.log = (line) => lines.push(line);
   command.resolveTarget = async () => 'target';
@@ -210,7 +214,9 @@ async function deleteWithReadback(readback, json) {
   let reads = 0;
   const lines = [];
   const command = Object.create(Delete.prototype);
-  command.parse = async () => ({ flags: { metadata: [`dlo:${name}`], preview: false } });
+  command.parse = async () => ({
+    flags: { 'no-prompt': true, metadata: [`dlo:${name}`], preview: false },
+  });
   command.jsonEnabled = () => json;
   command.log = (line) => lines.push(line);
   command.resolveTarget = async () => 'target';

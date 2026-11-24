@@ -595,7 +595,7 @@ for (const command of topics.flatMap((topic) => [
         assert.ok(result.stdout.includes(flag), flag);
     }
     if (command.endsWith(' delete')) {
-      for (const flag of ['--changed-since', '--confirm-delete', '--metadata', '--preview'])
+      for (const flag of ['--changed-since', '--no-prompt', '--metadata', '--preview'])
         assert.ok(result.stdout.includes(flag), flag);
       for (const flag of ['--source-dir', '--transform-target-id'])
         assert.ok(!result.stdout.includes(flag), flag);
@@ -827,7 +827,7 @@ test('deploy parser admits repeated non-greedy explicit flags but blocks invalid
   }
 });
 
-test('delete parser refuses --source-dir, --transform-target-id and a -m --confirm-delete', () => {
+test('delete parser refuses --source-dir, --transform-target-id and the removed --confirm-delete', () => {
   for (const arguments_ of [
     ['-d', 'Synthetic__cio.calculatedInsight-meta.json'],
     ['--source-dir', 'Synthetic__cio.calculatedInsight-meta.json'],
@@ -840,17 +840,13 @@ test('delete parser refuses --source-dir, --transform-target-id and a -m --confi
       { encoding: 'utf8', env: environment },
     );
     assert.notEqual(result.status, 0, arguments_.join(' '));
-    assert.match(
-      `${result.stdout}${result.stderr}`,
-      arguments_[0] === '--confirm-delete' ? /changed-since/u : /Nonexistent flag/u,
-      arguments_.join(' '),
-    );
+    assert.match(`${result.stdout}${result.stderr}`, /Nonexistent flag/u, arguments_.join(' '));
   }
 });
 
 test('delete without a usable org reports TARGET_ORG_REQUIRED like publish', () => {
   for (const arguments_ of [
-    ['-m', 'calculated-insight:Synthetic__cio'],
+    ['-m', 'calculated-insight:Synthetic__cio', '--no-prompt'],
     ['-m', 'data-transform:Synthetic', '--preview'],
     ['-m', 'dmo:Synthetic__dlm', '--preview'],
     ['-m', 'dmo:Synthetic__dlm', '--field', 'Name__c', '--preview'],
@@ -885,6 +881,7 @@ test('CI delete parser rejects unqualified scope before authentication', () => {
         'delete',
         '-m',
         'calculated-insight:Synthetic__cio',
+        '--no-prompt',
         ...arguments_,
         '--json',
       ],
@@ -1015,7 +1012,12 @@ test('oclif discovers twenty-four IDs backed by exactly six canonical implementa
       const command = Object.create(implementation.prototype);
       command.config = { pjson: { version: '2.151.7' } };
       command.parse = async () => ({
-        flags: { metadata: ['invalid'], 'api-version': '65.0', dataspace: 'default' },
+        flags: {
+          metadata: ['invalid'],
+          'api-version': '65.0',
+          dataspace: 'default',
+          'no-prompt': true,
+        },
       });
       command.jsonEnabled = () => true;
       command.resolveInputs = async () => [];
@@ -1053,6 +1055,7 @@ for (const topic of topics) {
           topic,
           operation,
           ...(operation === 'publish' ? [] : ['-m', 'invalid']),
+          ...(operation === 'delete' ? ['--no-prompt'] : []),
           '--json',
         ],
         { encoding: 'utf8', env: environment },

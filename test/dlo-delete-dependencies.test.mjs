@@ -46,7 +46,7 @@ const fixture = ({ metadata, preview = false, dependencies, mappings = [], remov
   let deleted = false;
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
-    flags: { metadata, preview, 'api-version': '68.0', 'data-space': 'default' },
+    flags: { 'no-prompt': true, metadata, preview, 'api-version': '68.0', 'data-space': 'default' },
   });
   command.jsonEnabled = () => true;
   command.resolveTarget = async () => 'target';
@@ -385,6 +385,7 @@ test('an absent DLO stays unchanged and does not stop the other selections', asy
     const command = Object.create(Delete.prototype);
     command.parse = async () => ({
       flags: {
+        'no-prompt': true,
         metadata: ['dlo:Absent__dll', `dlo:${dlo}`],
         preview,
         'api-version': '68.0',

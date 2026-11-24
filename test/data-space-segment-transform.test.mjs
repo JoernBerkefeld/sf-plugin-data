@@ -490,7 +490,12 @@ test('delete -m refuses an org transform of another data space before any DELETE
     const ledger = [];
     const command = Object.create(Delete.prototype);
     command.parse = async () => ({
-      flags: { metadata: ['data-transform:T'], 'delete-dlo': false, preview: false },
+      flags: {
+        'no-prompt': true,
+        metadata: ['data-transform:T'],
+        'delete-dlo': false,
+        preview: false,
+      },
     });
     command.jsonEnabled = () => true;
     command.log = () => {};

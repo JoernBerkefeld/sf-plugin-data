@@ -327,8 +327,7 @@ export async function deleteIdentityResolution(
         throw new Error('Owner drift');
       await input();
       if (preview) return result('delete');
-      if (options.confirmDelete !== true)
-        return result('blocked', 'DESTRUCTIVE_CONFIRMATION_REQUIRED');
+      if (options.confirmDelete !== true) return result('blocked', 'CONFIRMATION_REQUIRED');
       attempted = true;
       await client.deleteIdentityResolution(id);
       check();

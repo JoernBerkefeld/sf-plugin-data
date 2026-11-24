@@ -142,6 +142,7 @@ const harness = (inputs, flags = {}, command = Object.create(Delete.prototype)) 
   command.parse = async () => ({
     flags: {
       preview: false,
+      'no-prompt': true,
       'keep-local-files': true,
       metadata: everything,
       ...flags,
@@ -570,7 +571,7 @@ test('the last mapping of a DMO that is not selected stays refused', async () =>
   assert.equal(result.diagnostics.errors[0].code, 'MAPPING_LAST_MAPPING_DELETE_BLOCKED');
 });
 
-test('-m alone deletes across phases without --confirm-delete', async () => {
+test('-m alone deletes across phases with --no-prompt', async () => {
   const h = harness(all());
   const result = await run(h.command);
   assert.equal(result.status, 'success');

@@ -132,7 +132,9 @@ async function deleteWithReadback(readback, json) {
   let reads = 0;
   const lines = [];
   const command = Object.create(Delete.prototype);
-  command.parse = async () => ({ flags: { metadata: [`dmo:${name}`], preview: false } });
+  command.parse = async () => ({
+    flags: { 'no-prompt': true, metadata: [`dmo:${name}`], preview: false },
+  });
   command.jsonEnabled = () => json;
   command.log = (line) => lines.push(line);
   command.resolveTarget = async () => 'target';
@@ -211,7 +213,9 @@ test('a standard or untyped DMO delete is sent; a 4xx answer is reported rejecte
   for (const creationType of ['Standard', undefined]) {
     const deletes = [];
     const command = Object.create(Delete.prototype);
-    command.parse = async () => ({ flags: { metadata: [`dmo:${standard}`], preview: false } });
+    command.parse = async () => ({
+      flags: { 'no-prompt': true, metadata: [`dmo:${standard}`], preview: false },
+    });
     command.jsonEnabled = () => true;
     command.log = () => {};
     command.resolveTarget = async () => 'target';

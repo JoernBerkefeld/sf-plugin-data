@@ -63,7 +63,7 @@ and deleted again is ignored.
 
 Deploy does not delete: candidates are listed in `result.selection.deletions` (family,
 API name, path) and as `Not deleted: <family>:<name>` lines that name the matching
-`sf data360 delete --changed-since <ref> --confirm-delete` command, and nothing is
+`sf data360 delete --changed-since <ref>` command, and nothing is
 written for them.
 
 ### Deleting with `sf data360 delete --changed-since`
@@ -71,10 +71,9 @@ written for them.
 `sf data360 delete --changed-since <ref>` takes the same Git selection and deletes the
 components of the files deleted in the range; files changed or added in the range are
 not part of a delete. It is exclusive with `--metadata` and refuses `--delete-dlo`
-(`INVALID_STREAM_DELETE_SELECTION`). Execution always needs `--confirm-delete`
-(`DESTRUCTIVE_CONFIRMATION_REQUIRED` otherwise, before any org call), even for one
-family; `--preview` runs without it. `--confirm-delete` belongs to `--changed-since`
-only: a delete by name with `-m` runs without it.
+(`INVALID_STREAM_DELETE_SELECTION`). Like every delete it lists the components and asks
+once before deleting; without a terminal or with `--json` it needs `--no-prompt`
+(`CONFIRMATION_REQUIRED` otherwise, before any org call). `--preview` never asks.
 
 - The candidates run through the same phases as any delete, in reverse order: graphs,
   then identity resolution, calculated insights and Segments (a dependent before what it

@@ -101,6 +101,7 @@ const harness = async (overrides = {}) => {
     metadata: ['calculated-insight:SyntheticDelete__cio'],
     'api-version': '68.0',
     preview: false,
+    'no-prompt': true,
     ...overrides,
   };
   const command = Object.create(Delete.prototype);
@@ -234,9 +235,9 @@ test('CI delete refuses an insight the org reads in another data space than the 
   assert.equal(result.status, 'blocked');
   assert.equal(h.calls.writes, 0);
 });
-test('CI delete by name needs no --confirm-delete and reads the definition from the org', async () => {
+test('CI delete by name with --no-prompt reads the definition from the org', async () => {
   const h = await harness();
-  assert.equal(h.flags['confirm-delete'], undefined);
+  assert.equal('confirm-delete' in Delete.flags, false);
   // The local files are not an input: a changed file does not stop the delete.
   await writeFile(h.pair.companionPath, 'not the org definition');
   const { result } = await run(h.command);

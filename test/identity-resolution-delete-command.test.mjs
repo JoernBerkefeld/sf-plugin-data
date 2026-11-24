@@ -36,6 +36,7 @@ const harness = async (overrides = {}, shape = () => {}) => {
   const flags = {
     metadata: [`identity-resolution:${desired.identity.apiName}`],
     preview: false,
+    'no-prompt': true,
     ...overrides,
   };
   const command = Object.create(Delete.prototype);
@@ -141,9 +142,9 @@ for (const mode of ['preview', 'absent'])
     assert.equal(result.result.items[0].outcome, mode === 'preview' ? 'delete' : 'unchanged');
     assert.equal(result.result.items[0].mutation, 'not-attempted');
   });
-test('public IR delete by name needs no --confirm-delete and ignores the local file', async () => {
+test('public IR delete by name with --no-prompt ignores the local file', async () => {
   const h = await harness();
-  assert.equal(h.flags['confirm-delete'], undefined);
+  assert.equal('confirm-delete' in Delete.flags, false);
   await writeFile(h.file, 'not the org definition');
   const { result } = await run(h.command);
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));

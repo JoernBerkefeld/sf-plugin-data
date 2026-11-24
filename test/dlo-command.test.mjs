@@ -75,6 +75,7 @@ const invocation = (Type, flags) => {
   const command = Object.create(Type.prototype);
   command.parse = async () => ({
     flags: {
+      'no-prompt': true,
       'api-version': '68.0',
       'data-space': 'default',
       metadata: [`dlo:${name}`],

@@ -281,7 +281,7 @@ for (const human of [false, true]) {
     if (human)
       assert.ok(
         lines.includes(
-          'Not deleted: relationship:Rel (file deleted in the Git range; deploy never deletes; delete it with sf data360 delete --changed-since main --confirm-delete after a --preview).',
+          'Not deleted: relationship:Rel (file deleted in the Git range; deploy never deletes; delete it with sf data360 delete --changed-since main after a --preview).',
         ),
       );
   });

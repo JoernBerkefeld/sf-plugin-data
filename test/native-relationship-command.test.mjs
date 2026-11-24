@@ -258,6 +258,7 @@ async function deleteFixture(options = {}) {
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
     flags: {
+      'no-prompt': true,
       metadata: options.metadata ?? [selector],
       preview: options.preview ?? false,
     },

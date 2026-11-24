@@ -156,7 +156,7 @@ async function run(org, flags, overrides = {}, json = true) {
   const lines = [];
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
-    flags: { metadata: [`dmo:${dmoName}`], preview: false, ...flags },
+    flags: { 'no-prompt': true, metadata: [`dmo:${dmoName}`], preview: false, ...flags },
   });
   command.jsonEnabled = () => json;
   command.log = (line) => lines.push(line);
@@ -256,7 +256,7 @@ test('field delete flag combinations are refused before any org call', async () 
   assert.deepEqual(org.calls, []);
 });
 
-test('field delete needs no --confirm-delete; preview writes nothing', async () => {
+test('field delete runs with --no-prompt; preview writes nothing', async () => {
   const preview = createOrg(twoMappings());
   const planned = await run(preview, { field: ['Note__c'], preview: true });
   assert.equal(planned.result.status, 'success');

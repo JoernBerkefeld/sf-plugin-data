@@ -65,7 +65,7 @@ async function inProject(root, command) {
 function command(flags, seams = {}) {
   const lines = [];
   const value = Object.create(Delete.prototype);
-  value.parse = async () => ({ flags: { preview: false, ...flags } });
+  value.parse = async () => ({ flags: { 'no-prompt': true, preview: false, ...flags } });
   value.jsonEnabled = () => !flags.human;
   value.log = (line) => lines.push(line);
   value.resolveTarget = async () => 'target';
