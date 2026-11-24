@@ -246,8 +246,9 @@ for (const processing of [false, true])
     h.processing = processing;
     h.command.jsonEnabled = () => false;
     const { result, exit } = await run(h.command);
-    assert.equal(result.status, 'success');
-    assert.equal(exit, undefined);
+    // Still processing at the end of the run, nothing failed: processing, exit 69.
+    assert.equal(result.status, processing ? 'processing' : 'success');
+    assert.equal(exit, processing ? 69 : undefined);
     assert.equal(h.calls.writes, 1);
     assert.equal(result.result.items[0].outcome, processing ? 'deletion-processing' : 'deleted');
     assert.equal(
@@ -255,7 +256,7 @@ for (const processing of [false, true])
       processing ? 'acknowledged-processing' : 'confirmed-deleted',
     );
     assert.deepEqual(h.logs, [
-      'Delete: success.',
+      `Delete: ${processing ? 'processing' : 'success'}.`,
       `deleted identity-resolution Individual_A1b2${processing ? ' (server is still processing)' : ''}`,
       // Accepted and still processing counts as confirmed: the source file is removed.
       `removed local file ${result.result.items[0].removedLocalFiles[0].path}`,

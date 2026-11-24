@@ -681,6 +681,21 @@ export type DeleteEnvelope = {
 };
 type DeleteItem = DeleteEnvelope['result']['items'][number];
 
+/** Codes that mean Salesforce is still processing a deletion, not a failure. */
+const notSettledCodes: ReadonlySet<string> = new Set([
+  'DELETE_PHASE_NOT_SETTLED',
+  'IDENTITY_RESOLUTION_NOT_SETTLED',
+]);
+
+/**
+ * Salesforce is still processing this item's deletion, or the item waits for one in flight.
+ * @param {DeleteItem} item Executed item.
+ * @returns {boolean} True when the item is still processing.
+ */
+const stillProcessing = (item: DeleteItem): boolean =>
+  item.outcome === 'deletion-processing' ||
+  (item.diagnostics ?? []).some((diagnostic) => notSettledCodes.has(diagnostic.code));
+
 type FieldDeleteFlags = {
   metadata?: string[];
   field?: string[];
@@ -1457,8 +1472,50 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         retryable: false,
       });
     };
+    /**
+     * Final status of an executed run: an unknown or unconfirmed mutation keeps the run status;
+     * an item confirmed deleted beside a failed or blocked one is partial, as is a confirmed
+     * deletion whose local file was not removed; otherwise a deletion Salesforce is still
+     * processing (an item, a phase not settled, an identity resolution in flight) is processing.
+     * @returns {string} Envelope status (one of DeleteEnvelope status values).
+     */
+    const settledStatus = (): DeleteEnvelope['status'] => {
+      const { status } = envelope;
+      if (flags.preview) return status;
+      const executed = envelope.result.items.filter((item) => item.operation !== 'preview');
+      if (
+        executed.some(
+          (item) =>
+            item.mutation === 'unknown' ||
+            item.mutation === 'acknowledged' ||
+            item.outcome === 'deletion-unconfirmed',
+        )
+      )
+        return status;
+      const { errors } = envelope.diagnostics;
+      const written = executed.some((item) => item.mutation === 'confirmed-deleted');
+      const failed =
+        executed.some(
+          (item) =>
+            (item.outcome === 'failed' || item.outcome === 'blocked') && !stillProcessing(item),
+        ) ||
+        // A stop is a failure unless only a deletion still processing or a local file caused it.
+        (status !== 'success' &&
+          (errors.length === 0 ||
+            errors.some(
+              (error) =>
+                !notSettledCodes.has(error.code) && error.code !== 'LOCAL_FILE_REMOVAL_FAILED',
+            )));
+      if (failed) return written ? 'partial' : status;
+      if (errors.some((error) => error.code === 'LOCAL_FILE_REMOVAL_FAILED')) return 'partial';
+      return executed.some((item) => stillProcessing(item)) ||
+        errors.some((error) => notSettledCodes.has(error.code))
+        ? 'processing'
+        : status;
+    };
     const finish = async (): Promise<DeleteEnvelope> => {
       await removeConfirmedFiles();
+      envelope.status = settledStatus();
       const exitCode = exitCodeOf(envelope);
       if (exitCode !== 0) process.exitCode = exitCode;
       annotateDiagnostics(envelope);

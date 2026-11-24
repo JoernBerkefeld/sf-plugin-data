@@ -224,7 +224,8 @@ test('a covered dependent that never clears is DLO_DEPENDENCY_PENDING, never del
     dependencies: async () => listed(dependent('DataModelObject', dmo)),
   });
   const result = await run(command);
-  assert.equal(result.status, 'blocked');
+  // The DMO is confirmed deleted, the DLO blocked: partial.
+  assert.equal(result.status, 'partial');
   assert.equal(result.result.items[1].outcome, 'blocked');
   assert.equal(result.result.items[1].mutation, 'not-attempted');
   assert.equal(result.diagnostics.errors[0].code, 'DLO_DEPENDENCY_PENDING');
@@ -360,7 +361,7 @@ test('a dependent that appears while waiting refuses the DLO without its DELETE'
         : listed(dependent('DataModelObject', dmo), dependent('DataStream', 'Late_Stream')),
   });
   const result = await run(command);
-  assert.equal(result.status, 'blocked');
+  assert.equal(result.status, 'partial');
   assert.deepEqual(writes(events), [['delete dmo', dmo]]);
   assert.deepEqual(
     result.result.items.map(({ identity, outcome, mutation }) => [

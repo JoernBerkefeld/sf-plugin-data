@@ -239,12 +239,12 @@ test('DLO read back in a DELETING state is acknowledged-processing, not a failur
       json,
     );
     assert.equal(deletes, 1);
-    assert.equal(result.status, 'success');
+    assert.equal(result.status, 'processing');
     assert.equal(result.result.items[0].outcome, 'deletion-processing');
     assert.equal(result.result.items[0].mutation, 'acknowledged-processing');
     if (!json)
       assert.deepEqual(lines, [
-        'Delete: success.',
+        'Delete: processing.',
         `deleted dlo ${name} (server is still processing)`,
       ]);
   }

@@ -331,7 +331,8 @@ test('a graph and the IR it needs, deleted in the range, run graph first then th
   const { cwd, base } = await repository(['ir', 'graph']);
   const h = harness(cwd, { 'changed-since': base });
   const result = await run(h.command);
-  assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+  // The IR is the last phase and still processing; nothing failed.
+  assert.equal(result.status, 'processing', JSON.stringify(result.diagnostics));
   assert.deepEqual(h.calls, ['git', 'auth', 'graph:SyntheticGraph', 'ir:Individual_A1b2']);
   assert.deepEqual(
     result.result.items.map((item) => [item.family, item.outcome]),
@@ -639,7 +640,8 @@ test('a file deleted in the range that is present again before its phase blocks 
   const h = harness(cwd, { 'changed-since': base });
   h.hooks.graph = () => put(cwd, ...files.ir);
   const result = await run(h.command);
-  assert.equal(result.status, 'blocked');
+  // The graph is confirmed deleted, the IR phase blocked: partial.
+  assert.equal(result.status, 'partial');
   assert.deepEqual(codes(result), ['BLOCKED_GIT_LIFECYCLE']);
   assert.deepEqual(h.calls, ['git', 'auth', 'graph:SyntheticGraph']);
   // The graph phase already deleted: the message must not claim nothing was deleted.

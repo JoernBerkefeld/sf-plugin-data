@@ -110,6 +110,17 @@ const run = async (command) => {
     process.exitCode = previous;
   }
 };
+// The envelope and the exit code the command set.
+const runWithExit = async (command) => {
+  const previous = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    const result = await command.run();
+    return { result, exitCode: process.exitCode };
+  } finally {
+    process.exitCode = previous;
+  }
+};
 
 /**
  * Delete command with every family executor mocked; calls are recorded in order.
@@ -169,7 +180,7 @@ const harness = (inputs, flags = {}, command = Object.create(Delete.prototype)) 
   // P3 identity resolution.
   command.deleteIdentityResolution = async (desired, _connection, _version, _space, options) => {
     h.calls.push(`ir:${desired.identity.apiName}`);
-    return { ...done(options.preview, 'ir'), diagnostics: [] };
+    return { diagnostics: [], ...done(options.preview, 'ir') };
   };
   // P2 transform.
   command.createDataTransformClient = () => ({ delete: async () => {} });
@@ -304,16 +315,24 @@ test('one delete runs graph, IR, transform, native and stream phases in reverse 
   );
 });
 
-for (const [step, outcome, expected] of [
-  ['graph', 'failed', ['graph:Graph']],
-  ['ir', 'blocked', ['graph:Graph', 'ir:Individual_A1b2']],
-  ['transform', 'deletion-unconfirmed', ['graph:Graph', 'ir:Individual_A1b2', 'transform']],
+// A blocked IR after a confirmed graph deletion is partial; an unknown mutation is always failed.
+for (const [step, outcome, expected, status, exitCode] of [
+  ['graph', 'failed', ['graph:Graph'], 'failed', 1],
+  ['ir', 'blocked', ['graph:Graph', 'ir:Individual_A1b2'], 'partial', 68],
+  [
+    'transform',
+    'deletion-unconfirmed',
+    ['graph:Graph', 'ir:Individual_A1b2', 'transform'],
+    'failed',
+    1,
+  ],
 ])
   test(`a ${outcome} ${step} stops every later phase`, async () => {
     const h = harness(all());
     h.outcome[step] = { outcome, mutation: outcome === 'blocked' ? 'not-attempted' : 'unknown' };
-    const result = await run(h.command);
-    assert.equal(result.status, outcome === 'blocked' ? 'blocked' : 'failed');
+    const { result, exitCode: code } = await runWithExit(h.command);
+    assert.equal(result.status, status);
+    assert.equal(code, exitCode);
     assert.deepEqual(
       h.calls.filter((call) => call !== 'auth' && !call.startsWith('stream-link')),
       expected,
@@ -338,10 +357,11 @@ test('a graph on the unified DMO of a selected IR is deleted before that IR', as
     assert.ok(graphSettled, 'IR delete started before the graph delete settled');
     return deleteIr(...arguments_);
   };
-  // The IR settles as still processing: it is the last phase, so the run succeeds.
+  // The IR settles as still processing: it is the last phase, nothing failed, so processing.
   h.outcome.ir = { outcome: 'deletion-processing', mutation: 'acknowledged-processing' };
-  const result = await run(h.command);
-  assert.equal(result.status, 'success');
+  const { result, exitCode } = await runWithExit(h.command);
+  assert.equal(result.status, 'processing');
+  assert.equal(exitCode, 69);
   assert.deepEqual(
     h.calls.filter((call) => call !== 'auth'),
     ['graph:Graph', 'ir:Individual_A1b2'],
@@ -353,13 +373,68 @@ test('a still-processing deletion stops the later phases', async () => {
     metadata: ['identity-resolution:Individual_A1b2', 'dmo:Person__dlm'],
   });
   h.outcome.ir = { outcome: 'deletion-processing', mutation: 'acknowledged-processing' };
-  const result = await run(h.command);
-  assert.equal(result.status, 'blocked');
+  const { result, exitCode } = await runWithExit(h.command);
+  // Nothing failed: the run is still processing, not blocked.
+  assert.equal(result.status, 'processing');
+  assert.equal(exitCode, 69);
   assert.deepEqual(
     h.calls.filter((call) => call !== 'auth'),
     ['ir:Individual_A1b2'],
   );
   assert.equal(result.diagnostics.errors[0].code, 'DELETE_PHASE_NOT_SETTLED');
+});
+
+test('a phase not settled after an earlier confirmed deletion is still processing', async () => {
+  const h = harness([graph(), ir()], {
+    metadata: ['data-graph:Graph', 'identity-resolution:Individual_A1b2', 'dmo:Person__dlm'],
+  });
+  h.outcome.ir = { outcome: 'deletion-processing', mutation: 'acknowledged-processing' };
+  const { result, exitCode } = await runWithExit(h.command);
+  assert.equal(result.status, 'processing');
+  assert.equal(exitCode, 69);
+  assert.deepEqual(
+    result.result.items.map((item) => [item.family, item.outcome]),
+    [
+      ['data-graph', 'deleted'],
+      ['identity-resolution', 'deletion-processing'],
+    ],
+  );
+});
+
+test('an identity resolution still processing is not deleted and the run is processing', async () => {
+  const h = harness([graph(), ir()], {
+    metadata: ['data-graph:Graph', 'identity-resolution:Individual_A1b2', 'dmo:Person__dlm'],
+  });
+  const diagnostics = [{ code: 'IDENTITY_RESOLUTION_NOT_SETTLED', message: 'In flight.' }];
+  h.outcome.ir = { outcome: 'blocked', mutation: 'not-attempted', diagnostics };
+  const { result, exitCode } = await runWithExit(h.command);
+  assert.equal(result.status, 'processing');
+  assert.equal(exitCode, 69);
+  assert.deepEqual(
+    h.calls.filter((call) => call !== 'auth'),
+    ['graph:Graph', 'ir:Individual_A1b2'],
+  );
+  assert.deepEqual(
+    result.diagnostics.errors.map((error) => error.code),
+    ['IDENTITY_RESOLUTION_NOT_SETTLED'],
+  );
+});
+
+test('a blocked first phase with nothing deleted stays blocked', async () => {
+  const h = harness([graph(), ir()], {
+    metadata: ['data-graph:Graph', 'identity-resolution:Individual_A1b2'],
+  });
+  h.outcome.graph = { outcome: 'blocked', mutation: 'not-attempted' };
+  const { result, exitCode } = await runWithExit(h.command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(exitCode, 1);
+});
+
+test('a preview keeps its status and exit code', async () => {
+  const h = harness(all(), { preview: true });
+  const { result, exitCode } = await runWithExit(h.command);
+  assert.equal(result.status, 'success');
+  assert.equal(exitCode, undefined);
 });
 
 test('preview reports items whose selected dependents an earlier phase deletes as planned', async () => {

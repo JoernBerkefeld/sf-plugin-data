@@ -939,8 +939,9 @@ test('a failed local refresh never hides the confirmed org change', async () => 
     },
     false,
   );
-  assert.equal(result.status, 'failed');
-  assert.equal(exitCode, 1);
+  // The org change is confirmed, a project file is not refreshed: partial.
+  assert.equal(result.status, 'partial');
+  assert.equal(exitCode, 68);
   const [item] = result.result.items;
   assert.equal(item.outcome, 'deleted');
   assert.equal(item.mutation, 'confirmed-deleted');
@@ -956,7 +957,7 @@ test('a failed local refresh never hides the confirmed org change', async () => 
   assert.ok(diagnostic.message.includes(`${dmoFile(root)} (OUTPUT_CHANGED)`));
   assert.equal(await readFile(dmoFile(root), 'utf8'), before);
   assert.deepEqual(lines.slice(0, 5), [
-    'Delete: failed.',
+    'Delete: partial.',
     'dropped pair Note__c -> Note__c in mapping MapA',
     `deleted field Note__c from dmo ${dmoName}`,
     `refresh failed (OUTPUT_CHANGED): ${dmoFile(root)}`,

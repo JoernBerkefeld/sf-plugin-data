@@ -217,7 +217,7 @@ for (const scenario of ['unconfirmed', 'rejected', 'absent'])
     assert.equal(await exists(file), true);
   });
 
-test('a failed removal keeps the confirmed org result and exits nonzero', async () => {
+test('a failed removal keeps the confirmed org result and is partial', async () => {
   const root = await scratch();
   // A folder where the file is expected: never removed, never recursively.
   const folder = path.join(root, 'data360', 'dlo', `${dlo}.dlo-meta.json`);
@@ -225,8 +225,9 @@ test('a failed removal keeps the confirmed org result and exits nonzero', async 
   await writeFile(path.join(folder, 'inside.json'), '{}');
   const { command: run, lines } = command({ metadata: [`dlo:${dlo}`], human: true });
   const { result, exitCode } = await inProject(root, run);
-  assert.equal(result.status, 'failed');
-  assert.equal(exitCode, 1);
+  // The org deletion is confirmed, the local file is not removed.
+  assert.equal(result.status, 'partial');
+  assert.equal(exitCode, 68);
   const [item] = result.result.items;
   assert.equal(item.outcome, 'deleted');
   assert.equal(item.mutation, 'confirmed-deleted');
@@ -257,7 +258,7 @@ test('a hard-linked file and a file reached through a linked folder are refused'
   await mkdir(path.join(project, 'data360'), { recursive: true });
   await symlink(outside, path.join(project, 'data360', 'dmo'), 'junction');
   const linked = await inProject(project, command({ metadata: [`dmo:${dmo}`] }).command);
-  assert.equal(linked.result.status, 'failed');
+  assert.equal(linked.result.status, 'partial');
   assert.equal(linked.result.result.items[0].removedLocalFiles[0].code, 'UNSAFE_PATH');
   assert.equal(await exists(target), true);
 });

@@ -332,7 +332,7 @@ async function run(command) {
 test('public delete reads the segment by name, routes native68 and prints exact processing suffix', async () => {
   const h = invocation();
   const result = await run(h.command);
-  assert.equal(result.status, 'success');
+  assert.equal(result.status, 'processing');
   assert.deepEqual(h.calls, ['connection', 'read:segment:Audience', 'service']);
   assert.ok(h.logs.includes('deleted segment Audience (server is still processing)'));
   assert.equal(result.result.items[0].mutation, 'acknowledged-processing');
