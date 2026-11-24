@@ -117,7 +117,7 @@ export async function deleteCalculatedInsight(
     if (acquired.state === 'absent') return result('unchanged', 'not-attempted');
     if (options.preview === true) return result('delete', 'not-attempted');
     if (options.confirmDelete !== true)
-      return result('blocked', 'not-attempted', 'DESTRUCTIVE_CONFIRMATION_REQUIRED');
+      return result('blocked', 'not-attempted', 'CONFIRMATION_REQUIRED');
     const client =
       options.nativeClient ?? createCalculatedInsightClient(connection, '68.0', dataSpace);
     context.check();

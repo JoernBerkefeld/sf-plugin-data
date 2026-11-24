@@ -748,7 +748,7 @@ test('public native68 retrieve deploy delete route through real services with se
   };
   const run = async (Class, flags) => {
     const command = Object.create(Class.prototype);
-    command.parse = async () => ({ flags });
+    command.parse = async () => ({ flags: { 'no-prompt': true, ...flags } });
     command.jsonEnabled = () => true;
     command.resolveInputs = async () => readDeployInputs({ cwd, sourceDir: [receipt.path] });
     command.resolveTargetOrg = async () => org;
@@ -814,7 +814,7 @@ test('public native68 retrieve deploy delete route through real services with se
  */
 async function runGraphCommand(Class, flags, seams) {
   const command = Object.create(Class.prototype);
-  command.parse = async () => ({ flags });
+  command.parse = async () => ({ flags: { 'no-prompt': true, ...flags } });
   command.jsonEnabled = () => true;
   Object.assign(command, seams);
   return command.run();
@@ -2638,6 +2638,7 @@ test('Graph command diagnostics render JSON and human failures including before 
             // Delete admits --output-dir only together with --field.
             ...(Class === Delete ? {} : { 'output-dir': cwd }),
             preview: false,
+            'no-prompt': true,
             'allow-processing': true,
           };
           command.parse = async () => ({ flags });

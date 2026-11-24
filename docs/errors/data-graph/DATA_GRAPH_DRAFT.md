@@ -25,7 +25,7 @@ A normal graph file has no draft status, so a deploy of it would build a graph i
 
 A verbatim graph file cannot be deployed: a deploy skips it in a folder or Git range and refuses it when it is named (`VERBATIM_NOT_DEPLOYABLE`).
 
-To remove the draft instead, delete it: `sf data360 delete --metadata data-graph:<Name>`, or delete its file and run `sf data360 delete --changed-since <ref> --confirm-delete`. The delete reads the draft by name, requires it to be in the default data space with no node or field reporting dependencies or segments, and sends one DELETE; Salesforce's answer decides.
+To remove the draft instead, delete it: `sf data360 delete --metadata data-graph:<Name>`, or delete its file and run `sf data360 delete --changed-since <ref>`. The delete reads the draft by name, requires it to be in the default data space with no node or field reporting dependencies or segments, and sends one DELETE; Salesforce's answer decides.
 
 ## Example output
 

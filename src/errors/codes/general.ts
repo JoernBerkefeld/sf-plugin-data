@@ -6,6 +6,8 @@ export const hints: Readonly<Record<string, string>> = {
     'Salesforce rejected the session or the org could not be loaded. Check the org with sf org display, log in again with sf org login web if needed, then rerun.',
   BLOCKED_GIT_LIFECYCLE:
     'The Git changes include a rename (also one split across commit, index and worktree), a conflict or a deleted file the plugin cannot identify. Stage renames so Git can detect them, or select the files with --source-dir or -m.',
+  CONFIRMATION_REQUIRED:
+    'Deleting needs a yes at the confirmation question, and nobody could answer it here. Run the delete in a terminal, or pass --no-prompt after checking it with --preview.',
   CROSS_DATASPACE_COPY_CONFLICT:
     'The translated copy of a file would go to a path that already holds other content. Existing files are never changed, so nothing was sent. Move or remove that file, then rerun.',
   CROSS_DATASPACE_RULESETS_READ_FAILED:
@@ -16,6 +18,8 @@ export const hints: Readonly<Record<string, string>> = {
     '--allow-cross-dataspace cannot translate this kind of file yet (STL transforms with an unknown node, transforms other than STL and DCSQL, streams). Nothing was sent. Deploy those in their own data space.',
   DATASPACE_READ_FAILED:
     'The list of data spaces could not be read completely from the org, so nothing was read or written. Check the org session and Data Cloud access, then rerun.',
+  DELETE_CANCELLED:
+    'The delete was not confirmed (no, no answer within 30 seconds, or the question failed), so nothing was sent. Rerun it and answer yes, or pass --no-prompt.',
   DELETE_FAILED:
     'The delete stopped for a reason without a more specific code. Read the message, check the item outcome and inspect the target before trying again; nothing is retried.',
   DELETE_PHASE_NOT_SETTLED:
@@ -30,8 +34,6 @@ export const hints: Readonly<Record<string, string>> = {
     'The preview found at least one item that a deploy would refuse. Read the item lines above for the reason and fix it before running the deploy without --preview.',
   DEPLOY_PREVIEW_FAILED:
     'The preview could not finish. Read the message for the cause, such as session, selection or target access, fix it and run the preview again. Nothing was written.',
-  DESTRUCTIVE_CONFIRMATION_REQUIRED:
-    'A delete with --changed-since needs explicit confirmation. Check it with --preview first, then rerun the same delete with --confirm-delete.',
   DUPLICATE_IDENTITY:
     'Two selected files describe the same component. Keep one file per component in the selection, for example by narrowing --source-dir, then rerun.',
   EXECUTION_UNCONFIRMED:

@@ -1052,7 +1052,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           );
         for (const deletion of envelope.result.selection.deletions ?? [])
           this.log(
-            `Not deleted: ${deletion.family}:${deletion.apiName} (file deleted in the Git range; deploy never deletes; delete it with sf data360 delete --changed-since ${envelope.result.selection.changedSince ?? '<ref>'} --confirm-delete after a --preview).`,
+            `Not deleted: ${deletion.family}:${deletion.apiName} (file deleted in the Git range; deploy never deletes; delete it with sf data360 delete --changed-since ${envelope.result.selection.changedSince ?? '<ref>'} after a --preview).`,
           );
         for (const warning of envelope.diagnostics.warnings)
           if (

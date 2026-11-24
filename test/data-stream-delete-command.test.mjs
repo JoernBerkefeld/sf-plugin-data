@@ -23,6 +23,7 @@ function invocation(overrides = {}) {
   const flags = {
     metadata: ['data-stream:Selected'],
     preview: false,
+    'no-prompt': true,
     'delete-dlo': false,
     'target-org': 'synthetic',
     ...overrides,

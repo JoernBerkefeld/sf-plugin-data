@@ -30,8 +30,9 @@ relationships, mappings, DMOs and DLOs (in that order), P0 data streams. Each fa
 its own delete checks. A phase starts only after every item of the previous one settled; a
 blocked, failed or unconfirmed item stops the run, and an item Salesforce accepted but still
 processes (`deletion-processing`) stops the later phases (`DELETE_PHASE_NOT_SETTLED`;
-rerun the same delete once it reads absent). A `-m` delete needs no confirmation flag;
-`--confirm-delete` is accepted only with `--changed-since`. Every item carries `family`.
+rerun the same delete once it reads absent). Without `--preview` the command lists what it
+would delete and asks once (`DELETE_CANCELLED` on no); without a terminal or with `--json` it
+needs `--no-prompt` (`CONFIRMATION_REQUIRED`). Every item carries `family`.
 
 - Before the first delete (read-only, preview too) each selected transform, Segment, IR,
   CI and graph is read from the org by name with the existing readers: transform through
@@ -73,8 +74,7 @@ rerun the same delete once it reads absent). A `-m` delete needs no confirmation
   mapping stays refused.
 - `--changed-since <ref>`: the components of the canonical plugin files deleted in the
   range (committed or staged) are deleted through the same phases; changed and added files
-  are not part of a delete. Exclusive with `-m`; `--delete-dlo` is refused. Execution
-  always needs `--confirm-delete`; preview does not. Each family runs from its merge-base document (identity from content), every
+  are not part of a delete. Exclusive with `-m`; `--delete-dlo` is refused. Each family runs from its merge-base document (identity from content), every
   deleted path must still be absent right before each phase and before each source-family
   write (`BLOCKED_GIT_LIFECYCLE`), and each candidate's data space must equal the requested
   one. A relationship takes its source DMO from the base content; a data transform resolves

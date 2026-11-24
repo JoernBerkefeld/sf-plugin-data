@@ -42,6 +42,7 @@ const invocation = (Type, overrides = {}) => {
   const command = Object.create(Type.prototype);
   command.parse = async () => ({
     flags: {
+      'no-prompt': true,
       'api-version': '65.0',
       dataspace: 'default',
       metadata: [`dmo:${name}`],

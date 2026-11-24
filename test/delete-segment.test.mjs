@@ -286,6 +286,7 @@ function invocation(overrides = {}) {
   const flags = {
     metadata: ['segment:Audience'],
     preview: false,
+    'no-prompt': true,
     ...overrides,
   };
   command.parse = async () => ({ flags });
@@ -379,6 +380,7 @@ function endToEnd(preview, { dataspace, name = 'Audience', found = 'default' } =
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
     flags: {
+      'no-prompt': true,
       metadata: [`segment:${name}`],
       preview,
       'keep-local-files': true,

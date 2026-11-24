@@ -118,7 +118,7 @@ for (const command of ['data360', 'datacloud', 'd360', 'dc'].flatMap((topic) => 
     for (const flag of [
       '--metadata',
       ...(command[1] === 'publish' ? ['--source-dir', '--wait'] : []),
-      ...(command[1] === 'delete' ? ['--confirm-delete'] : []),
+      ...(command[1] === 'delete' ? ['--no-prompt'] : []),
       '--target-org',
       '--api-version',
       '--data-space',
@@ -167,7 +167,14 @@ for (const operation of ['retrieve', 'deploy', 'delete', 'publish']) {
     implementations.add(implementation);
     const result = spawnSync(
       process.execPath,
-      [runner, topic, operation, ...(operation === 'publish' ? [] : ['-m', 'invalid']), '--json'],
+      [
+        runner,
+        topic,
+        operation,
+        ...(operation === 'publish' ? [] : ['-m', 'invalid']),
+        ...(operation === 'delete' ? ['--no-prompt'] : []),
+        '--json',
+      ],
       {
         cwd: root,
         encoding: 'utf8',
@@ -224,6 +231,7 @@ for (const [arguments_, code] of [[['--api-version', '65.0'], 'INVALID_SCOPE']])
       'delete',
       '-m',
       'calculated-insight:Synthetic__cio',
+      '--no-prompt',
       ...arguments_,
       '--json',
     ],
@@ -331,6 +339,7 @@ for (const operation of ['retrieve', 'deploy', 'delete']) {
     // Delete admits --output-dir only together with --field.
     'output-dir': operation === 'delete' ? undefined : graphProject,
     preview: false,
+    'no-prompt': operation === 'delete',
     'allow-processing': operation === 'deploy',
   };
   command.parse = async () => ({ flags });

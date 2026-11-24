@@ -39,4 +39,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/g
 ## Related codes
 
 - [`DELETE_FAILED`](../general/DELETE_FAILED.md) — a delete step failed without a more specific code.
-- [`DESTRUCTIVE_CONFIRMATION_REQUIRED`](../general/DESTRUCTIVE_CONFIRMATION_REQUIRED.md) — a `--changed-since` delete needs `--confirm-delete`.
+- [`CONFIRMATION_REQUIRED`](../general/CONFIRMATION_REQUIRED.md) — a delete without a terminal or with `--json` needs `--no-prompt`.

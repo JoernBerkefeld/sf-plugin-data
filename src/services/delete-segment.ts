@@ -272,8 +272,7 @@ export async function deleteSegment(
       throw new Error('Target drift');
     await input();
     if (preview) return result('delete');
-    if (options.confirmDelete !== true)
-      return result('blocked', 'DESTRUCTIVE_CONFIRMATION_REQUIRED');
+    if (options.confirmDelete !== true) return result('blocked', 'CONFIRMATION_REQUIRED');
     check();
     attempted = true;
     // HTTP204 proves only acknowledgement. A failed/uncertain DELETE never becomes success.

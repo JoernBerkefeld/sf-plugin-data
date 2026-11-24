@@ -143,7 +143,12 @@ test('bound mapping field DELETE accepts documented 200 and observed 204 on the 
 test('mapping delete command builds one bound sender per selector and a bound DMO read', async () => {
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
-    flags: { metadata: ['mapping:Generated_123'], 'data-space': 'default', preview: true },
+    flags: {
+      'no-prompt': true,
+      metadata: ['mapping:Generated_123'],
+      'data-space': 'default',
+      preview: true,
+    },
   });
   command.jsonEnabled = () => true;
   command.resolveTarget = async () => 'target';
@@ -428,7 +433,12 @@ test('mapping delete command reports a Failed removal once, as rejected, with th
   let reads = 0;
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
-    flags: { metadata: [`mapping:${name}`], 'data-space': 'default', preview: false },
+    flags: {
+      'no-prompt': true,
+      metadata: [`mapping:${name}`],
+      'data-space': 'default',
+      preview: false,
+    },
   });
   command.jsonEnabled = () => true;
   command.resolveTarget = async () => 'target';

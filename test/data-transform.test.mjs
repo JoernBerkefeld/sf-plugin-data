@@ -1619,6 +1619,7 @@ async function deleteTransformCommand(flags = {}, h = deleteHarness(), configure
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
     flags: {
+      'no-prompt': true,
       metadata: ['data-transform:SyntheticTransform'],
       'delete-dlo': false,
       preview: false,
@@ -1684,7 +1685,7 @@ test('public Transform delete refuses a transform of another data space than the
   assert.match(error.message, /in the data space default .*run's data space is dataspace2/u);
 });
 
-test('public Transform delete by name: preview GET-only, then one DELETE without --confirm-delete', async () => {
+test('public Transform delete by name: preview GET-only, then one DELETE with --no-prompt', async () => {
   const preview = await deleteTransformCommand({ preview: true });
   assert.equal(preview.result.status, 'success');
   assert.equal(preview.result.result.items[0].outcome, 'delete');

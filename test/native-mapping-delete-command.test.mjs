@@ -15,6 +15,7 @@ const invocation = (flags = {}) => {
   const command = Object.create(Delete.prototype);
   command.parse = async () => ({
     flags: {
+      'no-prompt': true,
       metadata: ['mapping:Generated_123'],
       'data-space': 'default',
       preview: false,
