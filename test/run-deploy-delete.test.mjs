@@ -9,6 +9,7 @@ import * as api from '../lib/api.js';
 import Deploy from '../lib/commands/data360/deploy.js';
 import Delete from '../lib/commands/data360/delete.js';
 import { exitCodeOf, runDelete, runDeploy, runRetrieve } from '../lib/api.js';
+import { connectRetry } from '../lib/transport/connect-client.js';
 
 const scratch = () => mkdtemp(path.join(os.tmpdir(), 'data360-run-deploy-delete-'));
 const name = 'Alpha__dll';
@@ -226,6 +227,50 @@ test('runDelete previews, then deletes without asking, also without a terminal',
   // The delete ran at 68.0 on the caller's Connection; its own version is back.
   assert.ok(connection.versions.includes('68.0'));
   assert.equal(connection.getApiVersion(), '62.0');
+});
+
+/**
+ * The connection answering the first GET of the DLO with HTTP 503, as an overloaded org does.
+ * @param {object} connection Synthetic connection.
+ * @returns {object} The same connection; `failures` counts the 503 answers.
+ */
+function unavailableOnce(connection) {
+  const request = connection.request;
+  connection.failures = 0;
+  connection.request = async (input, options) => {
+    if (
+      connection.failures === 0 &&
+      typeof input === 'object' &&
+      (input.method ?? 'GET') === 'GET' &&
+      input.url.endsWith(`/ssot/data-lake-objects/${name}`)
+    ) {
+      connection.failures++;
+      throw Object.assign(new Error('synthetic unavailable'), { statusCode: 503 });
+    }
+    return request(input, options);
+  };
+  return connection;
+}
+
+test('runDeploy and runDelete retry a 503 without printing the retry warning', async (t) => {
+  // The CLI default: one stderr line per retry (the test support silences it for other tests).
+  t.mock.method(connectRetry, 'warn', (message) => {
+    process.stderr.write(`Warning: ${message}\n`);
+  });
+  const root = await project();
+  const options = { metadata: [`dlo:${name}`], projectDir: root, preview: true };
+  for (const [run, present] of [
+    [runDeploy, false],
+    [runDelete, true],
+  ]) {
+    const connection = unavailableOnce(fakeConnection(present));
+    const result = await observe(() => run(connection, options));
+    assert.equal(result.envelope.status, 'success', JSON.stringify(result.envelope.diagnostics));
+    assert.equal(connection.failures, 1);
+    // The retry reached the org.
+    assert.ok(connection.requests.includes(`GET /ssot/data-lake-objects/${name}`));
+    assert.equal(result.printed, '');
+  }
 });
 
 test('a refusal is returned as an envelope with the exit code left alone', async () => {

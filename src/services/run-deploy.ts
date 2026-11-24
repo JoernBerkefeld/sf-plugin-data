@@ -5,6 +5,7 @@ import Deploy from '../commands/data360/deploy.js';
 import type { DeployEnvelope } from '../commands/data360/deploy.js';
 import { openBoundSsot } from '../transport/bound-ssot.js';
 import type { BoundSsot } from '../transport/bound-ssot.js';
+import { setRetryWarn } from '../transport/connect-client.js';
 import { exclusiveOptions, keepExitCode, OptionError } from './run-options.js';
 
 /** The flags of `sf data360 deploy`, for a caller that holds its own Connection. */
@@ -103,6 +104,8 @@ class ConnectionDeploy extends Deploy {
   ) {
     // No oclif configuration: the command is never parsed, logged or rendered here.
     super([], {} as Config);
+    // Retries of the requests over the caller's Connection are not printed either.
+    setRetryWarn(connection, () => {});
   }
 
   public jsonEnabled(): boolean {

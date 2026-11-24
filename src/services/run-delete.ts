@@ -6,6 +6,7 @@ import type { DeleteEnvelope } from '../commands/data360/delete.js';
 import { nativeApiVersion } from '../transport/api-version.js';
 import { openBoundSsot } from '../transport/bound-ssot.js';
 import type { BoundSsot } from '../transport/bound-ssot.js';
+import { setRetryWarn } from '../transport/connect-client.js';
 import { createNativeDloDeleteClient } from '../transport/dlo-native-rest.js';
 import { createNativeDmoDeleteClient } from '../transport/dmo-native-rest.js';
 import { createDmoClient } from '../transport/dmo-rest.js';
@@ -110,11 +111,16 @@ class ConnectionDelete extends Delete {
   ) {
     // No oclif configuration: the command is never parsed, logged or rendered here.
     super([], {} as Config);
+    // Retries of the requests over the caller's Connection are not printed either.
+    setRetryWarn(connection, () => {});
   }
 
   public jsonEnabled(): boolean {
     return true;
   }
+
+  // Graph progress is not printed.
+  protected graphProgress(): void {}
 
   protected projectDirectory(): string {
     return this.root;

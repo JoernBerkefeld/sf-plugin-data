@@ -69,6 +69,7 @@ export class ConnectError extends Error {
  * Bounded retry of in-process requests. GETs retry after network errors and HTTP 429/503;
  * writes retry only when the request provably never reached Salesforce. `sleep` and `warn`
  * are replaceable (tests, commands); `warn` defaults to one stderr line so JSON stdout stays clean.
+ * A Connection with its own sink (setRetryWarn) does not use `warn`.
  */
 export const connectRetry = {
   attempts: 3,
@@ -83,6 +84,31 @@ export const connectRetry = {
     process.stderr.write(`Warning: ${message}\n`);
   },
 };
+
+/** Retry warning sinks per Connection; a client without one uses `connectRetry.warn`. */
+const retryWarnings = new WeakMap<object, (message: string) => void>();
+
+/**
+ * Set where the retry warnings of every ConnectClient over this Connection go (a library run
+ * passes a no-op); other Connections keep `connectRetry.warn`.
+ * @param {object} connection Connection the clients are built on (or a prototype of it).
+ * @param {(message: string) => void} warn Sink for one warning line.
+ */
+export function setRetryWarn(connection: object, warn: (message: string) => void): void {
+  retryWarnings.set(connection, warn);
+}
+
+/**
+ * Send one retry warning to the sink of a Connection (or of a receiver derived from it with
+ * Object.create), else to `connectRetry.warn`.
+ * @param {object} connection Connection of a client.
+ * @param {string} message Warning line.
+ */
+function retryWarn(connection: object, message: string): void {
+  let current: object | null = connection;
+  while (current && !retryWarnings.has(current)) current = Object.getPrototypeOf(current);
+  (current ? retryWarnings.get(current)! : connectRetry.warn)(message);
+}
 
 // Codes raised before a connection exists: the request never reached Salesforce.
 const unsentCodes = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'EAI_AGAIN']);
@@ -430,7 +456,8 @@ export class ConnectClient {
         if (!plan) throw error;
         const url = typeof request === 'object' ? request.url : request;
         const route = typeof url === 'string' ? url.split('?')[0].replace(this.origin, '') : '';
-        connectRetry.warn(
+        retryWarn(
+          this.connection,
           `${method} ${route} failed (${plan.reason}); retrying in ${Math.ceil(plan.wait / 1000)} s (attempt ${attempt + 1} of ${connectRetry.attempts}).`,
         );
         await connectRetry.sleep(plan.wait);

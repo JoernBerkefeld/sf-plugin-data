@@ -2,6 +2,7 @@ import type { Config } from '@oclif/core';
 import type { Connection, Org } from '@salesforce/core';
 import Retrieve from '../commands/data360/retrieve.js';
 import type { RetrieveEnvelope } from '../commands/data360/retrieve.js';
+import { setRetryWarn } from '../transport/connect-client.js';
 
 /** The flags of `sf data360 retrieve`, for a caller that holds its own Connection. */
 export type RetrieveOptions = {
@@ -30,6 +31,8 @@ class ConnectionRetrieve extends Retrieve {
   public constructor(private readonly connection: Connection) {
     // No oclif configuration: the command is never parsed, logged or rendered here.
     super([], {} as Config);
+    // Retries of the requests over the caller's Connection are not printed either.
+    setRetryWarn(connection, () => {});
   }
 
   /**

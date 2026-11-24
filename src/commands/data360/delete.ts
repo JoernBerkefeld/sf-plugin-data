@@ -1452,6 +1452,15 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   }
 
   /**
+   * Report data graph progress while the delete waits (for example a retried graph DELETE).
+   * oclif logToStderr suppresses output in JSON mode; progress must remain visible.
+   * @param {string} message One progress line.
+   */
+  protected graphProgress(message: string): void {
+    process.stderr.write(`${message}\n`);
+  }
+
+  /**
    * The project root: where data360/ lives (local files removed or refreshed, relative
    * --output-dir) and the Git selection runs. The CLI uses the current directory.
    * @returns {string} Absolute project root.
@@ -2139,6 +2148,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
             preview: flags.preview,
             confirmed: true,
             verifyInput,
+            progress: (message) => this.graphProgress(message),
           },
         );
         const item: DeleteItem = {

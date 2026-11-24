@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { Config } from '@oclif/core';
 import Delete from '../lib/commands/data360/delete.js';
+import { runDelete } from '../lib/api.js';
 import { projectNativeIdentityResolution } from '../lib/artifacts/identity-resolution-document.js';
 import { NativeMappingError } from '../lib/artifacts/native-mapping-document.js';
 import { crudPhase, planDeleteStages } from '../lib/services/crud-plan.js';
@@ -340,6 +341,42 @@ for (const [step, outcome, expected, status, exitCode] of [
     );
     assert.ok(result.result.items.every((item) => typeof item.family === 'string'));
   });
+
+test('graph progress of a delete is printed by the command, never by runDelete', async (t) => {
+  // The prototype of the command runDelete builds, taken from its run.
+  let library;
+  const runMock = t.mock.method(Delete.prototype, 'run', async function () {
+    library = Object.getPrototypeOf(this);
+    return {};
+  });
+  await runDelete({ getApiVersion: () => '62.0', setApiVersion: () => {} });
+  runMock.mock.restore();
+  assert.notEqual(library, Delete.prototype);
+  for (const [prototype, expected] of [
+    [Delete.prototype, 'Graph: waiting\n'],
+    [library, ''],
+  ]) {
+    const h = harness([graph()], { metadata: ['data-graph:Graph'] }, Object.create(prototype));
+    h.command.projectDirectory = () => process.cwd();
+    h.command.operateNativeGraph = async (_document, _context, _client, options) => {
+      options.progress('Graph: waiting');
+      return { outcome: 'deleted', mutation: 'confirmed-deleted' };
+    };
+    const printed = [];
+    const writeMock = t.mock.method(process.stderr, 'write', (chunk) => {
+      printed.push(String(chunk));
+      return true;
+    });
+    let result;
+    try {
+      result = await run(h.command);
+    } finally {
+      writeMock.mock.restore();
+    }
+    assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
+    assert.equal(printed.join(''), expected);
+  }
+});
 
 test('a graph on the unified DMO of a selected IR is deleted before that IR', async () => {
   // The graph is listed after the IR; the IR starts only after the graph returned.
