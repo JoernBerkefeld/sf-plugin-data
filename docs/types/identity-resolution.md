@@ -174,7 +174,7 @@ refused ([`LEGACY_DATASPACE_KEY`](../errors/general/LEGACY_DATASPACE_KEY.md)). S
   The entity and output DMOs are read in the ruleset's data space. A DMO the read names in
   another data space, or a DLO source that does not belong to it, is
   [`IDENTITY_RESOLUTION_DEPENDENCY_OTHER_DATASPACE`](../errors/identity-resolution/IDENTITY_RESOLUTION_DEPENDENCY_OTHER_DATASPACE.md).
-- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a ruleset
+- Only if you have more than one data space: `--allow-cross-dataspace` deploys a ruleset
   file of another data space. It is renamed by rule with its ruleset ID kept (`Individual_t1`
   becomes `ds2_Individual_t1`), and its secondary DMO, match and reconciliation entities and
   fields follow the standard DMO rules (`ssot__Individual__dlm` with `ssot__FirstName__c` becomes

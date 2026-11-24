@@ -233,7 +233,7 @@ are unique in the org. See [Data spaces](../../README.md#data-spaces) and the sf
 
 - Deploy and delete refuse a file of another data space (`MAPPING_DATASPACE_MISMATCH`); the
   message names both data spaces.
-- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a mapping
+- Only if you have more than one data space: `--allow-cross-dataspace` deploys a mapping
   file of another data space. The target DMO and its fields are renamed by rule
   (`ssot__Individual__dlm` to `ds2_Individual__dlm`, `ssot__FirstName__c` to `FirstName__c`);
   the DLO side stays. After the deploy the translated file is written under the name

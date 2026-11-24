@@ -530,7 +530,7 @@ export async function operateNativeDataGraph(
         safeToDelete: async () => false,
         pause: options.pause,
         now,
-        // Keep waiting while the created graph is still building, up to --wait-timeout.
+        // Keep waiting while the created graph is still building, up to --wait.
         creation: { started, end, pause: waitPause, progress },
       });
       creating = true;

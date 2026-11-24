@@ -19,7 +19,7 @@ The result of the publish is not known yet. It is neither a success nor a failur
 ## How to fix
 
 1. Do not repeat the publish just because of this message.
-2. Later, run `sf data360 publish -d <the same file> --preview`: `unchanged` means the insight is ACTIVE with the file.
+2. Later, run `sf data360 publish --source-dir <the same file> --preview`: `unchanged` means the insight is ACTIVE with the file.
 3. To wait for ACTIVE instead, run the publish without `--async`.
 
 ## Example output

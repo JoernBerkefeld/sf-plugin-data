@@ -102,7 +102,7 @@ file's optional `schedule` is sent with its own schedule PUT when it differs, an
 without it leaves the schedule alone. A
 DLO file named like the landing DLO of a stream the deploy creates is refused after the
 stream's read-only comparison, before any write (`DATA_STREAM_DLO_COLLISION`); beside an
-existing stream it deploys. `--wait-timeout` applies to every selected graph and needs
+existing stream it deploys. `--wait` applies to every selected graph and needs
 one. Preview runs every phase read-only (also after a blocked phase) and reports items
 whose parents an earlier phase creates as `planned-dependencies` (`DEPENDENCIES_PLANNED`,
 `MAPPING_DEPENDENCIES_PLANNED`): a mapping or transform on a new stream's landing DLO, a
@@ -124,14 +124,14 @@ stays lowercase. All six graphs in `isolated-source` retrieve at `auto` and prev
 `unchanged` on route 68.0. Deploy runs graphs as the last phase of any selection,
 explicit or `--changed-since`.
 
-Create waits up to `--wait-timeout` while the graph builds: `creating` with empty
+Create waits up to `--wait` (minutes) while the graph builds: `creating` with empty
 generated names (empty names on a non-ready read are not authored values), then `ready`
 before the day-zero names exist, then metadata `Inprogress` for about 5 minutes,
 sometimes briefly missing. The POST is resent only after a 429/503 answer. A create the plugin cannot confirm
 reports `failed`/`unknown` with `DATA_GRAPH_CREATE_UNCONFIRMED` naming the step
 (`request`, `response`, `settlement`, `identity`, `deadline`); an unchanged repeat deploy or a
 retrieve confirms the graph. Retrieve resolves a relative
-`-d`/`--output-dir` against the current directory for every family.
+`--output-dir` against the current directory for every family.
 
 Create sends the authored root, related objects, fields and schedule and needs
 `--allow-processing`; Salesforce adds key-qualifier fields to related objects and can
@@ -476,7 +476,7 @@ not created by a mapping file either (only the `ssot__` spelling is). Proven liv
 `data360:plugin-dataspace-prefix-rule-acceptance-api68`); transforms and graphs are covered by
 unit tests only.
 
-Cross-data-space deploy (2026-11-21, `--allow-cross-dataspace` / `-c`): a selected file whose
+Cross-data-space deploy (2026-11-21, `--allow-cross-dataspace`): a selected file whose
 `c__dataSpace` is not the run's is translated in memory before any other check, with the
 prefixes of the same one `GET /ssot/data-spaces` (read early only when such a file is selected).
 Rule renames only: the data space prefix on, off or swapped (custom DMOs, segments, Waterfall

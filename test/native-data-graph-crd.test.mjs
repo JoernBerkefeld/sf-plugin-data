@@ -1493,8 +1493,9 @@ for (const json of [false, true])
       return true;
     });
     const budgets = [];
-    const run = async (flags = {}) => {
+    const run = async (flags = {}, graphProgress) => {
       const command = Object.create(Deploy.prototype);
+      if (graphProgress) command.graphProgress = graphProgress;
       command.parse = async () => ({
         flags: {
           'api-version': '68.0',
@@ -1535,7 +1536,8 @@ for (const json of [false, true])
         throw retainConnectDiagnostic(new Error('private-secret'), connectDiagnostic(429, {}));
       return get();
     };
-    const updated = await run({ 'wait-timeout': 45 });
+    // --wait 2 is two minutes: 120 seconds reach the graph service.
+    const updated = await run({ wait: 2 });
     f.context.get = get;
     assert.equal(updated.status, 'success');
     assert.equal(updated.result.items[0].outcome, 'updated');
@@ -1549,7 +1551,7 @@ for (const json of [false, true])
     assert.equal(unchanged.result.items[0].outcome, 'unchanged');
     assert.equal(unchanged.result.items[0].mutation, 'not-attempted');
     assert.equal(f.calls.length, 1);
-    assert.deepEqual(budgets, [1800, 45, 1800]);
+    assert.deepEqual(budgets, [1800, 120, 1800]);
     assert.match(stderr[0], /seconds to many minutes, up to 30 minutes/u);
     assert.ok(stderr.some((message) => /GET HTTP429; elapsed 0s; next wait 20s/u.test(message)));
     assert.equal(stderr.join('').includes('private-secret'), false);
@@ -1565,6 +1567,13 @@ for (const json of [false, true])
       assert.ok(stdout.some((message) => message.startsWith('updated data-graph ')));
       assert.ok(stdout.some((message) => /Unchanged:/u.test(message)));
     }
+    // The progress seam: a subclass that replaces graphProgress gets every line, stderr none.
+    const seamLines = [];
+    const stderrBefore = stderr.length;
+    const seamed = await run({ 'allow-processing': false }, (message) => seamLines.push(message));
+    assert.equal(seamed.result.items[0].outcome, 'unchanged');
+    assert.equal(stderr.length, stderrBefore);
+    assert.match(seamLines[0], /seconds to many minutes, up to 30 minutes/u);
   });
 
 for (const mode of ['timeout', 'preservation', 429, 503])
@@ -1604,7 +1613,7 @@ for (const mode of ['timeout', 'preservation', 429, 503])
         'source-dir': [receipt.path],
         preview: false,
         'allow-processing': true,
-        'wait-timeout': 45,
+        wait: 1,
       },
     });
     command.argv = ['--json'];
@@ -1627,7 +1636,7 @@ for (const mode of ['timeout', 'preservation', 429, 503])
       });
     const result = await command.run();
     assert.equal(result.status, mode === 'timeout' ? 'blocked' : 'failed');
-    // HTTP429/503 PUTs are not processed: resent every 20 s (0, 20, 40) within the 45 s budget.
+    // HTTP429/503 PUTs are not processed: resent every 20 s (0, 20, 40) within the 60 s budget (--wait 1).
     assert.equal(
       result.result.items[0].mutation,
       mode === 'timeout' || typeof mode === 'number' ? 'not-attempted' : 'unknown',
@@ -1643,7 +1652,7 @@ for (const mode of ['timeout', 'preservation', 429, 503])
         ),
       );
     assert.match(stderr[0], /seconds to many minutes/u);
-    if (mode === 'timeout') assert.equal(f.clock, 45_000);
+    if (mode === 'timeout') assert.equal(f.clock, 60_000);
     if (typeof mode === 'number')
       assert.match(result.diagnostics.errors[0].message, new RegExp(String(mode), 'u'));
     assert.equal(JSON.stringify(result).includes('private-secret'), false);
@@ -1690,7 +1699,7 @@ for (const selection of ['other-family', 'git'])
       flags: {
         'api-version': '68.0',
         preview: true,
-        'wait-timeout': 45,
+        wait: 1,
         ...(selection === 'git' ? { 'changed-since': 'HEAD' } : {}),
       },
     });
@@ -1705,7 +1714,7 @@ for (const selection of ['other-family', 'git'])
     });
     command.resolveTargetOrg = async () => assert.fail('unsupported wait flag precedes auth');
     const result = await command.run();
-    assert.equal(result.diagnostics.errors[0].code, 'INVALID_WAIT_TIMEOUT_SCOPE');
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_WAIT_SCOPE');
     process.exitCode = 0;
   });
 
@@ -1719,7 +1728,7 @@ for (const budget of [0, -1, 1.5, Number.POSITIVE_INFINITY])
         'api-version': '68.0',
         'source-dir': [receipt.path],
         preview: true,
-        'wait-timeout': budget,
+        wait: budget,
       },
     });
     command.jsonEnabled = () => true;
@@ -1727,7 +1736,7 @@ for (const budget of [0, -1, 1.5, Number.POSITIVE_INFINITY])
     command.resolveTargetOrg = async () => assert.fail('local admission must precede auth');
     const result = await command.run();
     assert.equal(result.status, 'blocked');
-    assert.equal(result.diagnostics.errors[0].code, 'INVALID_WAIT_TIMEOUT_SCOPE');
+    assert.equal(result.diagnostics.errors[0].code, 'INVALID_WAIT_SCOPE');
     process.exitCode = 0;
   });
 
@@ -2563,7 +2572,7 @@ for (const write of ['delete', 'create', 'update']) {
     assert.deepEqual(getConnectDiagnostic(run.result), limited);
     assert.match(operationDiagnostic(run.result, ''), /429 Too Many Requests/u);
     assert.equal(JSON.stringify(run.result).includes('private-secret'), false);
-    // Delete budget 120 s; deploy --wait-timeout 45 s. 20-second waits, never up to the end.
+    // Delete budget 120 s; deploy wait 45 s. 20-second waits, never up to the end.
     const end = write === 'delete' ? 120_000 : 45_000;
     assert.deepEqual(
       run.attempts,
@@ -2787,7 +2796,7 @@ test('acquisition carries private API diagnostics without weakening raw absence 
   assert.deepEqual(f.calls, []);
 });
 
-test('a create POST still open at --wait-timeout names the deadline', async (t) => {
+test('a create POST still open at the --wait deadline names the deadline', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   const f = fixture();
   let entered;
@@ -2993,7 +3002,7 @@ test('a ready item without generated names is still building, not unknown', asyn
   await expectResult(acquireNativeDataGraph(f.context, document()), 'state', 'present');
 });
 
-test('native create that never finishes building stops at --wait-timeout without a second POST', async () => {
+test('native create that never finishes building stops at the --wait deadline without a second POST', async () => {
   const h = buildingCreate({ pending: 1_000_000 });
   const result = await operateNativeDataGraph(document(), h.f.context, h.f.client, h.options(100));
   assert.equal(result.outcome, 'failed');

@@ -20,7 +20,7 @@ The result of the publish is not known yet. It is neither a success nor a failur
 
 1. Do not run the publish again just because of this message.
 2. Read the segment later, for example `sf data360 retrieve -m segment:<Name> --output-dir <scratch>` or in Data Cloud, until its publish status is SUCCESS or FAILED.
-3. To wait for the result instead, run the publish without `--async` (optionally with `--wait-timeout`).
+3. To wait for the result instead, run the publish without `--async` (optionally with `--wait`).
 
 ## Example output
 
@@ -35,5 +35,5 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/s
 
 ## Related codes
 
-- [`SEGMENT_PUBLISH_STILL_PROCESSING`](../segment/SEGMENT_PUBLISH_STILL_PROCESSING.md) — the publish was still running when `--wait-timeout` ran out.
+- [`SEGMENT_PUBLISH_STILL_PROCESSING`](../segment/SEGMENT_PUBLISH_STILL_PROCESSING.md) — the publish was still running when `--wait` ran out.
 - [`SEGMENT_PUBLISH_FAILED`](../segment/SEGMENT_PUBLISH_FAILED.md) — the publish ran and failed.

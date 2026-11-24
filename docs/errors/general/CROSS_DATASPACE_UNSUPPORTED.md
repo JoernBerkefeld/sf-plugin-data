@@ -12,7 +12,7 @@
 
 This only matters when your org has more than one data space.
 
-`--allow-cross-dataspace` (`-c`) translates these kinds of files from another data space:
+`--allow-cross-dataspace` translates these kinds of files from another data space:
 
 - DMOs, mappings and relationships.
 - DLOs: the run's data space is added to the DLO's data spaces.

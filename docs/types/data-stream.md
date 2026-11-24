@@ -67,7 +67,7 @@ Also refused before any write: an additive mapping whose source label names no e
 For a DLO that a stream owns, add fields through the stream, not through a [DLO](dlo.md) deploy. Retrieve the stream first:
 
 ```sh
-sf data360 retrieve -o target -m data-stream:ExampleStream --api-version auto -d . --json
+sf data360 retrieve -o target -m data-stream:ExampleStream --api-version auto --output-dir . --json
 ```
 
 Then append an entry to `spec.additiveFieldMappings`, keeping the existing entries. This is a fragment, not a complete file:

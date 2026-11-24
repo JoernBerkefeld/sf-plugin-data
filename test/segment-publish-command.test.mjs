@@ -100,8 +100,9 @@ const harness = (flags, { reads, publish } = {}) => {
       };
     },
   };
-  command.publishSegment = (apiName, conn, selection, options) =>
-    publishSegment(apiName, conn, selection, {
+  command.publishSegment = (apiName, conn, selection, options) => {
+    calls.waitTimeoutSeconds = options.waitTimeoutSeconds;
+    return publishSegment(apiName, conn, selection, {
       ...options,
       client,
       now: () => clock,
@@ -110,6 +111,7 @@ const harness = (flags, { reads, publish } = {}) => {
         clock += milliseconds;
       },
     });
+  };
   return { command, calls };
 };
 const notFound = () => {
@@ -250,7 +252,7 @@ test('a republish waits past the earlier SUCCESS until this publish ends', async
 
 test('the wait ends as still processing: exit 69, not failed, never resent', async () => {
   const h = harness(
-    { metadata: 'segment:CliPub', 'wait-timeout': 75 },
+    { metadata: 'segment:CliPub', wait: 2 },
     { reads: (index) => runtime(index === 0 ? {} : { publishStatus: 'PUBLISHING' }) },
   );
   const output = [];
@@ -260,24 +262,35 @@ test('the wait ends as still processing: exit 69, not failed, never resent', asy
   assert.equal(result.status, 'processing');
   assert.equal(exit, 69);
   assert.deepEqual(h.calls.posts, [id]);
-  assert.deepEqual(h.calls.waits, [30_000, 30_000, 15_000]);
+  // --wait 2 is two minutes: 120 seconds reach the service.
+  assert.equal(h.calls.waitTimeoutSeconds, 120);
+  assert.deepEqual(h.calls.waits, [30_000, 30_000, 30_000, 30_000]);
   assert.deepEqual(result.diagnostics.errors, []);
   const [item] = result.result.items;
   assert.equal(item.outcome, 'publishing');
   assert.equal(item.mutation, 'acknowledged-processing');
   assert.equal(item.diagnostics[0].code, 'SEGMENT_PUBLISH_STILL_PROCESSING');
-  assert.match(item.diagnostics[0].message, /still processing it after 75 s/u);
+  assert.match(item.diagnostics[0].message, /still processing it after 120 s/u);
   assert.equal(output[0], 'Publish: processing.');
   assert.equal(output[1], 'publishing: CliPub; mutation: acknowledged-processing.');
-  assert.equal(output[2], 'publishStatus: PUBLISHING after 75 s.');
+  assert.equal(output[2], 'publishStatus: PUBLISHING after 120 s.');
   assert.match(output[3], /^SEGMENT_PUBLISH_STILL_PROCESSING: /u);
   assert.ok(output[3].includes(errorCodeInfo('SEGMENT_PUBLISH_STILL_PROCESSING').docs));
 });
 
-test('the default wait is 30 minutes', () => {
+test('the default wait is 30 minutes', async () => {
   assert.equal(segmentPublishWait.timeoutSeconds, 1800);
   assert.equal(segmentPublishWait.intervalMs, 30_000);
-  assert.match(Publish.flags['wait-timeout'].summary, /default 1800/u);
+  assert.match(Publish.flags.wait.summary, /whole minutes .*default 30\)/u);
+  assert.equal(Publish.flags.wait.char, 'w');
+  assert.equal(Publish.flags.wait.min, 1);
+  assert.equal(Publish.flags['wait-timeout'], undefined);
+  const h = harness(
+    { metadata: 'segment:CliPub' },
+    { reads: (index) => runtime(index === 0 ? {} : { publishStatus: 'SUCCESS' }) },
+  );
+  await run(h.command);
+  assert.equal(h.calls.waitTimeoutSeconds, 1800);
 });
 
 test('publishStatus FAILED is reported as failed', async () => {
@@ -435,11 +448,8 @@ for (const [flags, code] of [
   [{ metadata: 'segment:' }, 'INVALID_SELECTION'],
   [{ metadata: 'calculated-insight:Name__cio' }, 'INVALID_SELECTION'],
   [{ metadata: 'segment:CliPub', 'source-dir': 'x.segment.json' }, 'INVALID_SELECTION'],
-  [{ metadata: 'segment:CliPub', 'wait-timeout': 0 }, 'INVALID_WAIT_TIMEOUT_SCOPE'],
-  [
-    { 'source-dir': 'Name__cio.calculatedInsight-meta.json', 'wait-timeout': 60 },
-    'INVALID_WAIT_TIMEOUT_SCOPE',
-  ],
+  [{ metadata: 'segment:CliPub', wait: 0 }, 'INVALID_WAIT_SCOPE'],
+  [{ 'source-dir': 'Name__cio.calculatedInsight-meta.json', wait: 60 }, 'INVALID_WAIT_SCOPE'],
   [{ metadata: 'segment:CliPub', 'api-version': '65.0' }, 'INVALID_SCOPE'],
 ])
   test(`publish refuses ${JSON.stringify(flags)} with ${code} before auth`, async () => {
@@ -505,7 +515,7 @@ test('publish help names the segment route, the wait and the unchanged CI path',
     Publish.description,
     /POST \/ssot\/segments\/\{marketSegmentId\}\/actions\/publish/u,
   );
-  assert.match(Publish.description, /--wait-timeout/u);
+  assert.match(Publish.description, /--wait \(-w\) sets that wait in whole minutes \(default 30;/u);
   assert.match(Publish.description, /VERBATIM_NOT_DEPLOYABLE/u);
   assert.match(Publish.description, /draft: false/u);
   assert.doesNotMatch(Publish.description, /allow-processing/u);
@@ -574,9 +584,9 @@ test('--async reports a 4xx refusal as without it, and --preview stays read-only
   assert.deepEqual(preview.calls.posts, []);
 });
 
-test('--async and --wait-timeout are mutually exclusive flags', () => {
-  assert.deepEqual(Publish.flags.async.exclusive, ['wait-timeout']);
-  assert.deepEqual(Publish.flags['wait-timeout'].exclusive, ['async']);
+test('--async and --wait are mutually exclusive flags', () => {
+  assert.deepEqual(Publish.flags.async.exclusive, ['wait']);
+  assert.deepEqual(Publish.flags.wait.exclusive, ['async']);
   assert.equal(Publish.flags.async.default, false);
   assert.match(Publish.description, /--async/u);
   assert.match(Publish.description, /SEGMENT_PUBLISH_STARTED/u);

@@ -16,7 +16,7 @@ are managed for their custom fields, labels and description.
 - Add `--preview` to `deploy` or `delete` to see the plan without writing anything.
 
 ```sh
-sf data360 retrieve -o source -m dmo:Example__dlm -d ./project --json
+sf data360 retrieve -o source -m dmo:Example__dlm --output-dir ./project --json
 sf data360 deploy -o target -m dmo:Example__dlm --preview --json
 sf data360 deploy -o target -m dmo:Example__dlm --json
 sf data360 deploy -o target -m dmo:Example__dlm --allow-field-removal --preview --json
@@ -29,7 +29,7 @@ Default/`auto` uses API `68.0`; explicit numeric pins from `61.0` are kept as gi
 ## The file
 
 Each DMO is one file, `data360/dmo/<ApiName>__dlm.dmo-meta.json`, beneath the project root
-(`-d/--output-dir`, default: the current directory).
+(`--output-dir`, default: the current directory).
 
 ```json
 {
@@ -327,7 +327,7 @@ sfmc.guide [Data Spaces page](https://sfmc.guide/next/data-spaces/).
   ([`DMO_PREFIX_MISMATCH`](../errors/dmo/DMO_PREFIX_MISMATCH.md)); for an existing one deploy
   and retrieve only warn. Standard DMOs, their copies and generated or namespaced DMOs are not
   checked. See [Name prefixes](../../README.md#name-prefixes-only-if-you-have-more-than-one-data-space).
-- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a DMO
+- Only if you have more than one data space: `--allow-cross-dataspace` deploys a DMO
   file of another data space. A custom DMO gets the target prefix (`Order__dlm` becomes
   `ds2_Order__dlm`); a standard DMO becomes its copy and its fields lose `ssot__`. Towards
   `default`, a `ds2_<Name>__dlm` name is placed only when the file shows a custom DMO (fields

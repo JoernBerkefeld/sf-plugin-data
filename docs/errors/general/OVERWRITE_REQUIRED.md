@@ -12,7 +12,7 @@
 
 This only matters when your org has more than one data space.
 
-After a deploy with `--allow-cross-dataspace` (`-c`), the plugin writes a copy file for every translated item: the file as retrieve would write it, with the target data space and the new names. A copy goes only to a new path. When a file with the same name but other content is already there, the copy is not written and the output names the file. A file with exactly the same content is reused.
+After a deploy with `--allow-cross-dataspace`, the plugin writes a copy file for every translated item: the file as retrieve would write it, with the target data space and the new names. A copy goes only to a new path. When a file with the same name but other content is already there, the copy is not written and the output names the file. A file with exactly the same content is reused.
 
 A retrieve never reports this code: it replaces a local file whose content differs from the org, and leaves identical files `unchanged`.
 

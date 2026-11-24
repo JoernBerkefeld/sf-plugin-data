@@ -256,7 +256,7 @@ export function explainSpaceMismatch<T extends Error>(
  * @returns {string} The sentence, with a leading space.
  */
 export function crossSpaceSentence(runSpace: string): string {
-  return ` To deploy it into ${printableKey(runSpace)} instead, add --allow-cross-dataspace (-c).`;
+  return ` To deploy it into ${printableKey(runSpace)} instead, add --allow-cross-dataspace.`;
 }
 
 /**

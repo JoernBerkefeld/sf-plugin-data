@@ -10,7 +10,7 @@
 
 ## What it means
 
-With `-d data360/segments/<Name>.segment.json` the plugin publishes the segment only when the org holds exactly the definition of that file (label, description, source DMO, SQL models or criteria). The segment read from the org differs, or has a shape the file cannot hold.
+With `--source-dir data360/segments/<Name>.segment.json` the plugin publishes the segment only when the org holds exactly the definition of that file (label, description, source DMO, SQL models or criteria). The segment read from the org differs, or has a shape the file cannot hold.
 
 ## Why the plugin stops
 
@@ -18,7 +18,7 @@ A publish sends no definition: Salesforce publishes what the org holds. Publishi
 
 ## How to fix
 
-1. Deploy the file first: `sf data360 deploy -d data360/segments/<Name>.segment.json --allow-processing`, then publish again.
+1. Deploy the file first: `sf data360 deploy --source-dir data360/segments/<Name>.segment.json --allow-processing`, then publish again.
 2. Or publish the segment as the org holds it: `sf data360 publish -m segment:<Name>`.
 
 ## Example output

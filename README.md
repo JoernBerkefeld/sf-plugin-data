@@ -107,7 +107,7 @@ space of the org; see [Data spaces](#data-spaces).
 | [Calculated insights](docs/types/calculated-insight.md), `calculated-insight`   | Available   | Available   | Available   | Available   | `sf data360 publish`; `--draft`                                              |
 | [Segments](docs/types/segment.md), `segment`                                    | Available   | Available   | Available   | Available   | `sf data360 publish`; schedule; `--allow-processing`                         |
 | [Segment members](docs/types/segment.md#export-segment-members)                 | Available   | Unavailable | Available   | Unavailable | Read: `sf data360 segment members export`; update: `sf data360 publish`      |
-| [Data graphs](docs/types/data-graph.md), `data-graph`                           | Available   | Available   | Available   | Available   | Schedule; `--allow-processing`; `--wait-timeout`                             |
+| [Data graphs](docs/types/data-graph.md), `data-graph`                           | Available   | Available   | Available   | Available   | Schedule; `--allow-processing`; `--wait`                                     |
 | [Identity resolution](docs/types/identity-resolution.md), `identity-resolution` | Available   | Available   | Available   | Available   | `--async`; `--allow-processing`                                              |
 | Source object definitions                                                       | Unavailable | Unavailable | Unavailable | Unavailable | Connectors and credentials are not handled                                   |
 | Kit templates                                                                   | Unavailable | Unavailable | Unavailable | Unavailable | Data kits are not handled                                                    |
@@ -164,7 +164,7 @@ are left out, and deploy keeps them. The exact layout of each file is on its typ
   Retrieve without `-m` selects every component of every type in the run's data space, as if
   each type were named bare; `-m` narrows the run.
 - Deploy and delete always name their components, or take them from Git with
-  `--changed-since`. Deploy also takes files and folders with `--source-dir` (`-d`).
+  `--changed-since`. Deploy also takes files and folders with `--source-dir`.
 
 ### Preview first
 
@@ -351,15 +351,15 @@ What the plugin does:
 
 ### Deploy from another data space (only if you have more than one data space)
 
-`sf data360 deploy --dataspace <target> --allow-cross-dataspace` (short `-c`) deploys files of
+`sf data360 deploy --dataspace <target> --allow-cross-dataspace` deploys files of
 another data space into `<target>`. Each file's `c__dataSpace` says where it comes from. Without
 the flag such a file is refused, and the message names the flag.
 
 ```bash
 # See every rename first; nothing is written
-sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.dmo-meta.json -d data360/segments/Audience.segment.json --preview
+sf data360 deploy -o myOrg --dataspace dataspace2 --allow-cross-dataspace --source-dir data360/dmo/Order__dlm.dmo-meta.json --source-dir data360/segments/Audience.segment.json --preview
 # Then deploy
-sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.dmo-meta.json -d data360/segments/Audience.segment.json --allow-processing
+sf data360 deploy -o myOrg --dataspace dataspace2 --allow-cross-dataspace --source-dir data360/dmo/Order__dlm.dmo-meta.json --source-dir data360/segments/Audience.segment.json --allow-processing
 ```
 
 - **What is translated:** DMOs, mappings, relationships, UI, Waterfall and SQL (DBT)
@@ -454,8 +454,8 @@ sf data360 deploy -o myOrg --dataspace dataspace2 -c -d data360/dmo/Order__dlm.d
     mapping as Salesforce stores it, the same file a retrieve of the target data space writes.
     That name is known only after the deploy, so another file already at that path does not stop
     the deploy: the copy is reported as not written, in the output and in the `--json` warnings.
-  - A copy file selected beside its original (for example `-d data360` after an earlier `-c`
-    run) would deploy the same item twice; the deploy is refused before any write
+  - A copy file selected beside its original (for example `--source-dir data360` after an earlier
+    `--allow-cross-dataspace` run) would deploy the same item twice; the deploy is refused before any write
     (`DUPLICATE_IDENTITY`) and names both files.
   - A DLO gets no copy file; the output shows its new data space.
 

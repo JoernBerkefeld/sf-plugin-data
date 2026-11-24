@@ -17,7 +17,7 @@ export type SegmentPublishOptions = {
   async?: boolean;
   /** Seconds to wait for SUCCESS or FAILED after Salesforce accepted the publish. */
   waitTimeoutSeconds: number;
-  /** The segment file of a `-d` selection: the org must hold this definition. */
+  /** The segment file of a `--source-dir` selection: the org must hold this definition. */
   desired?: SegmentDocument;
   /** The run's data space: the segment read must name it (default: default). */
   dataSpace?: string;

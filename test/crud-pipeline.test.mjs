@@ -278,7 +278,7 @@ test('stages: P0 stream, P1 native, P2 transform, P3 batch levels, P4 graph', ()
 });
 
 test('a mixed deploy runs stream, mapping, transform, IR and graph in phase order', async () => {
-  const { command, calls } = harness(all(), { 'wait-timeout': 60 });
+  const { command, calls } = harness(all(), { wait: 1 });
   const result = await run(command);
   assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
   assert.deepEqual(calls, [
@@ -500,10 +500,10 @@ test('several transforms, by member or directory, run one after another in P2', 
       ['created', 'created', 'updated'],
     );
   }
-  // --wait-timeout needs a graph in the selection, explicit or Git.
-  const { command, calls } = harness([transform(), mapping], { 'wait-timeout': 60 });
+  // --wait needs a graph in the selection, explicit or Git.
+  const { command, calls } = harness([transform(), mapping], { wait: 1 });
   const result = await run(command);
-  assert.equal(result.diagnostics.errors[0].code, 'INVALID_WAIT_TIMEOUT_SCOPE');
+  assert.equal(result.diagnostics.errors[0].code, 'INVALID_WAIT_SCOPE');
   assert.deepEqual(calls, []);
 });
 

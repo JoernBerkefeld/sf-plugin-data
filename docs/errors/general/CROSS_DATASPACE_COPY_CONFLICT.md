@@ -12,7 +12,7 @@
 
 This only matters when your org has more than one data space.
 
-A deploy with `--allow-cross-dataspace` (`-c`) writes a copy file for every translated item once it has deployed: the file as retrieve would write it, with the target data space and the new names (`data360/dmo/ds2_Order__dlm.dmo-meta.json`). Your original files never change.
+A deploy with `--allow-cross-dataspace` writes a copy file for every translated item once it has deployed: the file as retrieve would write it, with the target data space and the new names (`data360/dmo/ds2_Order__dlm.dmo-meta.json`). Your original files never change.
 
 A copy file goes only to a new path. If a file already exists there:
 

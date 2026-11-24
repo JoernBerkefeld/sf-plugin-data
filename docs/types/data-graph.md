@@ -13,7 +13,7 @@ Data Cloud API 68. Evidence for the API behaviour is on the sfmc.guide
   run's data space)
 - `sf data360 deploy --source-dir <file or folder> --allow-processing`
 - `sf data360 delete -m data-graph:<Name>`
-- `--preview` on deploy and delete, `--wait-timeout <seconds>` on deploy
+- `--preview` on deploy and delete, `--wait <minutes>` (`-w`) on deploy
 
 ## Selector and API version
 
@@ -65,14 +65,14 @@ schedule). Creating needs `--allow-processing`, because Salesforce starts buildi
   file holds. A graph copied from another data space therefore shows the target objects' labels.
 - A node's `type`, reference and projected name are assigned by Salesforce. A hand-written
   create file may leave the node `type` out; none is sent then.
-- Deploy waits while Salesforce builds the graph, up to `--wait-timeout` (default `1800`
-  seconds), with progress on stderr. Building can take many minutes, longer with related
+- Deploy waits while Salesforce builds the graph, up to `--wait` (default `30`
+  minutes), with progress on stderr. Building can take many minutes, longer with related
   objects.
 - When a check after the request cannot confirm the graph, the item reports `failed` with
   mutation `unknown` and
   [`DATA_GRAPH_CREATE_UNCONFIRMED`](../errors/data-graph/DATA_GRAPH_CREATE_UNCONFIRMED.md),
   naming the step (`request`, `response`, `settlement`, `identity`, or `deadline` when
-  `--wait-timeout` ran out). The graph may exist: retrieve it, or deploy the same file again
+  `--wait` ran out). The graph may exist: retrieve it, or deploy the same file again
   (`unchanged` once the graph is built), instead of creating it again.
 
 ## Update
@@ -129,7 +129,7 @@ Deploy itself does not check the owner; Salesforce decides. A graph on a unified
 
 ## Waiting and resending
 
-- `--wait-timeout <seconds>` (positive integer, default `1800`) covers readiness, the write and
+- `--wait <minutes>` (`-w`, positive whole minutes, default `30`) covers readiness, the write and
   settlement of each selected graph. It is refused when the selection holds no graph. Polling
   waits at least 20 seconds between reads, within the remaining time.
 - A graph write (create POST, update PUT, DELETE) answered with HTTP 429 or 503 was not
@@ -191,7 +191,7 @@ A graph belongs to one data space, named in `c__dataSpace`. See
   ([`DATA_GRAPH_PREFIX_MISMATCH`](../errors/data-graph/DATA_GRAPH_PREFIX_MISMATCH.md)); for an
   existing one deploy and retrieve only warn. See
   [Name prefixes](../../README.md#name-prefixes-only-if-you-have-more-than-one-data-space).
-- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys a graph
+- Only if you have more than one data space: `--allow-cross-dataspace` deploys a graph
   file of another data space. Its name gets the target prefix (`PhoneGraph` becomes
   `ds2_PhoneGraph`); the root, every related object, field, join field and criteria field follow
   the DMO rules (`ssot__ContactPointPhone__dlm` with `ssot__TelephoneNumber__c` becomes
