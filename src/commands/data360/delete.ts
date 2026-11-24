@@ -930,14 +930,17 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected readStreamLinkedDlo = readStreamLinkedDlo;
   protected preflightDeleteDataStream = preflightDeleteDataStream;
   protected executeDeleteDataStream = executeDeleteDataStream;
+  // The Connection the stream clients read and delete on; the library passes its caller's.
+  protected streamConnection = async (target: string, version: string): Promise<Connection> =>
+    Connection.create({
+      authInfo: await AuthInfo.create({ username: target }),
+      connectionOptions: { version },
+    });
   protected createDataStreamClients = async (
     target: string,
     version: string,
   ): Promise<Parameters<typeof executeDeleteDataStream>[1]> => {
-    const connection = await Connection.create({
-      authInfo: await AuthInfo.create({ username: target }),
-      connectionOptions: { version },
-    });
+    const connection = await this.streamConnection(target, version);
     const reader = new ConnectClient(connection, version);
     return {
       // DELETE (including the DLO cascade) is sent once on this same bound Connection.
@@ -1121,7 +1124,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     const fields = [...new Set(flags.field)];
     // The run's data space, always explicit: --dataspace, or default.
     const effectiveScope = flags.dataspace ?? 'default';
-    const root = path.resolve(flags['output-dir'] ?? process.cwd());
+    const root = path.resolve(this.projectDirectory(), flags['output-dir'] ?? '.');
     const item: DeleteItem = {
       family: 'dmo',
       identity: { dataSpace: effectiveScope, apiName },
@@ -1348,12 +1351,12 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       const files = [
         {
           path: path.join(
-            process.cwd(),
+            this.projectDirectory(),
             'data360',
             'relationship',
             `${apiName}.relationship-meta.json`,
           ),
-          boundary: path.join(process.cwd(), 'data360'),
+          boundary: path.join(this.projectDirectory(), 'data360'),
         },
       ];
       if (preview) {
@@ -1449,6 +1452,15 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   }
 
   /**
+   * The project root: where data360/ lives (local files removed or refreshed, relative
+   * --output-dir) and the Git selection runs. The CLI uses the current directory.
+   * @returns {string} Absolute project root.
+   */
+  protected projectDirectory(): string {
+    return process.cwd();
+  }
+
+  /**
    * Ask once whether to delete; no answer within 30 seconds is no.
    * @param {string} message Question and the components it deletes.
    * @returns {Promise<boolean>} True only for an explicit yes.
@@ -1523,7 +1535,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     const changedSince = flags['changed-since'];
     // A file deleted in the Git range is already gone: no local file is listed or removed.
     const gitMode = changedSince !== undefined;
-    const projectData = path.join(process.cwd(), 'data360');
+    const projectData = path.join(this.projectDirectory(), 'data360');
     // The local files of each item; removed once its deletion is confirmed.
     const localFiles = new Map<DeleteItem, LocalFileCandidate[]>();
     const inProject = (...segments: string[]): LocalFileCandidate => ({
@@ -1808,7 +1820,10 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
       let gitDeletions: readonly GitDeleteCandidate[] = [];
       if (changedSince !== undefined) {
         envelope.result.selection = { changedSince };
-        const selected = await this.selectGitInputs({ cwd: process.cwd(), ref: changedSince });
+        const selected = await this.selectGitInputs({
+          cwd: this.projectDirectory(),
+          ref: changedSince,
+        });
         envelope.provenance.git = selected.provenance;
         gitDeletions = selected.deletions ?? [];
         if (gitDeletions.length === 0) {
@@ -2869,7 +2884,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
                   try {
                     const found = await mappingLocalFile(
                       normalizeNativeMapping(firstRead, effectiveScope, 'retrieve'),
-                      process.cwd(),
+                      this.projectDirectory(),
                     );
                     return [{ path: found.path, boundary: projectData }];
                   } catch {

@@ -548,6 +548,15 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     process.stderr.write(`${message}\n`);
   }
 
+  /**
+   * The project root: where data360/ lives, relative --source-dir paths resolve and the Git
+   * selection runs. The CLI uses the current directory.
+   * @returns {string} Absolute project root.
+   */
+  protected projectDirectory(): string {
+    return process.cwd();
+  }
+
   protected createDataTransformClient = createDataTransformClient;
   protected preflightDataTransform = preflightDataTransformDeploy;
   protected executeDataTransform = executeDataTransformDeploy;
@@ -862,7 +871,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       }).prefixOf(effectiveScope);
       return prefix === undefined ? {} : { dataSpacePrefix: prefix };
     };
-    const cwd = process.cwd();
+    const cwd = this.projectDirectory();
     /**
      * A file path as the output shows it: relative to the working directory.
      * @param {string} file Absolute path.

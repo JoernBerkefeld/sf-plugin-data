@@ -605,6 +605,24 @@ a page under [docs/errors](docs/errors/README.md).
   not throw for a refusal; the envelope's `status` and diagnostics say what happened, and
   `exitCodeOf(envelope)` gives the exit code the command would use. The connection's API version
   is restored afterwards.
+- `runDeploy(connection, options?)` and `runDelete(connection, options?)`: run
+  `sf data360 deploy` and `sf data360 delete` over the connection and return the same envelope
+  `--json` shows (types `DeployOptions`, `DeleteOptions`, `DeployEnvelope`, `DeleteEnvelope`).
+  The options are the flags in camelCase. Both take `preview`, `metadata`, `dataspace`,
+  `apiVersion` (default `auto`), `changedSince` and `projectDir` (the folder holding `data360/`
+  and the Git repository; default the current directory). `runDeploy` also takes `sourceDir`
+  (relative to `projectDir`), `allowCrossDataspace`, `allowProcessing`, `allowFieldRemoval`,
+  `allowDataspaceRemoval`, `async`, `draft` and `wait` (whole minutes). `runDelete` also takes
+  `deleteDlo`, `field`, `keepLocalFiles` and `outputDir`. `runDelete` never asks: calling it is
+  the confirmation (as `--no-prompt`); a delete runs its services at API 68.0. Nothing is
+  printed, `process.exitCode` is left alone and the connection's API version is restored
+  afterwards. A refusal comes back as an envelope; only options the CLI refuses while parsing
+  (`changedSince` with `metadata` or `sourceDir`, a `wait` below 1 or not whole, a malformed
+  deploy `apiVersion`) throw an `OptionError` with `code` `INVALID_OPTION` and `exitCode` 2.
+  Every REST and Metadata API call uses the given connection, except the Metadata API
+  destructive change of a DMO field removal (`allowFieldRemoval`, `field`) and of a mapping
+  delete or pair removal: it runs `sf project deploy start` for the connection's username, so it
+  needs the Salesforce CLI installed and that user authorized in it.
 
 ## Local development
 
