@@ -1417,6 +1417,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     }
     // The same delete, read-only and silent, shows what would be deleted.
     const preview = await this.execute({ ...flags, preview: true }, true);
+    // A preview that was refused or failed asks nothing: its refusal is the run's result.
+    if (preview.status !== 'success') return this.refusedPreview(preview);
     const planned = preview.result.items.filter((item) => wouldDelete(item));
     if (planned.length === 0) return this.execute(flags, false);
     const { dataSpace } = preview.result.scope;
@@ -1453,6 +1455,26 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
    */
   protected async confirmDeletion(message: string): Promise<boolean> {
     return this.confirm({ message, ms: 30_000, defaultAnswer: false });
+  }
+
+  /**
+   * The envelope of a delete whose silent preview did not succeed: its refusal, nothing sent and
+   * nothing asked.
+   * @param {DeleteEnvelope} preview Envelope of the silent preview (blocked, failed or other).
+   * @returns {DeleteEnvelope} The preview's status, items and diagnostics.
+   */
+  private refusedPreview(preview: DeleteEnvelope): DeleteEnvelope {
+    const envelope: DeleteEnvelope = {
+      ...preview,
+      metadata: { ...preview.metadata, preview: false },
+    };
+    const exitCode = exitCodeOf(envelope);
+    if (exitCode !== 0) process.exitCode = exitCode;
+    if (!this.jsonEnabled()) {
+      this.log(`Delete: ${envelope.status}; nothing was deleted.`);
+      for (const diagnostic of envelope.diagnostics.errors) this.log(formatDiagnostic(diagnostic));
+    }
+    return envelope;
   }
 
   /**

@@ -23,9 +23,17 @@ const runtime = {
  * @param {boolean} [options.json] Whether --json is on.
  * @param {boolean|Error} [options.answer] The answer, or an error the question throws.
  * @param {boolean} [options.present] Whether the org holds the DLO.
+ * @param {number} [options.readStatus] HTTP status every DLO read fails with, if any.
  * @returns {Promise<{result: object, calls: string[], asked: string[], lines: string[], exitCode: unknown}>} Run evidence.
  */
-async function run({ flags = {}, interactive = true, json = false, answer, present = true }) {
+async function run({
+  flags = {},
+  interactive = true,
+  json = false,
+  answer,
+  present = true,
+  readStatus,
+}) {
   const calls = [];
   const asked = [];
   const lines = [];
@@ -54,6 +62,7 @@ async function run({ flags = {}, interactive = true, json = false, answer, prese
   command.createDloNativeDeleteClient = () => ({
     get: async () => {
       calls.push('get');
+      if (readStatus !== undefined) throw new DloError('DLO_HTTP_ERROR', readStatus);
       if (deleted) throw new DloError('DLO_HTTP_ERROR', 404);
       return structuredClone(runtime);
     },
@@ -193,4 +202,22 @@ test('the default question waits 30 seconds and defaults to no', async () => {
 test('--confirm-delete is gone; -r is --no-prompt', () => {
   assert.equal('confirm-delete' in Delete.flags, false);
   assert.equal(Delete.flags['no-prompt'].char, 'r');
+});
+
+test('a preview that is refused asks nothing and returns its refusal', async () => {
+  const { result, calls, asked, lines, exitCode } = await run({ readStatus: 403 });
+  assert.deepEqual(asked, []);
+  assert.ok(!calls.includes('delete'));
+  assert.equal(result.status, 'blocked');
+  assert.equal(exitCode, 1);
+  assert.equal(result.metadata.preview, false);
+  // The same refusal --preview reports.
+  const preview = await run({ readStatus: 403, flags: { preview: true } });
+  assert.equal(preview.result.status, 'blocked');
+  assert.deepEqual(codes(result), codes(preview.result));
+  assert.equal(codes(result).length, 1);
+  assert.equal(result.result.items[0].outcome, 'blocked');
+  assert.equal(result.result.items[0].mutation, 'not-attempted');
+  assert.equal(lines[0], 'Delete: blocked; nothing was deleted.');
+  assert.ok(lines.some((line) => line.startsWith(`${codes(result)[0]}: `)));
 });
