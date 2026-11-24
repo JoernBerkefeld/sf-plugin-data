@@ -280,6 +280,15 @@ type RetrieveRun = {
   effectiveScope: string;
   outputDirectory: string;
 };
+/** A finished run: its envelope and what the human output needs. */
+type RetrieveOutcome = {
+  envelope: RetrieveEnvelope;
+  /** Code of a run-level refusal, named on the first human line. */
+  code?: string;
+  outputTypes: Set<string>;
+  errorTypes: Map<RetrieveDiagnostic, string>;
+  effectiveScope: string;
+};
 /** What one selector group's read returns; `code` is a group-level refusal without identity. */
 type GroupOutcome = {
   status: RetrieveEnvelope['status'];
@@ -2489,15 +2498,79 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
    */
   public async run(): Promise<RetrieveEnvelope> {
     // Each output directory's ancestor chain is checked once per run; every file still is.
-    return withCheckedDirectories(async () => this.retrieveAll());
+    return withCheckedDirectories(async () => {
+      const { flags } = await this.parse(Retrieve);
+      const outcome = await this.retrieveOutcome(flags);
+      const exitCode = exitCodeOf(outcome.envelope);
+      if (exitCode !== 0) process.exitCode = exitCode;
+      if (!this.jsonEnabled()) this.printOutcome(outcome);
+      return outcome.envelope;
+    });
   }
 
   /**
-   * The run itself; see run.
+   * The envelope of a retrieve with these flags, without printing or setting an exit code; the
+   * library (runRetrieve) and the command share it.
+   * @param {RetrieveFlags} flags Parsed flags.
    * @returns {Promise<RetrieveEnvelope>} Versioned retrieval outcome and payload-free diagnostics.
    */
-  private async retrieveAll(): Promise<RetrieveEnvelope> {
-    const { flags } = await this.parse(Retrieve);
+  protected async retrieveEnvelope(flags: RetrieveFlags): Promise<RetrieveEnvelope> {
+    return withCheckedDirectories(async () => {
+      const { envelope } = await this.retrieveOutcome(flags);
+      return envelope;
+    });
+  }
+
+  /**
+   * Human output of a finished run.
+   * @param {RetrieveOutcome} outcome The run's envelope and what its lines need.
+   */
+  private printOutcome(outcome: RetrieveOutcome): void {
+    const { envelope, code, outputTypes, errorTypes, effectiveScope } = outcome;
+    this.log(`Retrieve: ${envelope.status}${code ? ` (${code})` : ''}.`);
+    // The default data space goes without saying; any other is named.
+    if (effectiveScope !== 'default') this.log(`Data space: ${effectiveScope}.`);
+    const groups = new Set([
+      ...outputTypes,
+      ...envelope.result.items.map((item) => item.family ?? 'dmo'),
+    ]);
+    const printError = (diagnostic: RetrieveDiagnostic): void => {
+      this.log(
+        formatDiagnostic(
+          diagnostic,
+          diagnostic.identity
+            ? `${errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo'}:${diagnostic.identity.apiName}: `
+            : '',
+        ),
+      );
+    };
+    for (const family of groups) {
+      const items = envelope.result.items.filter((item) => (item.family ?? 'dmo') === family);
+      for (const item of items)
+        this.log(`Downloaded ${family}:${item.identity.apiName} (${item.outcome}).`);
+      for (const diagnostic of envelope.diagnostics.errors)
+        if (
+          diagnostic.identity &&
+          (errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo') === family
+        )
+          printError(diagnostic);
+      this.log(`Downloaded ${family}: ${items.length}`);
+    }
+    for (const diagnostic of envelope.diagnostics.errors)
+      if (
+        !diagnostic.identity ||
+        !groups.has(errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo')
+      )
+        printError(diagnostic);
+    for (const warning of envelope.diagnostics.warnings) this.log(`Warning: ${warning}`);
+  }
+
+  /**
+   * The run itself; see run. It prints nothing and leaves process.exitCode alone.
+   * @param {RetrieveFlags} flags Parsed flags.
+   * @returns {Promise<RetrieveOutcome>} The envelope and what the human output needs.
+   */
+  private async retrieveOutcome(flags: RetrieveFlags): Promise<RetrieveOutcome> {
     const effectiveScope = flags.dataspace ?? 'default';
     // Writers require an absolute project root; resolve a relative -d against the cwd once.
     const outputDirectory = path.resolve(flags['output-dir'] ?? process.cwd());
@@ -2535,7 +2608,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       code?: string,
       error?: unknown,
       family?: RetrieveFamily,
-    ): RetrieveEnvelope => {
+    ): RetrieveOutcome => {
       // A run that wrote (or found unchanged) at least one file while another item or family
       // failed or was blocked is partial; nothing written keeps blocked or failed.
       envelope.status =
@@ -2551,48 +2624,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           retryable: false,
           ...(family ? { family } : {}),
         });
-      const exitCode = exitCodeOf(envelope);
-      if (exitCode !== 0) process.exitCode = exitCode;
       annotateDiagnostics(envelope);
-      if (!this.jsonEnabled()) {
-        this.log(`Retrieve: ${envelope.status}${code ? ` (${code})` : ''}.`);
-        // The default data space goes without saying; any other is named.
-        if (effectiveScope !== 'default') this.log(`Data space: ${effectiveScope}.`);
-        const groups = new Set([
-          ...outputTypes,
-          ...envelope.result.items.map((item) => item.family ?? 'dmo'),
-        ]);
-        const printError = (diagnostic: RetrieveDiagnostic): void => {
-          this.log(
-            formatDiagnostic(
-              diagnostic,
-              diagnostic.identity
-                ? `${errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo'}:${diagnostic.identity.apiName}: `
-                : '',
-            ),
-          );
-        };
-        for (const family of groups) {
-          const items = envelope.result.items.filter((item) => (item.family ?? 'dmo') === family);
-          for (const item of items)
-            this.log(`Downloaded ${family}:${item.identity.apiName} (${item.outcome}).`);
-          for (const diagnostic of envelope.diagnostics.errors)
-            if (
-              diagnostic.identity &&
-              (errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo') === family
-            )
-              printError(diagnostic);
-          this.log(`Downloaded ${family}: ${items.length}`);
-        }
-        for (const diagnostic of envelope.diagnostics.errors)
-          if (
-            !diagnostic.identity ||
-            !groups.has(errorTypes.get(diagnostic) ?? diagnostic.family ?? 'dmo')
-          )
-            printError(diagnostic);
-        for (const warning of envelope.diagnostics.warnings) this.log(`Warning: ${warning}`);
-      }
-      return envelope;
+      return { envelope, code, outputTypes, errorTypes, effectiveScope };
     };
     const context: RetrieveRun = {
       flags,

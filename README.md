@@ -559,6 +559,11 @@ a page under [docs/errors](docs/errors/README.md).
   data spaces with their prefixes and, when a name in `names` is an identity resolution output
   (or `names` is left out), its rulesets. A data space the org lacks fails with
   `UNKNOWN_DATASPACE`.
+- `runRetrieve(connection, { dataspace?, metadata?, outputDir?, overwrite?, apiVersion? })`: runs
+  `sf data360 retrieve` with those flags and returns the same envelope `--json` shows. It does
+  not throw for a refusal; the envelope's `status` and diagnostics say what happened, and
+  `exitCodeOf(envelope)` gives the exit code the command would use. The connection's API version
+  is restored afterwards.
 
 ## Local development
 
