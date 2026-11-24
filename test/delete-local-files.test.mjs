@@ -240,6 +240,32 @@ test('a failed removal keeps the confirmed org result and is partial', async () 
   assert.ok(lines.includes(`local file removal failed (UNSAFE_PATH): ${folder}`));
 });
 
+test('a failed removal beside only a deletion still processing is processing, not partial', async () => {
+  const root = await scratch();
+  const folder = path.join(root, 'data360', 'dlo', `${dlo}.dlo-meta.json`);
+  await mkdir(folder, { recursive: true });
+  const { command: run } = command(
+    { metadata: [`dlo:${dlo}`] },
+    {
+      deleteDlo: async (apiName, client) => {
+        await client.delete('0a0000000000000AAA');
+        return { apiName, dataSpace: 'default', processing: true };
+      },
+    },
+  );
+  const { result, exitCode } = await inProject(root, run);
+  // Partial (68) needs a confirmed write; an acknowledged deletion still processing has none.
+  const [item] = result.result.items;
+  assert.equal(item.outcome, 'deletion-processing');
+  assert.equal(item.mutation, 'acknowledged-processing');
+  assert.deepEqual(item.removedLocalFiles, [
+    { path: folder, outcome: 'failed', code: 'UNSAFE_PATH' },
+  ]);
+  assert.equal(result.diagnostics.errors[0].code, 'LOCAL_FILE_REMOVAL_FAILED');
+  assert.equal(result.status, 'processing');
+  assert.equal(exitCode, 69);
+});
+
 test('a hard-linked file and a file reached through a linked folder are refused', async () => {
   // Hard link: the second name would keep the content; nothing is removed.
   const root = await scratch();

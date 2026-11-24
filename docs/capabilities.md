@@ -1204,5 +1204,6 @@ After a confirmed deletion (`deleted`/`confirmed-deleted`, or
 file at its canonical path by name, one regular file at a time and only inside the
 project's `data360` folder. Results list `removedLocalFiles` (`removed`, `not-present`,
 `kept`, `failed`); a failed removal keeps the org outcome and the run is `partial`
-(exit code 68) with `LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps the files and `--preview` lists
+(exit code 68) with `LOCAL_FILE_REMOVAL_FAILED` when at least one deletion is confirmed,
+otherwise (deletions still processing only) `processing` (exit code 69). `--keep-local-files` keeps the files and `--preview` lists
 them as `localFiles`. Details are in [artifact formats](artifact-format.md).

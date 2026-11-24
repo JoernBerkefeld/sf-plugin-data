@@ -4,7 +4,10 @@ import test from 'node:test';
 import { mkdtemp, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
+import { Connection } from '@salesforce/core';
 import * as api from '../lib/api.js';
+import Retrieve from '../lib/commands/data360/retrieve.js';
 import { exitCodeOf, runRetrieve } from '../lib/api.js';
 
 const scratch = () => mkdtemp(path.join(os.tmpdir(), 'data360-run-retrieve-'));
@@ -34,7 +37,9 @@ function fakeConnection(listed) {
     urls,
     instanceUrl: 'https://synthetic.example',
     getApiVersion: () => version,
+    // Like @salesforce/core: only a numeric version is accepted.
     setApiVersion: (value) => {
+      if (!/^[1-9]\d\.0$/u.test(value)) throw new Error(`Invalid API version ${value}`);
       version = value;
     },
     getAuthInfoFields: () => ({ orgId: '00Dsynthetic' }),
@@ -125,6 +130,140 @@ test('runRetrieve returns partial without setting process.exitCode', async () =>
   );
   assert.equal(printed, '');
   assert.equal(exitCode, undefined);
+});
+
+/**
+ * An actual @salesforce/core Connection (its own setApiVersion) over a synthetic transport: the
+ * org has one DLO and no component of any other family.
+ * @param {string[]} paths Receives every requested path.
+ * @returns {Connection} Connection.
+ */
+function coreConnection(paths) {
+  const origin = 'https://synthetic.my.salesforce.com';
+  const orgId = '00D000000000001AAA';
+  const empty = [
+    [/\/ssot\/data-spaces\?/u, { totalSize: 1, dataSpaces: [{ name: 'default' }] }],
+    [/\/ssot\/data-lake-objects\?/u, { totalSize: 1, dataLakeObjects: [dloEntry('Alpha__dll')] }],
+    [/\/ssot\/data-model-objects\?/u, { totalSize: 0, dataModelObject: [] }],
+    [/\/ssot\/segments\?/u, { totalSize: 0, segments: [] }],
+    [/\/ssot\/calculated-insights\?/u, { collection: { total: 0, items: [] } }],
+    [/\/ssot\/identity-resolutions$/u, { identityResolutions: [] }],
+    [/\/ssot\/data-streams\?/u, { totalSize: 0, dataStreams: [] }],
+    [/\/ssot\/data-transforms\?/u, { totalSize: 0, dataTransforms: [] }],
+    [/\/ssot\/data-graphs\/metadata\?/u, { dataGraphMetadata: [] }],
+    [
+      /\/query\?q=SELECT%20Id%20FROM%20Organization$/u,
+      {
+        done: true,
+        totalSize: 1,
+        records: [{ Id: orgId }],
+      },
+    ],
+  ];
+  return Object.assign(Object.create(Connection.prototype), {
+    instanceUrl: origin,
+    version: '62.0',
+    accessToken: 'synthetic-token',
+    logger: { getRawLogger: () => ({ debug() {} }), debug() {}, warn() {} },
+    getAuthInfoFields: () => ({ orgId, username: 'synthetic@example.com' }),
+    getUsername: () => 'synthetic@example.com',
+    _refreshDelegate: {
+      isRefreshing: () => false,
+      refresh: () => assert.fail('must not refresh'),
+    },
+    _propagators: [],
+    _transport: {
+      httpRequest: (request) => {
+        const url = new URL(request.url);
+        paths.push(`${url.pathname}${url.search}`);
+        const match = empty.find(([pattern]) => pattern.test(`${url.pathname}${url.search}`));
+        const pending = Promise.resolve(
+          match
+            ? {
+                statusCode: 200,
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(match[1]),
+              }
+            : {
+                statusCode: 404,
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify([{ errorCode: 'NOT_FOUND', message: 'synthetic' }]),
+              },
+        );
+        pending.stream = () => new PassThrough();
+        return pending;
+      },
+    },
+  });
+}
+
+test('runRetrieve over an actual core Connection retrieves every family with the default auto version', async () => {
+  const outputDirectory = await scratch();
+  const paths = [];
+  const connection = coreConnection(paths);
+  // The real setApiVersion refuses `auto`; the default run must never hand it over.
+  assert.throws(() => connection.setApiVersion('auto'));
+  const { envelope, printed, exitCode } = await observe(connection, { outputDir: outputDirectory });
+  assert.equal(envelope.status, 'success', JSON.stringify(envelope.diagnostics));
+  assert.equal(exitCodeOf(envelope), 0);
+  assert.deepEqual(
+    envelope.result.items.map((item) => [item.family, item.identity.apiName, item.outcome]),
+    [['dlo', 'Alpha__dll', 'retrieved']],
+  );
+  assert.ok(paths.some((value) => value.includes('/ssot/data-lake-objects?')));
+  assert.equal(printed, '');
+  assert.equal(exitCode, undefined);
+  assert.equal(connection.getApiVersion(), '62.0');
+});
+
+test('runRetrieve reads DLOs beside segments over an actual core Connection with the auto version', async () => {
+  // DLOs selected with an operational family share its group; their reads stay pinned at 68.0.
+  const connection = coreConnection([]);
+  const { envelope } = await observe(connection, {
+    metadata: ['dlo', 'segment'],
+    outputDir: await scratch(),
+  });
+  assert.equal(envelope.status, 'success', JSON.stringify(envelope.diagnostics));
+  assert.deepEqual(
+    envelope.result.items.map((item) => [item.family, item.identity.apiName, item.outcome]),
+    [['dlo', 'Alpha__dll', 'retrieved']],
+  );
+  assert.equal(connection.getApiVersion(), '62.0');
+});
+
+test('sf data360 retrieve without -o and --api-version never asks the connection for auto', async () => {
+  const connection = coreConnection([]);
+  const command = new Retrieve([], {});
+  // The flag defaults when neither -o nor --api-version is given.
+  command.parse = async () => ({
+    flags: {
+      'api-version': 'auto',
+      metadata: ['dlo', 'segment'],
+      'output-dir': await scratch(),
+      overwrite: false,
+    },
+  });
+  command.jsonEnabled = () => true;
+  // Like @salesforce/core, every version the command asks for reaches setApiVersion.
+  command.resolveOrg = async () => ({
+    getOrgId: () => connection.getAuthInfoFields().orgId,
+    getConnection: (version) => {
+      if (version) connection.setApiVersion(version);
+      return connection;
+    },
+  });
+  const before = process.exitCode;
+  let envelope;
+  try {
+    envelope = await command.run();
+  } finally {
+    process.exitCode = before;
+  }
+  assert.equal(envelope.status, 'success', JSON.stringify(envelope.diagnostics));
+  assert.deepEqual(
+    envelope.result.items.map((item) => [item.family, item.identity.apiName]),
+    [['dlo', 'Alpha__dll']],
+  );
 });
 
 test('runRetrieve returns blocked envelopes before any request', async () => {

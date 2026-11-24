@@ -23,7 +23,8 @@ class ConnectionRetrieve extends Retrieve {
   protected resolveOrg = async (): Promise<Pick<Org, 'getConnection' | 'getOrgId'>> => ({
     getOrgId: () => this.connection.getAuthInfoFields().orgId!,
     getConnection: (version?: string) => {
-      if (version) this.connection.setApiVersion(version);
+      // Only a numeric version reaches the connection; @salesforce/core rejects `auto`.
+      if (version && /^[1-9]\d\.0$/u.test(version)) this.connection.setApiVersion(version);
       return this.connection;
     },
   });

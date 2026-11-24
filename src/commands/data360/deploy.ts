@@ -914,7 +914,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       Parameters<NonNullable<Parameters<typeof executeMapping>[3]>>[0]
     >();
     /**
-     * Final status of a run that reached its end: an unknown mutation keeps the run status; some
+     * Final status of a run that reached its end: an unknown mutation keeps the run status, a
+     * success becoming failed; some
      * item confirmed written beside a failed or blocked one (or an unwritten copy file) is partial;
      * otherwise a server still processing (a DLO, segment or transform, an identity resolution
      * not yet settled, a transform schedule not sent while processing) is processing.
@@ -929,7 +930,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
       if (flags.preview) return status;
       const executed = envelope.result.items.filter((item) => item.operation === 'execute');
       const mutations = executed.map((item) => ('mutation' in item ? item.mutation : undefined));
-      if (mutations.includes('unknown')) return status;
+      // An unknown mutation never reads as success (exit 1).
+      if (mutations.includes('unknown')) return status === 'success' ? 'failed' : status;
       // The code is on the item, or on the preflight that stopped it before its write.
       const stillProcessing = (item: (typeof executed)[number]): boolean =>
         [

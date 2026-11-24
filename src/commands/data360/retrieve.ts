@@ -636,7 +636,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
     return {
       getOrgId: () => connection.getAuthInfoFields().orgId!,
       getConnection: (version?: string) => {
-        if (version) connection.setApiVersion(version);
+        // Only a numeric version reaches the connection; @salesforce/core rejects `auto`.
+        if (version && /^[1-9]\d\.0$/u.test(version)) connection.setApiVersion(version);
         return connection;
       },
     };
@@ -1974,8 +1975,8 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           for (const apiName of dlos) {
             let nativeOf = nothingRead;
             try {
-              const target =
-                flags['target-org'] ?? org.getConnection(flags['api-version']).getUsername();
+              // DLO reads are pinned at 68.0; `--api-version` may be `auto`, never a connection version.
+              const target = flags['target-org'] ?? org.getConnection('68.0').getUsername();
               if (!target) throw new SegmentError('TARGET_ORG_REQUIRED');
               const reads = recordNativeReads(
                 this.createDloClient(

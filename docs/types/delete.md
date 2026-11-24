@@ -163,9 +163,11 @@ selector ignoring case (`-m data-transform:copy` deletes `Copy` and removes
   outside the project's `data360` folder are refused.
 - Each result item lists `removedLocalFiles` with the outcome of every file: `removed`,
   `not-present`, `kept` or `failed`.
-- A failed removal keeps the confirmed org outcome; the run is then `partial` (exit code 68) with
-  [`LOCAL_FILE_REMOVAL_FAILED`](../errors/general/LOCAL_FILE_REMOVAL_FAILED.md). Remove that
-  file by hand; do not repeat the delete.
+- A failed removal keeps the confirmed org outcome; with at least one confirmed deletion the run
+  is then `partial` (exit code 68) with
+  [`LOCAL_FILE_REMOVAL_FAILED`](../errors/general/LOCAL_FILE_REMOVAL_FAILED.md), otherwise
+  (deletions still processing only) `processing` (exit code 69). Remove that file by hand; do
+  not repeat the delete.
 - Nothing is removed by `--preview`, which lists the files as `localFiles` with `exists`, nor
   for the outcomes `unchanged`, `blocked`, `failed`, `rejected` and `deletion-unconfirmed` or an
   `unknown` mutation.
