@@ -82,7 +82,7 @@
     "salesforce-data360-rules": "0.2.0"
   },
   "devDependencies": {
-    "@eslint/js": "9.39.4",
+    "@eslint/js": "10.0.1",
     "@types/node": "22.19.0",
     "eslint": "9.39.4",
     "eslint-config-prettier": "10.1.8",
