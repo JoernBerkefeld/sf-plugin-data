@@ -31,6 +31,7 @@ import { openBoundSsot } from '../../../../transport/bound-ssot.js';
 import type { BoundSsot } from '../../../../transport/bound-ssot.js';
 import { ConnectError } from '../../../../transport/connect-client.js';
 import { annotateDiagnostics, formatDiagnostic } from '../../../../errors/registry.js';
+import { exitCodeOf } from '../../../../exit-code.js';
 
 export type SegmentMembersEnvelope = {
   contract: 'sf-data360-segment-members';
@@ -424,7 +425,8 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
    * @returns {SegmentMembersEnvelope} The same receipt.
    */
   private finish(envelope: SegmentMembersEnvelope): SegmentMembersEnvelope {
-    if (envelope.status !== 'success') process.exitCode = 1;
+    const exitCode = exitCodeOf(envelope);
+    if (exitCode !== 0) process.exitCode = exitCode;
     annotateDiagnostics(envelope);
     if (!this.jsonEnabled()) {
       const { result } = envelope;

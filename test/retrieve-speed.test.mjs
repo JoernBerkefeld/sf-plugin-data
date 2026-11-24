@@ -590,7 +590,7 @@ test('a failed label read fails only the DMOs whose names it carried, in DMO ord
     if (++reads === 2) throw new NativeRelationshipError('RELATIONSHIP_REQUEST_UNCONFIRMED');
     return names.map((name) => ({ fullName: name, masterLabel: name }));
   });
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'partial');
   assert.deepEqual(
     result.diagnostics.errors.map((error) => [error.code, error.identity.apiName]),
     [

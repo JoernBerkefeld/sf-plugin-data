@@ -74,7 +74,7 @@ test('human retrieval reports empty type and excludes failed names from download
       return { kind: 'mapping', c__dataSpace: 'default', identity: { apiName: name } };
     };
     const { result } = await run(command);
-    assert.equal(result.status, empty ? 'success' : 'failed');
+    assert.equal(result.status, empty ? 'success' : 'partial');
     assert.equal(lines.at(-1), `Downloaded mapping: ${empty ? 0 : 1}`);
     assert.ok(!lines.some((line) => line.startsWith('Downloaded mapping:Failed')));
     if (!empty) assert.ok(lines.some((line) => line.startsWith('mapping:Failed:')));
@@ -103,8 +103,8 @@ test('mixed DLO acquisition failure stays in its human group without changing JS
     ];
     command.writeSegment = async () => ({ path: 'Audience.xml', outcome: 'retrieved' });
     const { result, exitCode } = await run(command);
-    assert.equal(result.status, 'failed');
-    assert.equal(exitCode, 1);
+    assert.equal(result.status, 'partial');
+    assert.equal(exitCode, 68);
     assert.deepEqual(result.diagnostics.errors, [
       {
         code: 'RETRIEVE_FAILED',
@@ -125,7 +125,7 @@ test('mixed DLO acquisition failure stays in its human group without changing JS
       json
         ? []
         : [
-            'Retrieve: failed.',
+            'Retrieve: partial.',
             `dlo:Broken__dll: RETRIEVE_FAILED: ${result.diagnostics.errors[0].message}
 Hint: ${errorCodeInfo('RETRIEVE_FAILED').hint}
 Docs: ${errorCodeInfo('RETRIEVE_FAILED').docs}`,
@@ -157,8 +157,8 @@ test('non-DMO output failure uses document kind and excludes failure from human 
       throw new SegmentError('OUTPUT_FAILED');
     };
     const { result, exitCode } = await run(command);
-    assert.equal(result.status, 'failed');
-    assert.equal(exitCode, 1);
+    assert.equal(result.status, 'partial');
+    assert.equal(exitCode, 68);
     assert.deepEqual(result.diagnostics.errors, [
       {
         code: 'OUTPUT_FAILED',
@@ -179,7 +179,7 @@ test('non-DMO output failure uses document kind and excludes failure from human 
       json
         ? []
         : [
-            'Retrieve: failed.',
+            'Retrieve: partial.',
             'Downloaded dmo:Sample__dlm (retrieved).',
             'Downloaded dmo: 1',
             `segment:Audience: OUTPUT_FAILED: ${result.diagnostics.errors[0].message}
@@ -256,8 +256,8 @@ for (const mode of ['read', 'output', 'overwrite'])
       return { path: `${name}.xml`, outcome: 'retrieved' };
     };
     const { result, exitCode } = await run(command);
-    assert.equal(result.status, mode === 'overwrite' ? 'blocked' : 'failed');
-    assert.equal(exitCode, 1);
+    assert.equal(result.status, 'partial');
+    assert.equal(exitCode, 68);
     assert.deepEqual(
       result.result.items.map((x) => x.identity.apiName),
       ['Alpha', 'Zulu'],
@@ -686,8 +686,8 @@ test('type, omitted and repeated selectors reach selection and retain per-object
       outcome: 'retrieved',
     });
     const { result, exitCode } = await run(command);
-    assert.equal(exitCode, 1);
-    assert.equal(result.status, 'failed');
+    assert.equal(exitCode, 68);
+    assert.equal(result.status, 'partial');
     const exactAdded = metadata?.includes('dmo:Sample__dlm');
     assert.deepEqual(acquired, [
       'Alpha__dlm',
@@ -833,8 +833,8 @@ for (const mode of ['read', 'output', 'overwrite']) {
       return { path: `${document.identity.apiName}.json`, outcome: 'retrieved' };
     };
     const { result, exitCode } = await run(command);
-    assert.equal(result.status, mode === 'overwrite' ? 'blocked' : 'failed');
-    assert.equal(exitCode, 1);
+    assert.equal(result.status, 'partial');
+    assert.equal(exitCode, 68);
     assert.deepEqual(
       result.result.items.map((item) => item.identity.apiName),
       ['Alpha_Rel', 'Zulu_Rel'],

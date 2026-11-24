@@ -32,6 +32,7 @@ import { SegmentError } from '../../artifacts/segment-document.js';
 import type { OtherSegmentSpec, SegmentDocument } from '../../artifacts/segment-document.js';
 import { bindSegmentChildren } from '../../services/bind-segment-dependencies.js';
 import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
+import { exitCodeOf } from '../../exit-code.js';
 import {
   getConnectDiagnostic,
   retainConnectDiagnostic,
@@ -321,7 +322,7 @@ type ExecutionItem = Omit<DeployExecutionResult, 'outcome'> & {
 export type DeployEnvelope = {
   contract: 'sf-data360-deploy';
   contractVersion: '1.1.0';
-  status: 'success' | 'blocked' | 'failed';
+  status: 'success' | 'processing' | 'partial' | 'blocked' | 'failed';
   metadata: {
     operation: 'deploy';
     preview: boolean;
@@ -961,7 +962,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
           ...(mappedFields ? { mappedFields } : {}),
         });
       }
-      if (status !== 'success') process.exitCode = 1;
+      const exitCode = exitCodeOf(envelope);
+      if (exitCode !== 0) process.exitCode = exitCode;
       annotateDiagnostics(envelope);
       if (!this.jsonEnabled()) {
         this.log(

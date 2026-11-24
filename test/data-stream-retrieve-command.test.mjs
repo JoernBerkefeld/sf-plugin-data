@@ -153,11 +153,8 @@ for (const code of [
       return { identity: { apiName: name, dataSpace: 'default' } };
     };
     const { result, exitCode } = await run(command);
-    assert.equal(exitCode, 1);
-    assert.equal(
-      result.status,
-      ['OVERWRITE_REQUIRED', 'UNSAFE_PATH'].includes(code) ? 'blocked' : 'failed',
-    );
+    assert.equal(exitCode, 68);
+    assert.equal(result.status, 'partial');
     assert.deepEqual(
       result.result.items.map(({ identity }) => identity.apiName),
       ['Zulu'],

@@ -79,6 +79,7 @@ import {
 } from '../../services/operation-diagnostic.js';
 import { rejectedNextAction } from '../../services/deploy-result.js';
 import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
+import { exitCodeOf } from '../../exit-code.js';
 import {
   nativeDmoFieldName,
   nativeDmoName,
@@ -585,7 +586,7 @@ function admitSourceInput(input: DeployInput): {
 export type DeleteEnvelope = {
   contract: 'sf-data360-delete';
   contractVersion: '1.1.0';
-  status: 'success' | 'blocked' | 'failed';
+  status: 'success' | 'processing' | 'partial' | 'blocked' | 'failed';
   metadata: { operation: 'delete'; preview: boolean; apiVersion: string; plugin: typeof plugin };
   provenance: {
     command: 'sf data360 delete';
@@ -1458,7 +1459,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
     };
     const finish = async (): Promise<DeleteEnvelope> => {
       await removeConfirmedFiles();
-      if (envelope.status !== 'success') process.exitCode = 1;
+      const exitCode = exitCodeOf(envelope);
+      if (exitCode !== 0) process.exitCode = exitCode;
       annotateDiagnostics(envelope);
       if (!this.jsonEnabled()) {
         this.log(`Delete${flags.preview ? ' preview' : ''}: ${envelope.status}.`);

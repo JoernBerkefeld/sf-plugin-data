@@ -716,7 +716,7 @@ for (const metadata of [['dlo'], undefined])
       result.diagnostics.errors.map((error) => [error.code, error.identity.apiName]),
       [['INVALID_DLO_DOCUMENT', 'Broken__dll']],
     );
-    assert.equal(result.status, 'failed');
+    assert.equal(result.status, 'partial');
     assert.deepEqual(
       result.result.selection.filter((value) => value.startsWith('dlo:')),
       listed.toSorted().map((name) => `dlo:${name}`),
@@ -978,7 +978,7 @@ test('a failing inventory fails its family only; low version refuses before auth
     throw new NativeMappingError('MAPPING_INVENTORY_UNCONFIRMED');
   };
   const result = await run(command);
-  assert.equal(result.status, 'blocked');
+  assert.equal(result.status, 'partial');
   assert.deepEqual(
     result.result.items.map((item) => item.identity.apiName),
     ['Source__dll', 'Target__dlm'],
@@ -994,7 +994,7 @@ test('a failing inventory fails its family only; low version refuses before auth
     return ['Target__dlm'];
   };
   const partial = await run(dlo);
-  assert.equal(partial.status, 'blocked');
+  assert.equal(partial.status, 'partial');
   assert.deepEqual(
     partial.result.items.map((item) => item.identity.apiName),
     ['Target__dlm', 'Map'],

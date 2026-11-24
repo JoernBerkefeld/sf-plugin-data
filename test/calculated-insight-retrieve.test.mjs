@@ -563,7 +563,7 @@ test('one failing insight or file never blocks the others', async () => {
     return writeNativeCalculatedInsightDocument(insight, ...rest);
   };
   const result = await run(instance);
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'partial');
   // Every insight is read, and every readable one after a failing write is still written.
   assert.deepEqual(reads, [
     'Aa_Unwritable__cio',
@@ -591,7 +591,7 @@ test('a failing insight listing fails that inventory only; named insights are st
     throw new CalculatedInsightError('CI_ACQUISITION_FAILED');
   };
   const result = await run(instance);
-  assert.equal(result.status, 'blocked');
+  assert.equal(result.status, 'partial');
   assert.deepEqual(
     result.diagnostics.errors.map(({ code, family }) => [code, family]),
     [['CI_ACQUISITION_FAILED', 'calculated-insight']],
@@ -655,7 +655,7 @@ test('an insight of another data space is an item failure naming both; the other
       name === 'Second__cio' ? { ...getBody(name), dataSpace: 'dataspace2' } : getBody(name),
   });
   const result = await run(instance);
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'partial');
   const [diagnostic] = result.diagnostics.errors;
   assert.equal(diagnostic.code, 'CI_IDENTITY_CHANGED');
   assert.deepEqual(diagnostic.identity, { dataSpace: 'dataspace2', apiName: 'Synthetic__cio' });

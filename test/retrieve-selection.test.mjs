@@ -453,7 +453,7 @@ test('the retrieve command writes every other Segment when one fails to read or 
       return { path: `${document_.identity.apiName}.segment.json`, outcome: 'retrieved' };
     };
     const result = await command.run();
-    assert.equal(result.status, 'failed');
+    assert.equal(result.status, 'partial');
     assert.deepEqual(written, ['Charlie', 'Zulu']);
     assert.deepEqual(
       result.diagnostics.errors.map(({ code, identity }) => [code, identity?.apiName]),

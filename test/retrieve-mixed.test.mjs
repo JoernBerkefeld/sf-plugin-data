@@ -241,8 +241,8 @@ test('a failing family keeps the other families and gives a failed aggregate', a
     throw new Error('private-token');
   };
   const { result, exitCode } = await run(command);
-  assert.equal(result.status, 'failed');
-  assert.equal(exitCode, 1);
+  assert.equal(result.status, 'partial');
+  assert.equal(exitCode, 68);
   assert.deepEqual(
     result.result.items.map((item) => label(item)),
     ['dmo:Sample__dlm', 'data-transform:Alpha'],
@@ -270,8 +270,8 @@ test('a failing graph is reported with its identity and the next graph still run
       return { apiName };
     };
     const { result, exitCode } = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(exitCode, 1);
+    assert.equal(result.status, 'partial');
+    assert.equal(exitCode, 68);
     assert.ok(calls.includes('data-graph:Zulu'));
     assert.deepEqual(
       result.result.items.map((item) => label(item)),
@@ -289,7 +289,7 @@ test('a failing graph is reported with its identity and the next graph still run
       },
     ]);
     if (!json) {
-      assert.equal(lines[0], 'Retrieve: blocked.');
+      assert.equal(lines[0], 'Retrieve: partial.');
       assert.ok(
         lines.some((line) => line.startsWith('data-graph:Alpha: NATIVE_GRAPH_RETRIEVE_BLOCKED')),
       );
@@ -308,8 +308,8 @@ test('a graph org-context failure blocks its group without identity', async () =
     };
     command.retrieveNativeGraph = () => assert.fail('no graph read without a context');
     const { result, exitCode } = await run(command);
-    assert.equal(result.status, 'blocked');
-    assert.equal(exitCode, 1);
+    assert.equal(result.status, metadata.length === 1 ? 'blocked' : 'partial');
+    assert.equal(exitCode, metadata.length === 1 ? 1 : 68);
     const [diagnostic] = result.diagnostics.errors;
     assert.equal(result.diagnostics.errors.length, 1);
     assert.equal(diagnostic.code, 'NATIVE_GRAPH_RETRIEVE_BLOCKED');
@@ -437,8 +437,8 @@ test('a group-level refusal beside other groups names its family and the others 
     throw new Error('private-token');
   };
   const { result, exitCode } = await run(command);
-  assert.equal(result.status, 'blocked');
-  assert.equal(exitCode, 1);
+  assert.equal(result.status, 'partial');
+  assert.equal(exitCode, 68);
   assert.deepEqual(
     result.result.items.map((item) => label(item)),
     ['data-stream:Alpha'],
@@ -454,7 +454,7 @@ test('a group-level refusal beside other groups names its family and the others 
       docs: errorCodeInfo('NATIVE_INVENTORY_FAILED').docs,
     },
   ]);
-  assert.equal(lines[0], 'Retrieve: blocked.');
+  assert.equal(lines[0], 'Retrieve: partial.');
   assert.ok(lines.some((line) => line.startsWith('NATIVE_INVENTORY_FAILED: ')));
   assert.doesNotMatch(JSON.stringify(result), /private-token/u);
 });
@@ -469,8 +469,8 @@ test('an org failure of one group beside others leaves the other groups retrieve
     return resolve(...arguments_);
   };
   const { result, exitCode } = await run(command);
-  assert.equal(result.status, 'blocked');
-  assert.equal(exitCode, 1);
+  assert.equal(result.status, 'partial');
+  assert.equal(exitCode, 68);
   assert.deepEqual(
     result.result.items.map((item) => label(item)),
     ['data-graph:Graph'],
@@ -494,8 +494,8 @@ for (const selector of ['identity-resolution:Individual_x', 'calculated-insight:
       throw new Error('private-token');
     };
     const { result, exitCode } = await run(command);
-    assert.equal(result.status, 'failed');
-    assert.equal(exitCode, 1);
+    assert.equal(result.status, 'partial');
+    assert.equal(exitCode, 68);
     assert.deepEqual(
       result.result.items.map((item) => label(item)),
       ['data-stream:Alpha'],
@@ -524,8 +524,8 @@ test('a throw escaping one group fails that group and the merged envelope is sti
     };
   };
   const { result, exitCode } = await run(command);
-  assert.equal(result.status, 'failed');
-  assert.equal(exitCode, 1);
+  assert.equal(result.status, 'partial');
+  assert.equal(exitCode, 68);
   assert.deepEqual(
     result.result.items.map((item) => label(item)),
     ['dmo:Sample__dlm'],
@@ -568,8 +568,8 @@ test('bare dlo beside identity resolution retrieves every listed DLO; a failing 
     outcome: 'retrieved',
   });
   const { result, exitCode } = await run(command);
-  assert.equal(result.status, 'failed');
-  assert.equal(exitCode, 1);
+  assert.equal(result.status, 'partial');
+  assert.equal(exitCode, 68);
   assert.deepEqual(
     result.result.items.map((item) => label(item)),
     ['dlo:Account_Home__dll', 'dlo:Zeta_Home__dll', 'identity-resolution:Individual_A1b2'],

@@ -11,6 +11,7 @@ import {
 import { retrieveNativeDataGraph } from '../../services/command-native-data-graph.js';
 import { explanationOf, operationDiagnostic } from '../../services/operation-diagnostic.js';
 import { annotateDiagnostics, formatDiagnostic } from '../../errors/registry.js';
+import { exitCodeOf } from '../../exit-code.js';
 import { dataStreamApiVersion, nativeApiVersion } from '../../transport/api-version.js';
 import { DataStreamError } from '../../artifacts/data-stream-document.js';
 import { writeDataStreamDocument } from '../../artifacts/write-data-stream.js';
@@ -137,7 +138,7 @@ import { localFilePresent } from '../../services/local-file-removal.js';
 export type RetrieveEnvelope = {
   contract: 'sf-data360-retrieve';
   contractVersion: '1.1.0';
-  status: 'success' | 'blocked' | 'failed';
+  status: 'success' | 'partial' | 'blocked' | 'failed';
   metadata: {
     operation: 'retrieve';
     plugin: { name: string; version: string };
@@ -2511,7 +2512,12 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
       error?: unknown,
       family?: RetrieveFamily,
     ): RetrieveEnvelope => {
-      envelope.status = status;
+      // A run that wrote (or found unchanged) at least one file while another item or family
+      // failed or was blocked is partial; nothing written keeps blocked or failed.
+      envelope.status =
+        (status === 'failed' || status === 'blocked') && envelope.result.items.length > 0
+          ? 'partial'
+          : status;
       if (code)
         envelope.diagnostics.errors.push({
           code,
@@ -2521,10 +2527,11 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
           retryable: false,
           ...(family ? { family } : {}),
         });
-      if (status !== 'success') process.exitCode = 1;
+      const exitCode = exitCodeOf(envelope);
+      if (exitCode !== 0) process.exitCode = exitCode;
       annotateDiagnostics(envelope);
       if (!this.jsonEnabled()) {
-        this.log(`Retrieve: ${status}${code ? ` (${code})` : ''}.`);
+        this.log(`Retrieve: ${envelope.status}${code ? ` (${code})` : ''}.`);
         // The default data space goes without saying; any other is named.
         if (effectiveScope !== 'default') this.log(`Data space: ${effectiveScope}.`);
         const groups = new Set([

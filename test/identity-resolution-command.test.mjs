@@ -309,7 +309,7 @@ test('IR writer failure retains earlier output and does not publish later owners
     throw new IdentityResolutionError('OUTPUT_FAILED');
   };
   const result = await run(command);
-  assert.equal(result.status, 'failed');
+  assert.equal(result.status, 'partial');
   assert.equal(result.diagnostics.errors[0].code, 'OUTPUT_FAILED');
   assert.deepEqual(
     result.result.items.map((item) => item.identity.apiName),

@@ -248,7 +248,7 @@ test('a republish waits past the earlier SUCCESS until this publish ends', async
   assert.equal(h.calls.posts.length, 1);
 });
 
-test('the wait ends as still processing: exit 0, not failed, never resent', async () => {
+test('the wait ends as still processing: exit 69, not failed, never resent', async () => {
   const h = harness(
     { metadata: 'segment:CliPub', 'wait-timeout': 75 },
     { reads: (index) => runtime(index === 0 ? {} : { publishStatus: 'PUBLISHING' }) },
@@ -258,7 +258,7 @@ test('the wait ends as still processing: exit 0, not failed, never resent', asyn
   h.command.log = (line) => output.push(line);
   const { result, exit } = await run(h.command);
   assert.equal(result.status, 'processing');
-  assert.equal(exit, undefined);
+  assert.equal(exit, 69);
   assert.deepEqual(h.calls.posts, [id]);
   assert.deepEqual(h.calls.waits, [30_000, 30_000, 15_000]);
   assert.deepEqual(result.diagnostics.errors, []);
@@ -524,7 +524,7 @@ test('--async posts once after the admission read and returns started: no reads,
   h.command.jsonEnabled = () => false;
   h.command.log = (line) => output.push(line);
   const { result, exit } = await run(h.command);
-  assert.equal(result.status, 'processing', JSON.stringify(result));
+  assert.equal(result.status, 'accepted', JSON.stringify(result));
   assert.equal(exit, undefined);
   assert.deepEqual(h.calls.posts, [id]);
   assert.equal(h.calls.gets.length, 1);
@@ -544,7 +544,7 @@ test('--async posts once after the admission read and returns started: no reads,
   assert.equal(item.diagnostics[0].code, 'SEGMENT_PUBLISH_STARTED');
   assert.match(item.diagnostics[0].message, /without waiting \(--async\)/u);
   assert.deepEqual(output.slice(0, 3), [
-    'Publish: processing.',
+    'Publish: accepted.',
     'publishing: CliPub; mutation: acknowledged-processing.',
     'publishStatus: PUBLISHING.',
   ]);

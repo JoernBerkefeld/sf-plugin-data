@@ -330,7 +330,7 @@ test('bare stream, transform, graph and relationship retrieve every listed item;
     listings,
   );
   const result = await run(instance);
-  assert.equal(result.status, 'failed', JSON.stringify(result.diagnostics));
+  assert.equal(result.status, 'partial', JSON.stringify(result.diagnostics));
   assert.deepEqual(
     result.result.items.map(({ family, identity }) => [family, identity.apiName]),
     [

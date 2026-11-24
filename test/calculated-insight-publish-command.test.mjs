@@ -427,7 +427,7 @@ for (const pin of [undefined, 'auto'])
 test('publish --async sends the PATCH once and returns started without the ACTIVE read', async () => {
   const h = await harness({ async: true });
   const { result, exit } = await run(h.command);
-  assert.equal(result.status, 'processing', JSON.stringify(result));
+  assert.equal(result.status, 'accepted', JSON.stringify(result));
   assert.equal(exit, undefined);
   assert.equal(h.calls.writes, 1);
   // Only the admission read; nothing is read after the PATCH.

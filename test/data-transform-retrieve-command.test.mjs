@@ -170,11 +170,8 @@ for (const code of [
       return { document: { c__dataSpace: 'default', definition: { name } } };
     };
     const { result, exitCode } = await run(command);
-    assert.equal(exitCode, 1);
-    assert.equal(
-      result.status,
-      ['OVERWRITE_REQUIRED', 'UNSAFE_PATH'].includes(code) ? 'blocked' : 'failed',
-    );
+    assert.equal(exitCode, 68);
+    assert.equal(result.status, 'partial');
     assert.deepEqual(
       result.result.items.map((item) => item.identity.apiName),
       ['Zulu'],
@@ -195,8 +192,8 @@ test('Transform retrieve runs in a non-default data space; a transform of anothe
     };
   };
   const { result, exitCode } = await run(command);
-  assert.equal(exitCode, 1);
-  assert.equal(result.status, 'failed');
+  assert.equal(exitCode, 68);
+  assert.equal(result.status, 'partial');
   assert.equal(result.result.scope.dataSpace, 'dataspace2');
   assert.deepEqual(
     result.result.items.map((item) => [item.identity.apiName, item.identity.dataSpace]),

@@ -7,3 +7,4 @@ export { crossSpaceContext } from './services/cross-space-context.js';
 export { DataSpaceError } from './services/data-space-check.js';
 export { CrossSpaceError } from './services/cross-dataspace-deploy.js';
 export type { CrossSpaceContext } from 'salesforce-data360-rules';
+export { exitCodeOf } from './exit-code.js';
