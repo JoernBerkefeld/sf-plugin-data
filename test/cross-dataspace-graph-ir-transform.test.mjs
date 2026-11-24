@@ -915,12 +915,15 @@ test('graph, ruleset and transform copy files are planned before the write and w
   assert.deepEqual(await precheckCopyFiles(plan.inputs, (file) => file), planned);
 });
 
-test('without -c the graph, ruleset and STL transform refusals name the flag', () => {
+test('without --allow-cross-dataspace the graph, ruleset and STL transform refusals name the flag', () => {
   for (const error of [
     nativeDataGraphSpaceMismatch('G', 'default', SPACE, 'file', true),
     identityResolutionSpaceMismatch('R', 'default', SPACE, 'file', true),
     dataTransformSpaceMismatch('T', 'default', SPACE, true),
   ])
-    assert.match(explanationOf(error), /add --allow-cross-dataspace \(-c\)/u);
-  assert.doesNotMatch(explanationOf(dataTransformSpaceMismatch('T', 'default', SPACE)), /-c\)/u);
+    assert.match(explanationOf(error), /add --allow-cross-dataspace\./u);
+  assert.doesNotMatch(
+    explanationOf(dataTransformSpaceMismatch('T', 'default', SPACE)),
+    /--allow-cross-dataspace/u,
+  );
 });

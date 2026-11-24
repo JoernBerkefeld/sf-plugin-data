@@ -19,7 +19,7 @@ The publish route needs the record ID of the segment, and the plugin only publis
 ## How to fix
 
 1. Check the segment name (case matters; `<prefix>_<Name>` in a non-default data space) and `--dataspace`.
-2. If it does not exist yet, deploy it first: `sf data360 deploy -d data360/segments/<Name>.segment.json --allow-processing`.
+2. If it does not exist yet, deploy it first: `sf data360 deploy --source-dir data360/segments/<Name>.segment.json --allow-processing`.
 3. Check the org login (`sf org display`) and the Salesforce API detail in the message, then rerun the publish.
 
 ## Example output

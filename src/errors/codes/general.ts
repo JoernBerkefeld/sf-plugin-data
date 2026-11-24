@@ -56,8 +56,8 @@ export const hints: Readonly<Record<string, string>> = {
     'The selection is not valid for this command. Check the -m type:ApiName syntax, the --source-dir paths and flags that cannot be combined, then rerun.',
   INVALID_SOURCE:
     'A selected file is not a valid definition for its file type, or its content names a different component than its file name. Fix the file, or retrieve it again, then rerun.',
-  INVALID_WAIT_TIMEOUT_SCOPE:
-    '--wait-timeout applies only to a deploy that holds a data graph or to a segment publish, and must be whole seconds. Remove it, or select a data graph or a segment.',
+  INVALID_WAIT_SCOPE:
+    '--wait applies only to a deploy that holds a data graph or to a segment publish, and must be whole minutes (1 or more). Remove it, or select a data graph or a segment.',
   LEGACY_DATASPACE_KEY:
     'The file still has an old data space key (identity.dataSpace, spec.segmentOn.dataSpace, or dataSpace in a calculated insight or an identity resolution reference). Move it to the top-level c__dataSpace key, or retrieve again.',
   LOCAL_FILE_REMOVAL_FAILED:

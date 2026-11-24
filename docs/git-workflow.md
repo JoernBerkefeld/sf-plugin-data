@@ -38,7 +38,7 @@ after every item of the previous one settled:
    batch; an identity resolution runs before a calculated insight or Segment on its
    unified DMO, which start only once the ruleset is published.
 4. Data graphs, after the ruleset whose unified DMO they use is published.
-   `--wait-timeout` applies to each graph and is refused when the range holds none.
+   `--wait` applies to each graph and is refused when the range holds none.
 
 A data transform changed in the range is created or updated by name in the transform
 phase. A DLO file named like the

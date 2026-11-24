@@ -459,7 +459,6 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         'Repeat to mix families in one run. Native dlo/dmo/mapping type or type:ApiName JSON selections; bare dlo is every DLO the API lists; omitted selects every family below, each bare. relationship:Dmo__dlm (relationships whose source is that DMO), data-stream:ApiName, data-transform:Name, data-graph:ApiName, segment:ApiName, identity-resolution:ExactObjectApiName and calculated-insight:ApiName__cio, or the bare family name for every one the API lists (bare relationship: those of every listed DMO).',
     }),
     'output-dir': Flags.directory({
-      char: 'd',
       exists: false,
       summary: 'Project root for JSON; defaults to the current directory.',
     }),
@@ -2534,7 +2533,7 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
    */
   private async retrieveOutcome(flags: RetrieveFlags): Promise<RetrieveOutcome> {
     const effectiveScope = flags.dataspace ?? 'default';
-    // Writers require an absolute project root; resolve a relative -d against the cwd once.
+    // Writers require an absolute project root; resolve a relative --output-dir against the cwd once.
     const outputDirectory = path.resolve(flags['output-dir'] ?? process.cwd());
     const plugin = {
       name: packageMetadata.name,

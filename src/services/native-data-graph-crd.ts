@@ -422,7 +422,7 @@ export async function settleNativeDataGraph(
  * @param {object} timing Invocation clock, deadline, delay and progress sink.
  * @param {Function} timing.now Invocation clock.
  * @param {number} timing.started Invocation start time.
- * @param {number} timing.end Invocation deadline (--wait-timeout).
+ * @param {number} timing.end Invocation deadline (--wait).
  * @param {Function} timing.pause Read-only delay.
  * @param {Function} timing.progress Stderr-only progress sink.
  * @returns {Promise<NativeGraphAcquisition>} Ready evidence or unknown.
@@ -898,7 +898,7 @@ export type NativeGraphCreateCheck =
  * @param {Function} [guards.pause] Injectable polling delay.
  * @param {object} [guards.creation] Invocation budget; create settlement waits while building.
  * @param {number} guards.creation.started Invocation start time.
- * @param {number} guards.creation.end Invocation deadline (--wait-timeout).
+ * @param {number} guards.creation.end Invocation deadline (--wait).
  * @param {Function} guards.creation.pause Paced read-only delay.
  * @param {Function} guards.creation.progress Stderr-only progress sink.
  * @returns {{create: Function; delete: Function}} Internal lifecycle, no UPDATE or name-only delete.

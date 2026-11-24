@@ -34,5 +34,5 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/g
 ## Related codes
 
 - [`INVALID_DRAFT_SCOPE`](../general/INVALID_DRAFT_SCOPE.md) — `--draft` used outside calculated insights.
-- [`INVALID_WAIT_TIMEOUT_SCOPE`](../general/INVALID_WAIT_TIMEOUT_SCOPE.md) — `--wait-timeout` used outside a single data graph.
+- [`INVALID_WAIT_SCOPE`](../general/INVALID_WAIT_SCOPE.md) — `--wait` used outside a single data graph.
 - [`IDENTITY_RESOLUTION_NOT_SETTLED`](../identity-resolution/IDENTITY_RESOLUTION_NOT_SETTLED.md) — what a rerun reports while an `--async` change is still processing.

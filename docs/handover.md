@@ -263,12 +263,12 @@ queue item Q4. User decisions 2026-11-17: extend the existing publish command, n
 flag, wait for the result with a timeout, report a timeout as still processing.
 
 - Command shape: `sf data360 publish -m segment:Name` (new `-m`, segment only) or
-  `-d data360/segments/Name.segment.json` (or one of its SQL files). The calculated-insight path
-  (`-d` with a CI file) is unchanged. `-m` and `-d` are exclusive; another `-m` family is
-  `INVALID_SELECTION`. New `--wait-timeout <seconds>` (default 1800), segment only; with a CI
-  file or below 1 it is `INVALID_WAIT_TIMEOUT_SCOPE` (hint and page now name publish too).
+  `--source-dir data360/segments/Name.segment.json` (or one of its SQL files). The calculated-insight path
+  (`--source-dir` with a CI file) is unchanged. `-m` and `--source-dir` are exclusive; another `-m` family is
+  `INVALID_SELECTION`. New `--wait <minutes>` (`-w`, default 30), segment only; with a CI
+  file or below 1 it is `INVALID_WAIT_SCOPE` (hint and page now name publish too).
 - Service `src/services/publish-segment.ts`: GET `/ssot/segments/{Name}` (404 is
-  `SEGMENT_PUBLISH_ADMISSION_FAILED`; name, data space and `1sg` ID are checked); with `-d` the
+  `SEGMENT_PUBLISH_ADMISSION_FAILED`; name, data space and `1sg` ID are checked); with `--source-dir` the
   org must hold the file (`carriesDefinition` on the lenient projection, otherwise
   `SEGMENT_PUBLISH_DEFINITION_MISMATCH`). Then one POST
   `/services/data/v68.0/ssot/segments/{marketSegmentId}/actions/publish` with an empty body
@@ -284,17 +284,17 @@ flag, wait for the result with a timeout, report a timeout as still processing.
   never resent (transport rule: writes repeat only when provably unsent).
 - PROCESSING/COUNTING: not checked locally; Salesforce decides (memory rule "the API decides";
   nothing local proves a refusal, and a refusal is reported with its text).
-- Verbatim `-d` file: `readDeployInputs` refuses it with `VERBATIM_NOT_DEPLOYABLE` before auth.
+- Verbatim `--source-dir` file: `readDeployInputs` refuses it with `VERBATIM_NOT_DEPLOYABLE` before auth.
   `-m` reads the org segment raw and needs no model of it.
 - Found live: JSforce never sends a POST whose `body` is undefined; the request hangs unsent (a
   first live attempt hung, was stopped after two minutes, and the segment showed no publish
   status). `body: ''` goes out as `Content-Length: 0`. The client test pins `body === ''`.
 - Tests: `test/segment-publish-command.test.mjs` (route/body/no resend on 503 and reset, wait to
   SUCCESS, republish past an earlier SUCCESS, timeout, FAILED, preview, PROCESSING/COUNTING sent,
-  4xx text, unconfirmed answers, absent, `-d` match/mismatch, verbatim, flag refusals, help);
+  4xx text, unconfirmed answers, absent, `--source-dir` match/mismatch, verbatim, flag refusals, help);
   `test/cli.test.mjs` publish flags. CI tests unchanged and green.
 - Docs: README (segment table row, Public Segment workflow publish paragraph), error pages for the
-  six new codes and the `INVALID_WAIT_TIMEOUT_SCOPE` page, `docs/errors/README.md`.
+  six new codes and the `INVALID_WAIT_SCOPE` page, `docs/errors/README.md`.
 - Live (isolated-source, `00Daj000010xkZNEAY`): one `CliQ4Seg` DBT segment (`WHERE 1 = 0`, zero members) deployed with the plugin; `sf data360 publish -m segment:CliQ4Seg` sent one POST (PUBLISHING at once), read every 30 s and reported `published` / `confirmed-published`, `publishStatus` SUCCESS after 922 s (exit 0); then `sf data360 delete -m segment:CliQ4Seg` reported `deleted` and a GET answered ITEM_NOT_FOUND. Nothing else touched. DB entry `.claude/skills/_verification-db/entries/data360/data360-q4-segment-publish-api68.json` (validated, not rebuilt, not committed); evidence `F:/Temp/cli-q4-p6w2Im`.
 - Open: Q5 (member read). sfmc.guide not edited (segments page: publish row/command).
 
@@ -598,7 +598,7 @@ A graph whose GET reads `status: draft` is written as-is with reason `DATA_GRAPH
 hint and page; thrown in `retrieveNativeDataGraph` after the identity check). Chosen over carrying
 `creationMode: DRAFT` with a create-only deploy: POST of a draft works, but a draft GET has no
 `creationMode`, no schedule and no root node type (strict deploy needs it), never reaches `ready`
-(create settlement would wait for the whole `--wait-timeout` and report failed), cannot be PUT
+(create settlement would wait for the whole `--wait` and report failed), cannot be PUT
 ("only when Active or Error") and is refused by delete (needs `ready`); a draft path through
 create, settlement, update and delete is far larger than one verbatim reason. `lastRunStatus` is
 now a server-owned top-level key (dropped on retrieve, admitted in deploy-mode GET projection).
@@ -1220,7 +1220,7 @@ Plan `sf_plugin_data_offpattern_20261114` chunk S (checkpoint decision "Segment 
   `INVALID_SEGMENT_DOCUMENT` on retrieve (Salesforce allows more).
 - `SegmentDeployInput` gains `codePaths` (model order); digest is length-prefixed over JSON +
   SQL files. Missing/extra/misnamed `<Name>.segment.*` file, `sql` in the JSON, or the old
-  single-file form: `INVALID_SOURCE`. `-d` with any member file or the folder works.
+  single-file form: `INVALID_SOURCE`. `--source-dir` with any member file or the folder works.
 - Git: a change to the JSON or any SQL file selects the segment; a SQL file deleted while
   the JSON stays is a change; JSON + every base model SQL deleted is one delete candidate
   (`codePaths`); a JSON deleted with a SQL file left blocks.
@@ -1243,7 +1243,7 @@ Plan `sf_plugin_data_offpattern_20261114` chunk S (checkpoint decision "Segment 
 Plan `sf_plugin_data_offpattern_20261114` chunk E1b.
 
 - Deploy, publish and delete read `data360/calculatedInsights/<Name>__cio.calculatedInsight-meta.json`
-  plus `...-meta.sql` under the project root (`-m calculated-insight:Name__cio`, `-d` with
+  plus `...-meta.sql` under the project root (`-m calculated-insight:Name__cio`, `--source-dir` with
   either file, a folder walk). The JSON is joined with exactly its SQL; a missing JSON or
   SQL, `expression` in the JSON, or any other `<Name>__cio.calculatedInsight-meta.*` file
   beside them is `INVALID_SOURCE`. The old XML/JSON pair paths are recognised nowhere in
@@ -1452,7 +1452,7 @@ decision of the same day). Version stays 0.1.0. Committed as 5a9b989; live read-
 - Several transforms in one delete (user decision 2026-11-14): allowed; each is resolved by
   name and deleted on its own in P2. Test: `one delete takes several transforms and deletes
 each in P2` (test/crud-delete-pipeline.test.mjs).
-- `sf data360 delete` selects by name with `-m` only. `-d`/`--source-dir` and
+- `sf data360 delete` selects by name with `-m` only. `--source-dir` and
   `--transform-target-id` are removed from the command. `--confirm-delete` has
   `dependsOn: ['changed-since']` (oclif refuses it beside `-m`) and is required only for a
   `--changed-since` real run (preview without it). `-m` real runs pass `confirmDelete: true` /
@@ -1504,7 +1504,7 @@ each in P2` (test/crud-delete-pipeline.test.mjs).
   families `unchanged` without executor call, transform 0 matches `unchanged` and 2+
   refused (`-m` and Git), relationship colon selector (deletes by name, case-insensitive,
   0 unchanged, 2+ refused, wrong source DMO refused, five malformed forms refused), parser
-  refuses `-d`/`--source-dir`/`--transform-target-id` and `-m … --confirm-delete`,
+  refuses `--source-dir`/`--transform-target-id` and `-m … --confirm-delete`,
   `--changed-since` still needs `--confirm-delete`. Removed as obsolete (file-input
   behaviour): CI pair byte drift ×2, CI JSON-companion selection, IR file byte drift ×3,
   transform file byte drift (replaced by org-definition drift), the multi-phase
@@ -1786,7 +1786,7 @@ Chunk B2 of the CRUD pipeline plan. Version stays 0.1.0; nothing committed.
   before any write: a stream whose landing DLO matches a selected DLO file is
   preflighted and refused only when the outcome is `create`; an existing stream's DLO
   file deploys in P1 (the API decides). A transform is named by exactly one
-  `data-transform:` member, or by its own file path in `--source-dir`. `--wait-timeout` needs ≥ 1 graph
+  `data-transform:` member, or by its own file path in `--source-dir`. `--wait` needs ≥ 1 graph
   in the selection (explicit or Git; the early `--changed-since` refusal is gone) and
   applies to each graph. `nativeRoute` is also set when a transform is selected (DLOs
   settle before the transform). The P3 local admission now runs whenever a P0/P1/P2 stage
@@ -1800,15 +1800,15 @@ Chunk B2 of the CRUD pipeline plan. Version stays 0.1.0; nothing committed.
   links); new `DATA_STREAM_DLO_COLLISION` (page, index). `NATIVE_GRAPH_SELECTION_UNSUPPORTED`
   stays for retrieve only (one `data-graph:<Name>` per retrieve); deploy no longer emits
   it; hint/page rewritten. Hints/pages of `INVALID_TRANSFORM_SELECTION` and
-  `INVALID_WAIT_TIMEOUT_SCOPE` describe the new rules. Kept narrow refusal: a transform in
+  `INVALID_WAIT_SCOPE` describe the new rules. Kept narrow refusal: a transform in
   a `--changed-since` range, because `--transform-operation` is not accepted with it.
 - Tests: new `test/crud-pipeline.test.mjs` (6): phase planning + helpers; full mixed run
-  stream → mapping → transform → IR (PUBLISHED) → graph with `--wait-timeout`; failed
+  stream → mapping → transform → IR (PUBLISHED) → graph with `--wait`; failed
   stream / blocked transform stop later stages; preview planned parents (mapping and
   transform on a new landing DLO, graph on a new IR output) and compared parents when they
   exist; M2: new stream + DLO file refused before any write (execute and preview),
   existing stream + its DLO file deploys; transform member beside `--source-dir` files
-  accepted; transform selection and wait-timeout refusals.
+  accepted; transform selection and `--wait` refusals.
   Updated obsolete refusal tests in IR, CI, stream and graph suites. Full suite 2816
   (2814 pass, 2 skipped).
 - Live (`isolated-source`, org 00Daj000010xkZNEAY verified, zero writes): scratch Git
@@ -1830,7 +1830,7 @@ Handover for C (IR + graph live):
   planned when the IR is a create.
 - Resume point: live run of the approved IR (`Individual_<4hex>`, label "CliIR probe
   <hex>") + graph (`CliGraphCP_<hex>`) on its unified DMO in one deploy with
-  `--allow-processing` (and `--wait-timeout` if needed); then record evidence. The graph
+  `--allow-processing` (and `--wait` if needed); then record evidence. The graph
   stage resolves the org via `resolveTargetOrg` once per stage and reuses one graph
   context for all graphs.
 - Constraints: phases sequential; preview runs every stage; no new refusals for mixes;
@@ -1905,7 +1905,7 @@ Handover for B2 (P0 streams, P2 transforms, P4 graphs):
 - P4 graph waits for P3: use `identityResolutionEdges` (already covers graphs) so a graph
   needing a selected IR is reported planned in preview (IR create) and runs after the IR
   stage. Remaining from the plan: stream DLO collision with a P1 DLO (M2), transform DLO
-  bindings planned in preview, `--wait-timeout` / transform flags scope in mixed runs.
+  bindings planned in preview, `--wait` / transform flags scope in mixed runs.
 - Constraints: phases run sequentially and execution stops on the first non-success;
   preview runs every stage (`continueAfterBlocked`) and returns the first non-success;
   P3 local checks (version, space, IR/CI/Segment shape, dependency order) run before any
@@ -2274,7 +2274,7 @@ Version stays 0.1.0; nothing pushed.
 - Tests in `test/native-data-graph-crd.test.mjs`: recorded creating echo, failed-check
   values (request/response/settlement), deploy item diagnostic, delete waiting through
   lingering metadata, delete budget, delete that leaves the graph ready. Three delete
-  deadline tests now tick 900 s. Also: a create POST still open at `--wait-timeout`
+  deadline tests now tick 900 s. Also: a create POST still open at `--wait`
   (`deadline`), a delete whose item reads `deleting` past 12 reads, and the empty-name drop
   applying only to non-ready reads. Review: two rounds, zero must-fix.
 
@@ -2379,9 +2379,9 @@ Version stays 0.1.0; nothing pushed.
   Individual graph, while the API itself supports unified roots and updates (widening
   the native path is a separate package). The create settlement now treats a missing
   metadata entry or an echo without generated names as still building, waits up to
-  `--wait-timeout` with progress on stderr, and stops at once on a failed or deleting
+  `--wait` with progress on stderr, and stops at once on a failed or deleting
   state; it never re-POSTs. This does not fix the create failure itself (see below).
-- Retrieve resolves a relative `-d`/`--output-dir` against the current directory for
+- Retrieve resolves a relative `--output-dir` against the current directory for
   every family.
 
 Live, `isolated-source`. Raw probe at API 68: CI draft create 56 s, publish 55 s,
@@ -2391,7 +2391,7 @@ passed on retry. Native 68 graph PUT update works (label/description 45 s; addin
 field and a related object 288 s); raw API 68 also creates, updates and deletes
 unified-root graphs. After the change, all at `auto`: retrieve of two existing run CIs
 exit 0; a fixture CI created, published, deployed unchanged three times and deleted,
-all exit 0; graph retrieve with a relative `-d` exit 0.
+all exit 0; graph retrieve with a relative `--output-dir` exit 0.
 
 Graph create settlement live result: still failing. Two live creates (CliGraphP9_8c71,
 CliGraphP10_8c71) exited 1 `failed`/`unknown` 46-48 s after start, within about one
@@ -4621,7 +4621,7 @@ its SOQL recipe supplied no executable identity endpoint, so read-only SObject
 Organization query plus independent CLI Organization query/core alias binding
 verified SOURCE. Exact ownership ledger IDs and ACTIVE desired labels checked.
 One actual public `node <repo>/bin/run.js data360 deploy -o <sourceAlias>
---api-version 65.0 -d <retainedCompanion> --allow-processing --json` returned
+--api-version 65.0 --source-dir <retainedCompanion> --allow-processing --json` returned
 exit0/status success, unchanged/not-attempted, preflight unchanged/present,
 requiredEffects[], diagnostics[]. No pair edit/new update/create/delete/refresh,
 activation, cleanup or target request. Original unknown update was never replayed.
@@ -4745,7 +4745,7 @@ matched the expected SOURCE alias before mutation. Target was untouched.
 
 - Exact retrieve: exit 0, portable schemaVersion 1 identity-resolution artifact.
 - Edited only Individual `LastUpdated` -> `MostFrequent` before effect checks.
-- Deploy `-d <portable> --api-version auto --preview --json`: exit 0, `update`,
+- Deploy `--source-dir <portable> --api-version auto --preview --json`: exit 0, `update`,
   publication/generated-output-provisioning effects, 56 read dispatches, zero writes/jobs.
 - Deploy without `--allow-processing`: exit 1, blocked acknowledgement diagnostic,
   `not-attempted`, 56 read dispatches, zero writes/jobs.
@@ -4759,8 +4759,8 @@ matched the expected SOURCE alias before mutation. Target was untouched.
   instrumentation proved 200 reads (16 facade, 100 native GET, 84 Metadata
   readMetadata), zero mutation/job dispatches, not merely an unchanged label.
 
-Retrieve used `-m identity-resolution:<owned-ir> -d <portable>`; deploy used only
-`-d <portable>` because deploy source-dir and metadata selectors are mutually
+Retrieve used `-m identity-resolution:<owned-ir> --output-dir <portable>`; deploy used only
+`--source-dir <portable>` because deploy source-dir and metadata selectors are mutually
 exclusive. Two harness argument mistakes failed locally `INVALID_SELECTION`
 with no requests; not plugin bugs. No production code or tests changed.
 
@@ -7124,7 +7124,7 @@ before Metadata), with two successful standard Metadata retrieves. No list sweep
   public retrieve blocked UNKNOWN_SEGMENT_CONFIGURATION, demonstrating the exact
   missing classification fixed above.
 - Actual `node bin/run.js data360 retrieve -o mcnext-sdo -m segment:A1Probe5952383596d846c6
--d <owned OS-temp output> --json` succeeded exit0/status success, one retrieved
+--output-dir <owned OS-temp output> --json` succeeded exit0/status success, one retrieved
   XML/JSON pair, errors=[]; public command with installed Metadata CLI 2.151.7.
   Both independently acquired representations passed exact pair correlation.
 - Repeated same actual public command returned exit0/status success/unchanged for
@@ -8305,7 +8305,7 @@ not silently skipped. Unprovable inventory fails before any object writes.
 CLI `-o` is parsed as a string and then resolved with core `Org.create` only after
 selection/scope validation; core still owns aliases/configured target-org/auth.
 The existing per-object `retrieveDmo` projector and `writeDmoDocument` remain the
-only acquisition/publication path. `-d` project root, `-x` differing-byte permission,
+only acquisition/publication path. `--output-dir` project root, `-x` differing-byte permission,
 canonical authored-only files, plugin-owned version provenance and standard outer
 CLI envelope are unchanged. Envelope selection is expanded exact names; diagnostics
 add optional per-object identity, static safe code/message. All selected objects
@@ -8647,7 +8647,7 @@ verification under the parent's per-finished-slice approval.
 ## Public CLI and exact result shape
 
 `sf data360 deploy --preview` now requires exactly one repeatable/non-greedy source
-mode: `-d/--source-dir` explicit authored JSON file OR directory, repeated as needed;
+mode: `--source-dir` explicit authored JSON file OR directory, repeated as needed;
 OR `-m/--metadata dmo:ExactName__dlm`, repeated, resolving project artifacts from
 captured cwd. Existing resolver owns all strict authored-only JSON, no-link bounded
 path, duplicate/missing/malformed selection semantics. No bare type, implicit all,
@@ -8767,7 +8767,7 @@ Changed folder: sf-plugin-data360 yes, current 0.1.0, new version not assigned
 input-resolver-only fallback authorized by the parent to avoid oversized command +
 filesystem + envelope work. Next worker starts in src/commands/data360/deploy.ts,
 reads retrieve.ts envelope/core flags and preflight-dmo-deploy.ts. Add repeatable,
-non-greedy `-d/--source-dir` string (file OR directory, NOT Flags.directory) OR
+non-greedy `--source-dir` string (file OR directory, NOT Flags.directory) OR
 `-m/--metadata`; call resolver with captured cwd. No implicit selection/bare types.
 Add --preview, core optionalOrg/API 65.0/default scope; preflight every validated
 item with preflightDmoDeploy(document, connection, apiVersion, dataSpace). Read-only
@@ -9348,7 +9348,7 @@ output after completion; no self-referential commit hash is embedded here.
 ## Next command slice (not implemented here)
 
 Wire `sf data360 retrieve -m dmo:Name__dlm` only, with actual CMS definitions:
-repeatable/non-greedy `-m, --metadata`; `-d, --output-dir` directory exists:false,
+repeatable/non-greedy `-m, --metadata`; `--output-dir` directory exists:false,
 project-root default cwd; `-x, --overwrite` boolean default false. Add core default
 org/`-o` override, explicit API 65.0 and default data space. Read actual CMS base
 flag/envelope behavior first. Authenticate only after bounded selector validation;

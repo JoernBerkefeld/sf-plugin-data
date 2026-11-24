@@ -12,7 +12,7 @@
 
 This only matters when your org has more than one data space.
 
-With `--allow-cross-dataspace` (`-c`), deploy translates files of another data space into the one of the run. It renames by fixed rules only:
+With `--allow-cross-dataspace`, deploy translates files of another data space into the one of the run. It renames by fixed rules only:
 
 - Custom DMOs and segments get, lose or swap the data space prefix (`Order__dlm` in `default` is `ds2_Order__dlm` in `dataspace2`).
 - A standard DMO and its copy: `ssot__Individual__dlm` is `ds2_Individual__dlm`, and its fields lose `ssot__` (`ssot__FirstName__c` is `FirstName__c`). Key qualifier fields (`KQ_`) keep their names.
@@ -48,7 +48,7 @@ A wrong name would create a component that does not belong to anything, or point
 1. Read the `Cannot place` lines: each names the file, the place in the file (for SQL the `.sql` file with line and column) and the reason.
 2. For a custom DMO deployed into `default`, select its DMO file too: a retrieved custom DMO file shows creationType `Custom` on its fields, and that is enough.
 3. Otherwise correct the file, leave it out of this deploy, or deploy it in its own data space.
-4. Run `sf data360 deploy --preview -c` again until nothing is left, then deploy.
+4. Run `sf data360 deploy --preview --allow-cross-dataspace` again until nothing is left, then deploy.
 
 ## Example output
 

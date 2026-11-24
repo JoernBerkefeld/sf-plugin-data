@@ -465,7 +465,7 @@ test('only DMO files of the translated file own data space are custom DMO eviden
 });
 
 test('without the flag a file of another data space is refused and the message names the flag', async () => {
-  const sentence = /To deploy it into dataspace2 instead, add --allow-cross-dataspace \(-c\)\./u;
+  const sentence = /To deploy it into dataspace2 instead, add --allow-cross-dataspace\./u;
   const never = new Proxy({}, { get: () => failRead });
   await assert.rejects(preflightNativeDmo(dmoFile(), never, SPACE), {
     code: 'DMO_DATASPACE_MISMATCH',
@@ -686,7 +686,7 @@ const withSpaces = async (body) => {
   }
 };
 
-test('--preview -c lists every rewrite and planned copy file and writes nothing', async () =>
+test('--preview --allow-cross-dataspace lists every rewrite and planned copy file and writes nothing', async () =>
   withSpaces(async (reads) => {
     const { result, calls, logs, cwd } = await deploy([dmoFile(), segmentFile()], {
       preview: true,
@@ -731,7 +731,7 @@ test('--preview -c lists every rewrite and planned copy file and writes nothing'
     );
   }));
 
-test('deploy -c writes each copy file after its item deployed; originals never change', async () =>
+test('deploy --allow-cross-dataspace writes each copy file after its item deployed; originals never change', async () =>
   withSpaces(async () => {
     const { result, calls, cwd } = await deploy([dmoFile(), segmentFile()]);
     assert.equal(result.status, 'success', JSON.stringify(result.diagnostics));
@@ -945,7 +945,7 @@ test('a segment file of another data space without the flag names the flag', asy
   withSpaces(async () => {
     const { result } = await deploy([segmentFile()], { 'allow-cross-dataspace': false });
     assert.equal(result.diagnostics.errors[0].code, 'SEGMENT_DATASPACE_MISMATCH');
-    assert.match(result.diagnostics.errors[0].message, /add --allow-cross-dataspace \(-c\)/u);
+    assert.match(result.diagnostics.errors[0].message, /add --allow-cross-dataspace\./u);
   }));
 
 test('--changed-since -c: a DLO, DMO and segment of another data space deploy on the batch route', async () =>
@@ -1099,7 +1099,7 @@ const dbtSegmentFile = () => ({
   },
 });
 
-test('--preview -c lists the SQL rewrites of an insight and a DBT segment with file and line', async () =>
+test('--preview --allow-cross-dataspace lists the SQL rewrites of an insight and a DBT segment with file and line', async () =>
   withSpaces(async () => {
     const { result, calls, logs, cwd } = await deploy(
       [
@@ -1134,7 +1134,7 @@ test('--preview -c lists the SQL rewrites of an insight and a DBT segment with f
     assert.equal(Object.keys(await tree(cwd)).length, 4, 'preview writes nothing');
   }));
 
-test('deploy -c sends the translated insight SQL and writes its JSON and SQL copy files', async () =>
+test('deploy --allow-cross-dataspace sends the translated insight SQL and writes its JSON and SQL copy files', async () =>
   withSpaces(async () => {
     const { result, calls, cwd } = await deploy([
       insightFile('SELECT COUNT(i.ssot__Id__c) AS cnt__c FROM ssot__Individual__dlm i'),
@@ -1187,7 +1187,7 @@ test('an insight file of another data space without the flag names the flag', as
       'allow-cross-dataspace': false,
     });
     assert.equal(result.diagnostics.errors[0].code, 'CI_DATASPACE_MISMATCH');
-    assert.match(result.diagnostics.errors[0].message, /add --allow-cross-dataspace \(-c\)/u);
+    assert.match(result.diagnostics.errors[0].message, /add --allow-cross-dataspace\./u);
   }));
 
 // SQL Salesforce accepts but fails a few minutes after publish (live API 68, DB entry
@@ -1200,7 +1200,7 @@ const sqlFile = path.join(
 const silent = (result) =>
   result.diagnostics.warnings.filter((line) => line.startsWith('CI_SQL_FAILS_SILENTLY: '));
 
-test('--preview -c warns about classic insight SQL that fails silently, at the authored file position', async () =>
+test('--preview --allow-cross-dataspace warns about classic insight SQL that fails silently, at the authored file position', async () =>
   withSpaces(async () => {
     const { result, calls, logs } = await deploy(
       [
@@ -1237,7 +1237,7 @@ const own = (expression, queryDialect = 'ANSI_SQL') => {
   return file;
 };
 
-test('deploy without -c warns and still sends the insight; accepted forms and DC_SQL aliases do not warn', async () =>
+test('deploy without --allow-cross-dataspace warns and still sends the insight; accepted forms and DC_SQL aliases do not warn', async () =>
   withSpaces(async () => {
     const quoted = await deploy(
       [own('SELECT COUNT(ds2_Individual__dlm.Id__c) AS "cnt__c" FROM ds2_Individual__dlm')],

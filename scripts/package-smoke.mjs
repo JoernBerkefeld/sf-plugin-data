@@ -117,7 +117,7 @@ for (const command of ['data360', 'datacloud', 'd360', 'dc'].flatMap((topic) => 
     assert.match(result.stdout, /ALIASES/u);
     for (const flag of [
       '--metadata',
-      ...(command[1] === 'publish' ? ['--source-dir', '--wait-timeout'] : []),
+      ...(command[1] === 'publish' ? ['--source-dir', '--wait'] : []),
       ...(command[1] === 'delete' ? ['--confirm-delete'] : []),
       '--target-org',
       '--api-version',
@@ -187,10 +187,19 @@ for (const operation of ['retrieve', 'deploy', 'delete', 'publish']) {
 assert.equal(implementations.size, 4);
 for (const [arguments_, code] of [
   [[], 'INVALID_SELECTION'],
-  [['-d', 'Synthetic__cio.calculatedInsight-meta.json'], 'UNSAFE_SOURCE'],
-  [['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '65.0'], 'INVALID_SCOPE'],
+  [['--source-dir', 'Synthetic__cio.calculatedInsight-meta.json'], 'UNSAFE_SOURCE'],
   [
-    ['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '68.0', '--preview'],
+    ['--source-dir', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '65.0'],
+    'INVALID_SCOPE',
+  ],
+  [
+    [
+      '--source-dir',
+      'Synthetic__cio.calculatedInsight-meta.json',
+      '--api-version',
+      '68.0',
+      '--preview',
+    ],
     'UNSAFE_SOURCE',
   ],
 ]) {

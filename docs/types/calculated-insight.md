@@ -8,15 +8,15 @@ Calculated insights use API 68 only: `--api-version auto` or `68.0`; any other v
 
 - `sf data360 retrieve -m calculated-insight:<Name>__cio` reads one insight; bare `-m calculated-insight` reads every insight the API lists in the run's data space.
 - `sf data360 deploy -m calculated-insight:<Name>__cio` creates or updates the insight; add `--draft` to keep it a draft.
-- `sf data360 publish -d <file>` activates a draft.
+- `sf data360 publish --source-dir <file>` activates a draft.
 - `sf data360 delete -m calculated-insight:<Name>__cio` deletes the insight.
 
 ```sh
 sf data360 retrieve -o source -m calculated-insight:ExampleInsight__cio --json
 sf data360 deploy -o target -m calculated-insight:ExampleInsight__cio --draft --preview --json
 sf data360 deploy -o target -m calculated-insight:ExampleInsight__cio --draft --json
-sf data360 publish -o target -d data360/calculatedInsights/ExampleInsight__cio.calculatedInsight-meta.json --preview --json
-sf data360 publish -o target -d data360/calculatedInsights/ExampleInsight__cio.calculatedInsight-meta.json --json
+sf data360 publish -o target --source-dir data360/calculatedInsights/ExampleInsight__cio.calculatedInsight-meta.json --preview --json
+sf data360 publish -o target --source-dir data360/calculatedInsights/ExampleInsight__cio.calculatedInsight-meta.json --json
 sf data360 delete -o target -m calculated-insight:ExampleInsight__cio --preview --json
 sf data360 delete -o target -m calculated-insight:ExampleInsight__cio --json
 ```
@@ -30,7 +30,7 @@ Each insight is two files. Retrieve writes any insight the API returns, whatever
 
 A repeated retrieve of an unchanged insight is `unchanged`; differing files are replaced. An insight the org does not have is `CI_NOT_FOUND`.
 
-Deploy, publish and delete read both files: `-m calculated-insight:<Name>__cio`, or `-d` with either file, selects the insight, and the JSON is joined with its SQL. A missing SQL or JSON file, SQL kept in the JSON, or another `<Name>.calculatedInsight-meta.*` file beside them is refused with `INVALID_SOURCE`.
+Deploy, publish and delete read both files: `-m calculated-insight:<Name>__cio`, or `--source-dir` with either file, selects the insight, and the JSON is joined with its SQL. A missing SQL or JSON file, SQL kept in the JSON, or another `<Name>.calculatedInsight-meta.*` file beside them is refused with `INVALID_SOURCE`.
 
 ### SQL dialects and builders
 
@@ -84,7 +84,7 @@ Salesforce's rules behind this table: it does not accept `dataSpace` or `isFromP
 
 - `--draft` creates a draft (`draft: true`) and sends `draft: true` on an update.
 - Salesforce activates a draft on a PATCH without `draft`, so an update of a DRAFT insight always sends `draft: true`. Deploy never publishes.
-- `sf data360 publish` activates the insight: an ACTIVE insight that holds the file is `unchanged`; otherwise one PATCH sends the file with `draft: false` and the insight is read until it is ACTIVE and holds the file. With `--async` the insight is not read after Salesforce accepted the PATCH: the result is `publishing` (mutation `acknowledged-processing`) with status `accepted` and exit code 0 (`CI_PUBLISH_STARTED`); run publish with `--preview` later (`unchanged` means ACTIVE). `--async` does not combine with `--wait-timeout`. An insight the org does not have is `CI_NOT_FOUND`; create it with deploy first.
+- `sf data360 publish` activates the insight: an ACTIVE insight that holds the file is `unchanged`; otherwise one PATCH sends the file with `draft: false` and the insight is read until it is ACTIVE and holds the file. With `--async` the insight is not read after Salesforce accepted the PATCH: the result is `publishing` (mutation `acknowledged-processing`) with status `accepted` and exit code 0 (`CI_PUBLISH_STARTED`); run publish with `--preview` later (`unchanged` means ACTIVE). `--async` does not combine with `--wait`. An insight the org does not have is `CI_NOT_FOUND`; create it with deploy first.
 - ACTIVE means Salesforce accepted the definition, not that a calculation has run.
 
 ## Delete
@@ -103,7 +103,7 @@ An insight belongs to one data space. Its JSON file names it as a string in `c__
 - Retrieve lists the insights with `?dataspace=` and checks that each GET names the run's data space. An insight of another data space is a failed item that names both data spaces (`CI_IDENTITY_CHANGED`); the other selected insights still run.
 - Deploy refuses a file of another data space (`CI_DATASPACE_MISMATCH`; the message names `--allow-cross-dataspace`) and sends `c__dataSpace` as `dataSpaceName` in every create and update. Publish (`--dataspace`) and delete work in the run's data space.
 - Names are what Salesforce stores (insight names are unique in the org), and the SQL is sent as written. SQL names carry no data space, so the dependencies an insight's SQL names are taken from the insight's own data space.
-- Only if you have more than one data space: `--allow-cross-dataspace` (`-c`) deploys an insight file of another data space (classic and `DC_SQL` alike).
+- Only if you have more than one data space: `--allow-cross-dataspace` deploys an insight file of another data space (classic and `DC_SQL` alike).
   - Its name gets, loses or swaps the prefix (`Spend__cio` to `ds2_Spend__cio`), and so does a `sourceCiDevName`.
   - Its SQL is renamed table by table and column by column: `ssot__Individual__dlm` to `ds2_Individual__dlm`, `ssot__FirstName__c` to `FirstName__c`, also through aliases, `WITH` blocks and subqueries. Texts, comments and your own names (aliases, `WITH` blocks, output columns) stay.
   - Every name outside texts and comments must be placed. An insight left in the `default` spelling is accepted in another data space, but about three minutes after activation it ends in `ERROR` (`CREATE_FAILED`) without a message. So a name the rewrite cannot place exactly refuses the deploy before any write (`CROSS_DATASPACE_UNRESOLVED`), with the SQL file, line and column.

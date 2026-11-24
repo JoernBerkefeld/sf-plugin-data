@@ -659,7 +659,7 @@ for (const flags of [
   { 'api-version': '69.0' },
   { 'api-version': 'latest' },
   { draft: true },
-  { 'wait-timeout': 1 },
+  { wait: 1 },
 ])
   test(`public Transform rejects before auth ${JSON.stringify(flags)}`, async () => {
     const { result, h } = await deployTransform(flags);

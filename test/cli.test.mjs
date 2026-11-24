@@ -586,7 +586,7 @@ for (const command of topics.flatMap((topic) => [
         '--metadata',
         '--source-dir',
         '--changed-since',
-        '--wait-timeout',
+        '--wait',
         '--preview',
         '--target-org',
         '--api-version',
@@ -607,7 +607,7 @@ for (const command of topics.flatMap((topic) => [
       for (const flag of [
         '--source-dir',
         '--metadata',
-        '--wait-timeout',
+        '--wait',
         '--async',
         '--preview',
         '--api-version',
@@ -691,15 +691,21 @@ test('retrieve has no overwrite flag: --overwrite and -x are flag errors', () =>
   }
 });
 
-test('deploy wait-timeout parser requires positive integer seconds and help describes native Graph scope', async () => {
+test('deploy --wait parser requires positive whole minutes and help describes native Graph scope', async () => {
   const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
-  assert.equal(Deploy.flags['wait-timeout'].min, 1);
-  assert.match(Deploy.description, /default 1800.*at least 20 seconds with stderr progress/u);
+  assert.equal(Deploy.flags.wait.min, 1);
+  assert.equal(Deploy.flags.wait.char, 'w');
+  assert.equal(Deploy.flags['wait-timeout'], undefined);
+  assert.match(Deploy.flags.wait.summary, /whole minutes.*default 30/u);
+  assert.match(
+    Deploy.description,
+    /whole minutes \(default 30\).*at least 20 seconds with stderr progress/u,
+  );
   assert.equal(Deploy.description.includes('native UPDATE is deferred'), false);
   for (const value of ['0', '-1', '1.5', 'Infinity']) {
     const result = spawnSync(
       process.execPath,
-      ['bin/run.js', 'data360', 'deploy', '--wait-timeout', value, '--json'],
+      ['bin/run.js', 'data360', 'deploy', '--wait', value, '--json'],
       {
         encoding: 'utf8',
         env: environment,
@@ -805,8 +811,8 @@ test('deploy parser admits repeated non-greedy explicit flags but blocks invalid
   for (const arguments_ of [
     [],
     ['-m', 'dmo'],
-    ['-m', 'dmo:A__dlm', '-m', 'dmo:B__dlm', '-d', 'x.json'],
-    ['-d', 'missing-one.json', '-d', 'missing-two.json'],
+    ['-m', 'dmo:A__dlm', '-m', 'dmo:B__dlm', '--source-dir', 'x.json'],
+    ['--source-dir', 'missing-one.json', '--source-dir', 'missing-two.json'],
     ['-m', 'dmo:MissingOne__dlm', '-m', 'dmo:MissingTwo__dlm'],
   ]) {
     const result = spawnSync(
@@ -902,14 +908,14 @@ test('CI delete parser rejects unqualified scope before authentication', () => {
 test('publish parser blocks a missing source and unqualified scope before authentication', () => {
   for (const [arguments_, code] of [
     [[], 'INVALID_SELECTION'],
-    [['-d', 'Synthetic__cio.calculatedInsight-meta.json'], 'UNSAFE_SOURCE'],
+    [['--source-dir', 'Synthetic__cio.calculatedInsight-meta.json'], 'UNSAFE_SOURCE'],
     [
-      ['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '65.0'],
+      ['--source-dir', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '65.0'],
       'INVALID_SCOPE',
     ],
     [
       [
-        '-d',
+        '--source-dir',
         'Synthetic__cio.calculatedInsight-meta.json',
         '--api-version',
         '68.0',
@@ -922,7 +928,13 @@ test('publish parser blocks a missing source and unqualified scope before authen
     // A segment is published in the run's data space at API 68 only.
     [['-m', 'segment:Synthetic', '--api-version', '65.0'], 'INVALID_SCOPE'],
     [
-      ['-d', 'Synthetic__cio.calculatedInsight-meta.json', '--api-version', '68.0', '--preview'],
+      [
+        '--source-dir',
+        'Synthetic__cio.calculatedInsight-meta.json',
+        '--api-version',
+        '68.0',
+        '--preview',
+      ],
       'UNSAFE_SOURCE',
     ],
   ]) {
@@ -940,7 +952,7 @@ test('publish parser blocks a missing source and unqualified scope before authen
   }
 });
 
-test('publish parser refuses --async with --wait-timeout before authentication', () => {
+test('publish parser refuses --async with --wait before authentication', () => {
   const result = spawnSync(
     process.execPath,
     [
@@ -950,7 +962,7 @@ test('publish parser refuses --async with --wait-timeout before authentication',
       '-m',
       'segment:Synthetic',
       '--async',
-      '--wait-timeout',
+      '--wait',
       '60',
       '--json',
     ],
@@ -958,6 +970,43 @@ test('publish parser refuses --async with --wait-timeout before authentication',
   );
   assert.notEqual(result.status, 0);
   assert.match(result.stdout + result.stderr, /cannot also be provided when using --async/u);
+});
+
+test('retrieve, deploy and publish refuse the removed -d and -c short flags at parse time', async () => {
+  const { default: Retrieve } = await import('../lib/commands/data360/retrieve.js');
+  const { default: Deploy } = await import('../lib/commands/data360/deploy.js');
+  const { default: Publish } = await import('../lib/commands/data360/publish.js');
+  assert.equal(Retrieve.flags['output-dir'].char, undefined);
+  assert.equal(Deploy.flags['source-dir'].char, undefined);
+  assert.equal(Deploy.flags['allow-cross-dataspace'].char, undefined);
+  assert.equal(Publish.flags['source-dir'].char, undefined);
+  for (const arguments_ of [
+    ['retrieve', '-m', 'dmo:Synthetic__dlm', '-d', 'out'],
+    ['deploy', '-d', 'x.json', '--preview'],
+    ['deploy', '-m', 'dmo:Synthetic__dlm', '-c', '--preview'],
+    ['publish', '-d', 'Synthetic__cio.calculatedInsight-meta.json', '--preview'],
+  ]) {
+    const result = spawnSync(process.execPath, ['bin/run.js', 'data360', ...arguments_, '--json'], {
+      encoding: 'utf8',
+      env: environment,
+    });
+    assert.equal(result.status, 2, `${arguments_.join(' ')}: ${result.stderr}`);
+    assert.equal(Object.hasOwn(JSON.parse(result.stdout), 'result'), false);
+  }
+});
+
+test('--wait-timeout is no longer a flag of deploy or publish', () => {
+  for (const arguments_ of [
+    ['deploy', '-m', 'data-graph:Synthetic', '--wait-timeout', '60', '--preview'],
+    ['publish', '-m', 'segment:Synthetic', '--wait-timeout', '60', '--preview'],
+  ]) {
+    const result = spawnSync(process.execPath, ['bin/run.js', 'data360', ...arguments_, '--json'], {
+      encoding: 'utf8',
+      env: environment,
+    });
+    assert.equal(result.status, 2, `${arguments_.join(' ')}: ${result.stderr}`);
+    assert.match(result.stdout + result.stderr, /wait-timeout/u);
+  }
 });
 
 test('Git selector flag declares parser exclusivity against both existing modes', async () => {
@@ -1138,7 +1187,7 @@ const statusScript = `
     processing: () => SyntheticPublish.run(['-m', 'segment:Synthetic', '--json'], process.cwd()),
     partial: () =>
       SyntheticRetrieve.run(
-        ['-m', 'data-transform:Alpha', '-m', 'data-transform:Zulu', '-d', output, '--json'],
+        ['-m', 'data-transform:Alpha', '-m', 'data-transform:Zulu', '--output-dir', output, '--json'],
         process.cwd(),
       ),
     blocked: () => SyntheticRetrieve.run(['-m', 'invalid', '--json'], process.cwd()),

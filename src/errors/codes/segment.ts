@@ -67,7 +67,7 @@ export const hints: Readonly<Record<string, string>> = {
   SEGMENT_PUBLISH_STARTED:
     'With --async the publish was started and Salesforce accepted it; the command did not wait for the result. Read the segment later for its publish status; nothing was resent.',
   SEGMENT_PUBLISH_STILL_PROCESSING:
-    'Salesforce accepted the publish and is still processing it when --wait-timeout ran out. It did not fail and was not resent; read the segment later for the result.',
+    'Salesforce accepted the publish and is still processing it when --wait ran out. It did not fail and was not resent; read the segment later for the result.',
   SEGMENT_PUBLISH_UNCONFIRMED:
     'The publish was sent, but its answer or the status after it could not be read, so the publish may be running. Read the segment before publishing again; nothing was resent.',
   SEGMENT_READBACK_MISMATCH:
