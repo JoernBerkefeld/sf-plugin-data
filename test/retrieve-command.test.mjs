@@ -15,7 +15,6 @@ import { MappingDefinitionError } from '../lib/artifacts/write-mapping-definitio
 
 test('human retrieval groups successful names and counts receipts for named, type and bare modes', async () => {
   for (const selection of [
-    undefined,
     ['dlo', 'dmo', 'mapping'],
     ['dlo:Alpha__dll', 'dlo:Zulu__dll', 'dmo:Sample__dlm', 'mapping:Map'],
   ]) {
@@ -617,7 +616,6 @@ test('invalid selectors refuse before authentication, acquisition or filesystem 
 
 test('real selector expansion writes each exact/type/all member once in sorted order', async () => {
   for (const metadata of [
-    undefined,
     ['dmo'],
     ['dmo', 'dmo:Zeta__dlm', 'dmo:Alpha__dlm', 'dmo:Zeta__dlm'],
     ['dmo', 'dmo:Alpha__dlm'],
@@ -665,8 +663,12 @@ test('human output includes per-object diagnostic identity and code', async () =
   assert.match(lines.join('\n'), /dmo:Sample__dlm: UNSUPPORTED_DMO_TARGET/u);
 });
 
-test('type, omitted and repeated selectors reach selection and retain per-object partial outcomes', async () => {
-  for (const metadata of [undefined, [], ['dmo'], ['dmo', 'dmo:Sample__dlm', 'dmo:Sample__dlm']]) {
+test('type and repeated selectors reach selection and retain per-object partial outcomes', async () => {
+  for (const metadata of [
+    ['dlo', 'dmo', 'mapping'],
+    ['dmo'],
+    ['dmo', 'dmo:Sample__dlm', 'dmo:Sample__dlm'],
+  ]) {
     const command = invocation({ metadata });
     command.listNativeNames = async (actualConnection, version, family, space) => {
       assert.equal(actualConnection, connection);
@@ -712,7 +714,7 @@ test('type, omitted and repeated selectors reach selection and retain per-object
 });
 
 test('empty inventory succeeds with no files; incomplete inventory blocks before writes', async () => {
-  const command = invocation({ metadata: [] });
+  const command = invocation({ metadata: ['dlo', 'dmo', 'mapping'] });
   command.acquireNativeDmo = () => assert.fail('must not acquire');
   command.writeNativeDmo = () => assert.fail('must not write');
   command.listNativeNames = async () => [];
@@ -875,4 +877,77 @@ test('writer refusal and ambiguous publication failure return nonzero without si
     assert.equal(exitCode, 1);
     assert.deepEqual(result.result.items, []);
   }
+});
+
+test('omitted -m requests every family bare; one failing family makes the run partial', async () => {
+  for (const failing of [undefined, 'data-graph']) {
+    const command = invocation({ metadata: undefined, 'api-version': 'auto' });
+    const requested = [];
+    const list = (family) => async () => {
+      requested.push(family);
+      if (family === failing) throw new Error('inventory unavailable');
+      return [];
+    };
+    command.listNativeNames = async (_connection, _version, family) => {
+      requested.push(family);
+      return family === 'dmo' ? ['Sample__dlm'] : [];
+    };
+    command.listNativeMappingNames = async () => {
+      requested.push('mapping');
+      return [];
+    };
+    command.acquireRelationships = async (dmo) => {
+      requested.push('relationship');
+      return [relationshipDocument(dmo, 'Rel')];
+    };
+    command.listSegmentNames = list('segment');
+    command.listCalculatedInsightNames = list('calculated-insight');
+    command.createCalculatedInsightClient = () => ({});
+    command.listIdentityResolutionNames = list('identity-resolution');
+    command.listDataStreamNames = list('data-stream');
+    command.createDataStreamClients = () => ({});
+    command.listDataTransformNames = list('data-transform');
+    command.createDataTransformClient = () => ({});
+    command.nativeGraphContext = async () => ({ orgId: 'synthetic-org' });
+    command.listDataGraphNames = list('data-graph');
+    const { result, exitCode } = await run(command);
+    assert.deepEqual(
+      [...new Set(requested)].toSorted(),
+      [
+        'calculated-insight',
+        'data-graph',
+        'data-stream',
+        'data-transform',
+        'dlo',
+        'dmo',
+        'identity-resolution',
+        'mapping',
+        'relationship',
+        'segment',
+      ],
+      JSON.stringify(result.diagnostics),
+    );
+    assert.deepEqual(
+      result.result.items.map((item) => `${item.family ?? 'dmo'}:${item.identity.apiName}`),
+      ['dmo:Sample__dlm', 'relationship:Sample_Rel'],
+    );
+    assert.equal(result.status, failing ? 'partial' : 'success', JSON.stringify(result));
+    assert.equal(exitCode, failing ? 68 : undefined);
+    if (failing)
+      assert.deepEqual(
+        result.diagnostics.errors.map((error) => error.family),
+        ['data-graph'],
+      );
+  }
+});
+
+test('omitted -m with an older pinned version is refused by the API68 families before auth', async () => {
+  const command = invocation({ metadata: undefined, 'api-version': '65.0' });
+  command.resolveOrg = () => assert.fail('a refused selection must not authenticate');
+  const { result, exitCode } = await run(command);
+  assert.equal(result.status, 'blocked');
+  assert.equal(exitCode, 1);
+  assert.equal(result.diagnostics.errors[0].code, 'INVALID_SCOPE');
+  assert.ok(result.diagnostics.errors[0].family);
+  assert.deepEqual(result.result.items, []);
 });

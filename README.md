@@ -161,7 +161,8 @@ are left out, and deploy keeps them. The exact layout of each file is on its typ
 
 - `-m <type>:<Name>` selects one component; repeat `-m` to select several, of any types.
 - For retrieve, a bare type (`-m dmo`) selects every component of that type the org lists.
-  Retrieve without `-m` selects every DLO, DMO and mapping.
+  Retrieve without `-m` selects every component of every type in the run's data space, as if
+  each type were named bare; `-m` narrows the run.
 - Deploy and delete always name their components, or take them from Git with
   `--changed-since`. Deploy also takes files and folders with `--source-dir` (`-d`).
 
@@ -573,6 +574,11 @@ a page under [docs/errors](docs/errors/README.md).
   data spaces with their prefixes and, when a name in `names` is an identity resolution output
   (or `names` is left out), its rulesets. A data space the org lacks fails with
   `UNKNOWN_DATASPACE`.
+- `runRetrieve(connection, { dataspace?, metadata?, outputDir?, overwrite?, apiVersion? })`: runs
+  `sf data360 retrieve` with those flags and returns the same envelope `--json` shows. It does
+  not throw for a refusal; the envelope's `status` and diagnostics say what happened, and
+  `exitCodeOf(envelope)` gives the exit code the command would use. The connection's API version
+  is restored afterwards.
 
 ## Local development
 

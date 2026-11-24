@@ -621,6 +621,7 @@ test('actual core mapping GET404 becomes typed absence and continues to later co
 const invocation = (overrides = {}) => {
   const command = Object.create(Retrieve.prototype);
   const flags = {
+    metadata: ['dlo', 'dmo', 'mapping'],
     'api-version': 'auto',
     'target-org': 'synthetic',
     dataspace: 'default',
@@ -672,8 +673,6 @@ const run = async (command) => {
 };
 
 for (const metadata of [
-  undefined,
-  [],
   ['dlo', 'dmo', 'mapping'],
   ['mapping:Map', 'mapping:Map', 'dlo:Source__dll', 'dmo:Target__dlm'],
 ])
@@ -689,8 +688,8 @@ for (const metadata of [
     assert.ok(result.result.items.every((item) => item.routes[0].transport === 'native'));
   });
 
-for (const metadata of [['dlo'], undefined])
-  test(`${metadata ? 'bare dlo' : 'omitted selectors'} retrieve every listed DLO; a failing one is its own diagnostic`, async () => {
+for (const metadata of [['dlo'], ['dlo', 'dmo', 'mapping']])
+  test(`${metadata.join(' ')} retrieve every listed DLO; a failing one is its own diagnostic`, async () => {
     const command = invocation({ metadata });
     const listed = ['Zeta_Home__dll', 'Account_Home__dll', 'Broken__dll', 'Probe__dll'];
     command.listNativeNames = async (_, version, family, scope) => {
@@ -721,10 +720,10 @@ for (const metadata of [['dlo'], undefined])
       result.result.selection.filter((value) => value.startsWith('dlo:')),
       listed.toSorted().map((name) => `dlo:${name}`),
     );
-    if (!metadata) assert.equal(result.result.items.length, 5);
+    if (metadata.length > 1) assert.equal(result.result.items.length, 5);
   });
 
-for (const metadata of [['dlo'], ['dlo:Rates_Home__dll'], undefined])
+for (const metadata of [['dlo'], ['dlo:Rates_Home__dll'], ['dlo', 'dmo', 'mapping']])
   test(`a DLO in two data spaces retrieves under default ${JSON.stringify(metadata)}`, async () => {
     // No --dataspace: the run reads in default, which binds one of the two memberships.
     const command = invocation({ metadata, dataspace: undefined });

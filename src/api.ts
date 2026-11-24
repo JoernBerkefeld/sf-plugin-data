@@ -10,3 +10,6 @@ export type { DataSpaceListing } from './services/list-data-spaces.js';
 export { CrossSpaceError } from './services/cross-dataspace-deploy.js';
 export type { CrossSpaceContext } from 'salesforce-data360-rules';
 export { exitCodeOf } from './exit-code.js';
+export { runRetrieve } from './services/run-retrieve.js';
+export type { RetrieveOptions } from './services/run-retrieve.js';
+export type { RetrieveEnvelope } from './commands/data360/retrieve.js';
