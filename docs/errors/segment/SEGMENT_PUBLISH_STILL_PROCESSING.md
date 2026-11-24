@@ -2,11 +2,11 @@
 
 > Salesforce accepted the publish and is still processing it when --wait-timeout ran out. It did not fail and was not resent; read the segment later for the result.
 
-|              |                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------ |
-| **Family**   | Segment                                                                              |
-| **Commands** | `sf data360 publish`                                                                 |
-| **Outcome**  | `processing` — outcome `publishing`, mutation `acknowledged-processing`; exit code 0 |
+|              |                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------- |
+| **Family**   | Segment                                                                               |
+| **Commands** | `sf data360 publish`                                                                  |
+| **Outcome**  | `processing` — outcome `publishing`, mutation `acknowledged-processing`; exit code 69 |
 
 ## What it means
 
@@ -14,7 +14,7 @@ Salesforce accepted the publish, and the segment was read every 30 seconds, but 
 
 ## Why the plugin reports it
 
-Running out of wait time says nothing about the publish itself. Reporting it as failed would be wrong, and publishing again would start a second job.
+Running out of wait time says nothing about the publish itself. Reporting it as failed would be wrong, and publishing again would start a second job. The status is `processing` and the exit code is 69, so a script can tell "not finished yet" apart from success (0) and failure (1).
 
 ## How to fix
 

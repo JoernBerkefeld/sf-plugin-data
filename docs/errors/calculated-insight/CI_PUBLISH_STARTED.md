@@ -2,11 +2,11 @@
 
 > With --async the publish was sent and Salesforce accepted it; the command did not wait until the calculated insight is ACTIVE. Run publish with --preview later: unchanged means it is ACTIVE.
 
-|              |                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------ |
-| **Family**   | Calculated insight                                                                   |
-| **Commands** | `sf data360 publish`                                                                 |
-| **Outcome**  | `processing` — outcome `publishing`, mutation `acknowledged-processing`; exit code 0 |
+|              |                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------- |
+| **Family**   | Calculated insight                                                                 |
+| **Commands** | `sf data360 publish`                                                               |
+| **Outcome**  | `accepted` — outcome `publishing`, mutation `acknowledged-processing`; exit code 0 |
 
 ## What it means
 
@@ -14,7 +14,7 @@
 
 ## Why the plugin reports it
 
-The result of the publish is not known yet. It is neither a success nor a failure, and the request is never resent.
+The result of the publish is not known yet. It is neither a success nor a failure, and the request is never resent. With `--async` you asked not to wait, so the status is `accepted` and the exit code is 0.
 
 ## How to fix
 
@@ -25,7 +25,7 @@ The result of the publish is not known yet. It is neither a success nor a failur
 ## Example output
 
 ```text
-Publish: processing.
+Publish: accepted.
 publishing: ExampleInsight__cio; mutation: acknowledged-processing.
 CI_PUBLISH_STARTED: Salesforce accepted the publish; it was sent without waiting until the insight is ACTIVE (--async). It was not resent; run publish with --preview later to check.
 Hint: With --async the publish was sent and Salesforce accepted it; the command did not wait until the calculated insight is ACTIVE. Run publish with --preview later: unchanged means it is ACTIVE.

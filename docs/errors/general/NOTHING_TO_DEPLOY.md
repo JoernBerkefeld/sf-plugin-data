@@ -2,11 +2,11 @@
 
 > Every selected file was a verbatim file and was skipped, so there was nothing to deploy and nothing was sent. Select files the plugin can represent, or retrieve the objects again.
 
-|              |                                  |
-| ------------ | -------------------------------- |
-| **Family**   | General                          |
-| **Commands** | `sf data360 deploy`              |
-| **Outcome**  | `blocked` — nothing was deployed |
+|              |                                                |
+| ------------ | ---------------------------------------------- |
+| **Family**   | General                                        |
+| **Commands** | `sf data360 deploy`                            |
+| **Outcome**  | `blocked` (exit code 1) — nothing was deployed |
 
 ## What it means
 
@@ -14,9 +14,9 @@ Retrieve writes an object the plugin cannot represent as a verbatim file: the ra
 
 ## Why the plugin stops
 
-A deploy that does nothing must not look like one that deployed something. Exit code 0 would tell a script or pipeline that the selection reached the org; this code and exit code 1 say that it did not. Nothing is read from or written to the org.
+A deploy that does nothing must not look like one that deployed something. Exit code 0 would tell a script or pipeline that the selection reached the org. This code and exit code 1 say that it did not. Nothing is read from or written to the org.
 
-A `--changed-since` range without any change is different: there is nothing to do by design, and the deploy succeeds.
+A `--changed-since` range without any change is different: there is nothing to do by design, so the deploy succeeds with exit code 0.
 
 ## How to fix
 

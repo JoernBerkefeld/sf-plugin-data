@@ -14,7 +14,7 @@ Retrieving one native component (DLO, DMO, mapping or relationship) stopped on a
 
 ## Why the plugin stops
 
-Each native component is retrieved on its own; one failure does not undo the others. The plugin writes nothing for the failed component, reports it and exits nonzero.
+Each native component is retrieved on its own; one failure does not undo the others. The plugin writes nothing for the failed component and reports it. The run ends as `partial` (exit code 68) when other files were written, otherwise with exit code 1.
 
 ## How to fix
 

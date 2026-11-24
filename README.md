@@ -236,8 +236,8 @@ accepted the deletion and is still finishing it. Pass `--keep-local-files` to ke
 
 - `--preview` removes nothing; it lists the files that would go.
 - Only regular files inside the project's `data360` folder are removed, one at a time.
-- If a file cannot be removed, the org result stays as it is and the command exits with an
-  error; remove that file by hand instead of repeating the delete.
+- If a file cannot be removed, the org result stays as it is and the run is `partial` (exit
+  code 68); remove that file by hand instead of repeating the delete.
 - A `--changed-since` delete removes no file: its files are already gone in Git.
 - A field delete (`--field`) removes no file; it refreshes the DMO and mapping files.
 
@@ -247,7 +247,7 @@ The JSON fields and every case are in [Delete](docs/types/delete.md#local-files-
 
 Human output prints one line per component, such as `created dmo Customer__dlm`. The suffix
 ` (server is still processing)` means Salesforce accepted the change and is still working on it.
-The exit code is 0 only when every component was created, updated, deleted or unchanged.
+The exit code is explained in [Exit codes](#exit-codes).
 
 Every problem carries a plugin error code, a short hint and a link to the code's page:
 
@@ -263,6 +263,31 @@ With `--json`, each diagnostic has the same `hint` and `docs` fields next to `co
 When Salesforce refuses a request, the message shows its HTTP status, error code and
 explanation. HTTP 429 and 503 mean rate limits or availability problems: wait and try again.
 Reads are retried a few times by themselves; writes are not.
+
+### Exit codes
+
+Every command exits with one of the Salesforce CLI exit codes:
+
+| Code | Status                | When                                                                                                |
+| ---- | --------------------- | --------------------------------------------------------------------------------------------------- |
+| 0    | `success`, `accepted` | Everything worked. `accepted`: `--async` started the work and the command did not wait.             |
+| 1    | `failed`, `blocked`   | Something failed or was refused and nothing was written, or it is unclear whether a write happened. |
+| 2    |                       | A flag or usage error, reported by Salesforce CLI before the command runs.                          |
+| 68   | `partial`             | Something was confirmed written (or a file retrieved) and something else failed or was blocked.     |
+| 69   | `processing`          | Salesforce is still processing without `--async`, or a wait ran out. Only when nothing failed.      |
+
+- A failure wins over 69: when one item failed and another is still processing, the code is 1,
+  or 68 when something was confirmed written.
+- An unclear write (`unknown`) is always 1. Check the org before you run the command again.
+- `--allow-processing` is not `--async`. It allows a write that makes Salesforce process; the
+  command still waits, and work still processing at the end exits 69.
+- With `--json`, the top-level `status` is the exit code, and `result.status` is one of
+  `success`, `accepted`, `processing`, `partial`, `blocked` or `failed`.
+- `deploy --changed-since` with no changes in the range has nothing to do and exits 0. A
+  selection whose files are all skipped (verbatim files) exits 1 with `NOTHING_TO_DEPLOY`.
+- Retrieve without `-m` selects every type. With an explicit `--api-version` other than `68.0`
+  and no `-m`, it is refused with `INVALID_SCOPE`, because several types use API 68 only;
+  pass `-m` with the types you want.
 
 ### API version
 

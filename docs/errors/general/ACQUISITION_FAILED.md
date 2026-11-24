@@ -16,7 +16,7 @@ When Salesforce returned an error, the message shows the HTTP status and any err
 
 ## Why the plugin stops
 
-The plugin only writes a file after every read it relies on has succeeded. Writing a file from a partial read would hide a dependency the plugin could not check, so the component is skipped and the run exits nonzero.
+The plugin only writes a file after every read it relies on has succeeded. Writing a file from a partial read would hide a dependency the plugin could not check, so the component is skipped. The run ends as `partial` (exit code 68) when other files were written, otherwise with exit code 1.
 
 ## How to fix
 

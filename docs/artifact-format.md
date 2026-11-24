@@ -519,8 +519,8 @@ directories, symbolic links, junctions, files reached through a linked folder an
 hard-linked files are refused (`UNSAFE_PATH`), as is any path outside the project's
 `data360` folder. Each result item lists
 `removedLocalFiles` with an outcome per file: `removed`, `not-present`, `kept` or
-`failed`. A failed removal keeps the confirmed org result, and the command exits
-nonzero with `LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps every file
+`failed`. A failed removal keeps the confirmed org result, and the run is `partial`
+(exit code 68) with `LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps every file
 (outcome `kept`). `--preview` removes nothing and lists the files as `localFiles` with
 `exists`. The outcomes unchanged, blocked, failed, unknown, rejected and
 deletion-unconfirmed remove

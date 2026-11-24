@@ -498,7 +498,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
     'allow-processing': Flags.boolean({
       default: false,
       summary:
-        'Acknowledge stream create/update, Graph create/update and Segment/IR processing; IR CREATE also provisions generated outputs. Data transforms and calculated insights do not need it.',
+        'Acknowledge stream create/update, Graph create/update and Segment/IR processing; IR CREATE also provisions generated outputs. Data transforms and calculated insights do not need it. It is not --async: the deploy still waits, and a write Salesforce is still processing at the end is status processing, exit 69.',
     }),
     'allow-field-removal': Flags.boolean({
       default: false,

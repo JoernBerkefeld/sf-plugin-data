@@ -2,11 +2,11 @@
 
 > The deletion in the org is confirmed, but a local file was not removed. Do not repeat the delete; check the file named in the message and remove it yourself.
 
-|              |                                                                                             |
-| ------------ | ------------------------------------------------------------------------------------------- |
-| **Family**   | General                                                                                     |
-| **Commands** | `sf data360 delete`                                                                         |
-| **Outcome**  | `failed` (exit code 1) — the org deletion stays confirmed; only local cleanup is incomplete |
+|              |                                                                                               |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| **Family**   | General                                                                                       |
+| **Commands** | `sf data360 delete`                                                                           |
+| **Outcome**  | `partial` (exit code 68) — the org deletion stays confirmed; only local cleanup is incomplete |
 
 ## What it means
 
@@ -19,7 +19,7 @@ Each failed file is also printed as `local file removal failed (CODE): path`.
 
 ## Why the plugin stops
 
-The plugin removes only plain, single files it can prove belong to the deleted component, one at a time and never recursively. When that proof or the removal fails, it reports instead of trying harder. The command exits nonzero so scripts notice the leftover file.
+The plugin removes only plain, single files it can prove belong to the deleted component, one at a time and never recursively. When that proof or the removal fails, it reports instead of trying harder. The run is `partial` and exits with code 68: the org change is done, the local cleanup is not. Scripts notice the leftover file this way.
 
 ## How to fix
 
@@ -30,7 +30,7 @@ The plugin removes only plain, single files it can prove belong to the deleted c
 ## Example output
 
 ```text
-Delete: failed.
+Delete: partial.
 deleted dmo Customer__dlm
 local file removal failed (EPERM): /work/project/data360/dmo/Customer__dlm.dmo-meta.json
 LOCAL_FILE_REMOVAL_FAILED: The deletion in the org is confirmed, but this local file was not removed: /work/project/data360/dmo/Customer__dlm.dmo-meta.json (EPERM). Do not repeat the delete; remove the file yourself.

@@ -55,6 +55,10 @@ order, one phase after the other:
   phases with
   [`DELETE_PHASE_NOT_SETTLED`](../errors/general/DELETE_PHASE_NOT_SETTLED.md). Rerun the same
   delete once it reads absent; the items already gone then report `unchanged`.
+- Exit codes: 0 when every item settled; 69 (`processing`) when Salesforce is still deleting
+  an item and nothing failed; 68 (`partial`) when an earlier phase was confirmed deleted and a
+  later item failed or was blocked; 1 when nothing was deleted and an item failed or was
+  blocked, or when it is unclear whether a delete happened (`unknown`, `deletion-unconfirmed`).
 - Each family keeps its own checks. Every result item carries `family`.
 
 ### What is read before anything is deleted
@@ -159,7 +163,7 @@ selector ignoring case (`-m data-transform:copy` deletes `Copy` and removes
   outside the project's `data360` folder are refused.
 - Each result item lists `removedLocalFiles` with the outcome of every file: `removed`,
   `not-present`, `kept` or `failed`.
-- A failed removal keeps the confirmed org outcome; the command then exits nonzero with
+- A failed removal keeps the confirmed org outcome; the run is then `partial` (exit code 68) with
   [`LOCAL_FILE_REMOVAL_FAILED`](../errors/general/LOCAL_FILE_REMOVAL_FAILED.md). Remove that
   file by hand; do not repeat the delete.
 - Nothing is removed by `--preview`, which lists the files as `localFiles` with `exists`, nor

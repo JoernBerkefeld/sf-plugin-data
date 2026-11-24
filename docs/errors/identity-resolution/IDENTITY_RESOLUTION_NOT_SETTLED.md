@@ -2,17 +2,19 @@
 
 > The ruleset is still publishing or deleting in the org, so it cannot be changed now. Wait until it settles, then rerun the same command.
 
-|              |                                          |
-| ------------ | ---------------------------------------- |
-| **Family**   | Identity resolution                      |
-| **Commands** | `sf data360 deploy`, `sf data360 delete` |
-| **Outcome**  | `blocked` — nothing was changed          |
+|              |                                                            |
+| ------------ | ---------------------------------------------------------- |
+| **Family**   | Identity resolution                                        |
+| **Commands** | `sf data360 deploy`, `sf data360 delete`                   |
+| **Outcome**  | `processing` (exit code 69) — this ruleset was not changed |
 
 ## What it means
 
 The ruleset in the org has the status `PUBLISHING` or `DELETING`. This is normal for a few minutes after a create, update or delete, and right after `sf data360 deploy --async`.
 
 Rerunning a deploy is also how you check an `--async` deploy: this code means it is still in progress, `unchanged` means it settled as written.
+
+The item itself is `blocked`. The run counts it as still processing, not as failed: when nothing else failed, a deploy or delete ends as `processing` with exit code 69. When another item failed or was blocked, that wins (exit code 1, or 68 for `partial` when something was written). A preview only reports it and ends as `blocked`.
 
 ## Why the plugin stops
 

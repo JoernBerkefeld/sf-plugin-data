@@ -109,8 +109,9 @@ What it costs:
   link DMOs exist. `acknowledged-processing` only means Salesforce accepted the request.
 - Steps that need the published ruleset fail if run right away. For example, a data graph
   preview on the unified DMO reports `DATA_GRAPH_OWNER_NOT_PUBLISHED` until then.
-- Deploying the same file again is refused with `IDENTITY_RESOLUTION_NOT_SETTLED` (exit 1,
-  nothing written) while the ruleset is `PUBLISHING`.
+- Deploying the same file again reports `IDENTITY_RESOLUTION_NOT_SETTLED` while the ruleset is
+  `PUBLISHING`: nothing is written, and the run is `processing` (exit code 69) when nothing
+  else failed.
 - A failed publish looks like a slow one until you deploy again.
 
 To check the result, run the same deploy again (with or without `--async`); it runs the full

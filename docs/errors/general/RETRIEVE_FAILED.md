@@ -14,7 +14,7 @@
 
 ## Why the plugin stops
 
-The plugin writes files only for components it retrieved completely. It reports the failure and exits nonzero rather than writing a partial result.
+The plugin writes files only for components it retrieved completely. It reports the failure rather than writing a partial file. The run ends as `partial` (exit code 68) when other files were written, otherwise with exit code 1.
 
 ## How to fix
 

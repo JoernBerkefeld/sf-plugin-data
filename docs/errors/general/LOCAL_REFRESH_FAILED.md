@@ -2,11 +2,11 @@
 
 > The fields were deleted in the org, but some project files were not refreshed. Do not repeat the delete; run sf data360 retrieve with --overwrite for the DMO and its mappings.
 
-|              |                                                                                                              |
-| ------------ | ------------------------------------------------------------------------------------------------------------ |
-| **Family**   | General                                                                                                      |
-| **Commands** | `sf data360 delete --field`                                                                                  |
-| **Outcome**  | `failed` (exit code 1) — the field deletion in the org stays confirmed; only the local refresh is incomplete |
+|              |                                                                                                                |
+| ------------ | -------------------------------------------------------------------------------------------------------------- |
+| **Family**   | General                                                                                                        |
+| **Commands** | `sf data360 delete --field`                                                                                    |
+| **Outcome**  | `partial` (exit code 68) — the field deletion in the org stays confirmed; only the local refresh is incomplete |
 
 ## What it means
 
@@ -16,7 +16,7 @@ Files that did not exist locally are not created, and no file is deleted.
 
 ## Why the plugin stops
 
-The org change is already done and cannot be repeated. The plugin keeps the confirmed result, reports the files it could not refresh and exits nonzero, so you know the project is out of date.
+The org change is already done and cannot be repeated. The plugin keeps the confirmed result, reports the files it could not refresh and ends as `partial` with exit code 68, so you know the project is out of date.
 
 ## How to fix
 
@@ -27,7 +27,7 @@ The org change is already done and cannot be repeated. The plugin keeps the conf
 ## Example output
 
 ```text
-Delete: failed.
+Delete: partial.
 dropped pair Email -> Email__c in mapping Customer_Map
 deleted field Email__c from dmo Customer__dlm
 refreshed /work/project/data360/dmo/Customer__dlm.dmo-meta.json

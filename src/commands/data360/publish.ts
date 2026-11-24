@@ -74,7 +74,7 @@ export default class Publish extends SfCommand<PublishEnvelope> {
     }),
     'wait-timeout': Flags.integer({
       exclusive: ['async'],
-      summary: `Segment only: seconds to wait for SUCCESS or FAILED (default ${segmentPublishWait.timeoutSeconds}).`,
+      summary: `Segment only: seconds to wait for SUCCESS or FAILED (default ${segmentPublishWait.timeoutSeconds}); when it runs out, status processing, exit 69.`,
     }),
     'api-version': Flags.string({ summary: 'Native lifecycle route: auto (68.0) or 68.0.' }),
     dataspace: Flags.string({

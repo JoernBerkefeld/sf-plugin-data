@@ -84,7 +84,7 @@ Salesforce's rules behind this table: it does not accept `dataSpace` or `isFromP
 
 - `--draft` creates a draft (`draft: true`) and sends `draft: true` on an update.
 - Salesforce activates a draft on a PATCH without `draft`, so an update of a DRAFT insight always sends `draft: true`. Deploy never publishes.
-- `sf data360 publish` activates the insight: an ACTIVE insight that holds the file is `unchanged`; otherwise one PATCH sends the file with `draft: false` and the insight is read until it is ACTIVE and holds the file. With `--async` the insight is not read after Salesforce accepted the PATCH: the result is `publishing` (mutation `acknowledged-processing`) with status `processing` and exit code 0 (`CI_PUBLISH_STARTED`); run publish with `--preview` later (`unchanged` means ACTIVE). `--async` does not combine with `--wait-timeout`. An insight the org does not have is `CI_NOT_FOUND`; create it with deploy first.
+- `sf data360 publish` activates the insight: an ACTIVE insight that holds the file is `unchanged`; otherwise one PATCH sends the file with `draft: false` and the insight is read until it is ACTIVE and holds the file. With `--async` the insight is not read after Salesforce accepted the PATCH: the result is `publishing` (mutation `acknowledged-processing`) with status `accepted` and exit code 0 (`CI_PUBLISH_STARTED`); run publish with `--preview` later (`unchanged` means ACTIVE). `--async` does not combine with `--wait-timeout`. An insight the org does not have is `CI_NOT_FOUND`; create it with deploy first.
 - ACTIVE means Salesforce accepted the definition, not that a calculation has run.
 
 ## Delete

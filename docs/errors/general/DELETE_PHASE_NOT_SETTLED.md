@@ -2,11 +2,11 @@
 
 > Salesforce is still processing a deletion of this run, so the later phases were not started. Wait until it reads absent, then rerun the same delete.
 
-|              |                                                                                         |
-| ------------ | --------------------------------------------------------------------------------------- |
-| **Family**   | General                                                                                 |
-| **Commands** | `sf data360 delete`                                                                     |
-| **Outcome**  | `blocked` — the items already deleted stay deleted; the later phases were not attempted |
+|              |                                                                                                           |
+| ------------ | --------------------------------------------------------------------------------------------------------- |
+| **Family**   | General                                                                                                   |
+| **Commands** | `sf data360 delete`                                                                                       |
+| **Outcome**  | `processing` (exit code 69) — the items already deleted stay deleted; the later phases were not attempted |
 
 ## What it means
 
@@ -18,6 +18,8 @@ Salesforce accepted the deletion of the item named in the message, but still rea
 
 The plugin does not wait for a deletion that Salesforce processes in the background, and it never starts a later phase on an unsettled one. Stopping leaves a state that a rerun of the same command picks up safely.
 
+The run reports `processing` and exits with code 69: Salesforce is still working, and nothing failed. When another item of the same run failed or was blocked, that wins: the status is `failed` or `blocked` (exit code 1), or `partial` (exit code 68) when something was confirmed deleted.
+
 ## How to fix
 
 1. Wait until the item reads absent (an identity resolution usually takes a few minutes), for example with `sf data360 retrieve -m <type>:<ApiName>`.
@@ -26,7 +28,7 @@ The plugin does not wait for a deletion that Salesforce processes in the backgro
 ## Example output
 
 ```text
-Delete: blocked.
+Delete: processing.
 deleted data-graph Customer_Graph
 deleted identity-resolution Individual_A1b2 (server is still processing)
 DELETE_PHASE_NOT_SETTLED: Salesforce accepted the deletion of identity-resolution:Individual_A1b2 and is still processing it, so the later phases of this delete were not started. Rerun the same delete once it reads absent; items already deleted report unchanged.

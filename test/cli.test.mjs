@@ -1092,3 +1092,63 @@ for (const topic of topics)
     assert.equal(envelope.diagnostics.errors[0].code, 'TARGET_ORG_REQUIRED');
     assert.deepEqual(envelope.result.items, []);
   });
+
+// The real SfCommand wrapper writes the JSON; its top-level status is the process exit code.
+const statusScript = `
+  import Publish from './lib/commands/data360/publish.js';
+  import Retrieve from './lib/commands/data360/retrieve.js';
+  import { dataSpaceDirectory } from './lib/services/data-space-check.js';
+  dataSpaceDirectory.read = async () => ['default'];
+  const [kind, output] = process.argv.slice(1);
+  const publishing = (code) => ({
+    family: 'segment',
+    route: { apiVersion: '68.0', method: 'POST', resource: 'segments/{id}/actions/publish' },
+    outcome: 'publishing',
+    mutation: 'acknowledged-processing',
+    diagnostics: [{ code, message: 'Synthetic publish.' }],
+  });
+  class SyntheticPublish extends Publish {
+    resolveConnection = async () => ({});
+    publishSegment = async (_name, _connection, _selection, options) =>
+      publishing(options.async ? 'SEGMENT_PUBLISH_STARTED' : 'SEGMENT_PUBLISH_STILL_PROCESSING');
+  }
+  class SyntheticRetrieve extends Retrieve {
+    resolveOrg = async () => ({ getOrgId: () => 'synthetic-org', getConnection: () => ({}) });
+    createDataTransformClient = () => ({});
+    acquireDataTransform = async (name) => {
+      if (name === 'Alpha') throw new Error('Synthetic read failure');
+      return { document: { c__dataSpace: 'default', definition: { name } } };
+    };
+    writeDataTransform = async (value) => ({ path: value.definition.name + '.json', outcome: 'retrieved' });
+  }
+  const runs = {
+    accepted: () => SyntheticPublish.run(['-m', 'segment:Synthetic', '--async', '--json'], process.cwd()),
+    processing: () => SyntheticPublish.run(['-m', 'segment:Synthetic', '--json'], process.cwd()),
+    partial: () =>
+      SyntheticRetrieve.run(
+        ['-m', 'data-transform:Alpha', '-m', 'data-transform:Zulu', '-d', output, '--json'],
+        process.cwd(),
+      ),
+    blocked: () => SyntheticRetrieve.run(['-m', 'invalid', '--json'], process.cwd()),
+  };
+  await runs[kind]();
+`;
+
+for (const [kind, exitCode] of [
+  ['accepted', 0],
+  ['blocked', 1],
+  ['partial', 68],
+  ['processing', 69],
+])
+  test(`--json top-level status equals the exit code ${exitCode} (${kind})`, () => {
+    const output = mkdtempSync(path.join(os.tmpdir(), 'data360-json-status-'));
+    const result = spawnSync(
+      process.execPath,
+      ['--input-type=module', '-e', statusScript, kind, output],
+      { encoding: 'utf8', env: environment },
+    );
+    assert.equal(result.status, exitCode, result.stdout + result.stderr);
+    const json = JSON.parse(result.stdout);
+    assert.equal(json.status, exitCode);
+    assert.equal(json.result.status, kind);
+  });

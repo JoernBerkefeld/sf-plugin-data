@@ -55,7 +55,7 @@ Deploy treats `schedule` as the desired schedule. Without the key, the schedule 
 - `{ "frequency": "None" }` turns the schedule off. Write it explicitly; retrieve never writes it.
 - Salesforce takes `Hourly` (with `daysOfWeek`), `Daily` (with `interval`) and `None`, and refuses `Weekly` for a custom transform.
 - A schedule deployed to another org makes the transform run there, so preview and deploy report `TRANSFORM_SCHEDULE_CHANGE` whenever the schedule is sent. Remove `schedule` from the file to keep the target org's schedule.
-- After a definition write the transform is `PROCESSING`, and Salesforce refuses a schedule PUT until it is active. Deploy reads the transform every 5 seconds for at most 5 minutes. If it is still processing, the schedule is not sent (`TRANSFORM_SCHEDULE_NOT_SENT`); a 4xx answer to the schedule PUT is `TRANSFORM_SCHEDULE_REJECTED`. In both cases the item is `failed` with mutation `confirmed-created` or `confirmed-updated`: the definition was written, the schedule was not.
+- After a definition write the transform is `PROCESSING`, and Salesforce refuses a schedule PUT until it is active. Deploy reads the transform every 5 seconds for at most 5 minutes. If it is still processing, the schedule is not sent (`TRANSFORM_SCHEDULE_NOT_SENT`); a 4xx answer to the schedule PUT is `TRANSFORM_SCHEDULE_REJECTED`. In both cases the item is `failed` with mutation `confirmed-created` or `confirmed-updated`: the definition was written, the schedule was not. A schedule not sent counts as still processing: the run is `processing` (exit code 69) when nothing else failed. A rejected schedule makes the run `partial` (exit code 68).
 
 ## Deploy
 

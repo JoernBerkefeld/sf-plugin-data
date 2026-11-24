@@ -133,8 +133,8 @@ sf data360 publish -o target -m segment:Example_Segment --async --json
 - The segment is read by name (absent: `SEGMENT_PUBLISH_ADMISSION_FAILED`), then one POST `/ssot/segments/<marketSegmentId>/actions/publish` starts the publish. It needs no acknowledgement flag and is never resent.
 - Salesforce decides whether the segment can be published now, also while it is `PROCESSING` or `COUNTING`. A refusal is `SEGMENT_PUBLISH_REJECTED` with Salesforce's text.
 - The command then reads the segment every 30 seconds (progress on stderr) until `publishStatus` is `SUCCESS` (`published`) or `FAILED` (`SEGMENT_PUBLISH_FAILED`).
-- `--wait-timeout <seconds>` sets that wait (default 1800). When it runs out, the result is `publishing` with status `processing` and exit code 0 (`SEGMENT_PUBLISH_STILL_PROCESSING`): still processing, not failed, and not resent.
-- `--async` returns right after Salesforce accepted the POST and reads nothing afterwards: the result is `publishing` (mutation `acknowledged-processing`) with status `processing` and exit code 0 (`SEGMENT_PUBLISH_STARTED`): started, not finished, and not resent. Read the segment later for the result. `--async` and `--wait-timeout` cannot be combined; a refusal of the POST is reported as without `--async`.
+- `--wait-timeout <seconds>` sets that wait (default 1800). When it runs out, the result is `publishing` with status `processing` and exit code 69 (`SEGMENT_PUBLISH_STILL_PROCESSING`): still processing, not failed, and not resent.
+- `--async` returns right after Salesforce accepted the POST and reads nothing afterwards: the result is `publishing` (mutation `acknowledged-processing`) with status `accepted` and exit code 0 (`SEGMENT_PUBLISH_STARTED`): started, not finished, and not resent. Read the segment later for the result. `--async` and `--wait-timeout` cannot be combined; a refusal of the POST is reported as without `--async`.
 - An answer or status read that cannot be confirmed is `SEGMENT_PUBLISH_UNCONFIRMED`; read the segment before publishing again.
 - `--preview` reads the segment and reports what would be published without publishing.
 

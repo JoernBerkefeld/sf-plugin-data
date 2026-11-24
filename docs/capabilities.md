@@ -997,8 +997,8 @@ Field-level delete,
   (default: current directory) are overwritten with fresh reads. A mapping file with
   another name is found by its binding (source DLO, target DMO, data space) and keeps
   its name. Absent files are not created (`not-present`); no file is deleted. A failed refresh keeps outcome
-  `deleted`, reports the file as `failed` and `LOCAL_REFRESH_FAILED`, and exits
-  nonzero.
+  `deleted`, reports the file as `failed` and `LOCAL_REFRESH_FAILED`, and the run is
+  `partial` (exit code 68).
 - `--preview` writes nothing and reports one `unmap` step per pair (the pair
   Salesforce drops with the field), one `delete-field` step per field and
   `localFiles` with `exists`. Human preview line per pair:
@@ -1203,6 +1203,6 @@ After a confirmed deletion (`deleted`/`confirmed-deleted`, or
 `deletion-processing`/`acknowledged-processing`) delete removes the component's local
 file at its canonical path by name, one regular file at a time and only inside the
 project's `data360` folder. Results list `removedLocalFiles` (`removed`, `not-present`,
-`kept`, `failed`); a failed removal keeps the org outcome and exits nonzero with
-`LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps the files and `--preview` lists
+`kept`, `failed`); a failed removal keeps the org outcome and the run is `partial`
+(exit code 68) with `LOCAL_FILE_REMOVAL_FAILED`. `--keep-local-files` keeps the files and `--preview` lists
 them as `localFiles`. Details are in [artifact formats](artifact-format.md).

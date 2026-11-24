@@ -2,11 +2,11 @@
 
 > With --async the publish was started and Salesforce accepted it; the command did not wait for the result. Read the segment later for its publish status; nothing was resent.
 
-|              |                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------ |
-| **Family**   | Segment                                                                              |
-| **Commands** | `sf data360 publish`                                                                 |
-| **Outcome**  | `processing` — outcome `publishing`, mutation `acknowledged-processing`; exit code 0 |
+|              |                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------- |
+| **Family**   | Segment                                                                            |
+| **Commands** | `sf data360 publish`                                                               |
+| **Outcome**  | `accepted` — outcome `publishing`, mutation `acknowledged-processing`; exit code 0 |
 
 ## What it means
 
@@ -14,7 +14,7 @@
 
 ## Why the plugin reports it
 
-The result of the publish is not known yet. It is neither a success nor a failure, and publishing again would start a second job.
+The result of the publish is not known yet. It is neither a success nor a failure, and publishing again would start a second job. With `--async` you asked not to wait, so the status is `accepted` and the exit code is 0.
 
 ## How to fix
 
@@ -25,7 +25,7 @@ The result of the publish is not known yet. It is neither a success nor a failur
 ## Example output
 
 ```text
-Publish: processing.
+Publish: accepted.
 publishing: Example_Segment; mutation: acknowledged-processing.
 publishStatus: PUBLISHING.
 SEGMENT_PUBLISH_STARTED: Salesforce accepted the publish of segment Example_Segment; it was started without waiting (--async) and runs on in Salesforce. It was not resent; read the segment later for the result.
