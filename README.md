@@ -150,7 +150,8 @@ are left out, and deploy keeps them. The exact layout of each file is on its typ
 
 - `-m <type>:<Name>` selects one component; repeat `-m` to select several, of any types.
 - For retrieve, a bare type (`-m dmo`) selects every component of that type the org lists.
-  Retrieve without `-m` selects every DLO, DMO and mapping.
+  Retrieve without `-m` selects every component of every type in the run's data space, as if
+  each type were named bare; `-m` narrows the run.
 - Deploy and delete always name their components, or take them from Git with
   `--changed-since`. Deploy also takes files and folders with `--source-dir` (`-d`).
 
