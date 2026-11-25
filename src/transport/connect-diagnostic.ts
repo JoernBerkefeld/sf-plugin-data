@@ -81,7 +81,7 @@ function safeMessage(value: unknown): string | undefined {
  * (`... Errors: [class DbtSqlValidationErrorBlock {\n errorCode: X\n arguments: [text]\n}]`),
  * which safeMessage refuses for its brackets and line breaks. Keep the lead sentence and the code
  * and text of each block (at most three); every text part passes safeMessage on its own, and a
- * block whose text does not keeps its code alone.
+ * block whose text does not keeps its code alone. The joined message must pass safeMessage too.
  * @param {unknown} value Structured API message leaf.
  * @returns {string | undefined} The rewritten message, or undefined for any other shape.
  */
@@ -101,7 +101,10 @@ function validationBlocks(value: unknown): string | undefined {
       return safe ? `${code}: ${safe}` : code;
     });
   while (blocks.length > 0 && `${lead}: ${blocks.join('; ')}`.length > 400) blocks.pop();
-  return lead && blocks.length > 0 ? `${lead}: ${blocks.join('; ')}` : undefined;
+  if (!lead || blocks.length === 0) return;
+  // Parts that pass one by one can still form a refused pattern together (select … from).
+  const message = `${lead}: ${blocks.join('; ')}`;
+  return safeMessage(message) === undefined ? undefined : message;
 }
 
 /**

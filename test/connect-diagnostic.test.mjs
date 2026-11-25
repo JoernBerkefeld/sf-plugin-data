@@ -138,6 +138,16 @@ test("the segment criteria validator's error blocks keep their codes and texts",
     apiDiagnostic(400, [{ errorCode: 'ENTITY_SAVE_ERROR', message: paths }]).errors[0].message,
     "Error encountered while validating criteria: PATH_RELATIONSHIP_NOT_FOUND: Filter path ending at 'ssot__AccountContact__dlm.ssot__IndividualId__c' is not a valid RELATED path in the attribute library; VALUE_ECHO",
   );
+  // Parts that pass alone but form a refused pattern together fall back.
+  assert.equal(
+    apiDiagnostic(400, [
+      {
+        errorCode: 'ENTITY_SAVE_ERROR',
+        message: validationMessage(['A', 'select Name'], ['B', 'from Accounts']),
+      },
+    ]).errors[0].message,
+    undefined,
+  );
   // Any other bracketed text still falls back.
   assert.equal(
     apiDiagnostic(400, [
