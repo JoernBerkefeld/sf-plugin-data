@@ -104,6 +104,49 @@ test("Salesforce's internal-error text keeps its ErrorId; look-alikes without it
     );
 });
 
+// Live API 68, isolated-source: POST /ssot/segments with criteria copied from a UI segment.
+const validationMessage = (...blocks) =>
+  `Error encountered while validating criteria. Errors: [${blocks
+    .map(
+      ([code, text]) =>
+        `class DbtSqlValidationErrorBlock {\n    errorCode: ${code}\n    arguments: [${text}]\n}`,
+    )
+    .join(', ')}]`;
+test("the segment criteria validator's error blocks keep their codes and texts", () => {
+  const shape = validationMessage([
+    'INVALID_FILTER_SHAPE',
+    'Invalid filter: LogicalComparison requires at least 2 filters, got: 1. Single condition must be emitted as leaf directly.',
+  ]);
+  assert.deepEqual(
+    apiDiagnostic(400, [{ errorCode: 'ENTITY_SAVE_ERROR', message: shape }]).errors,
+    [
+      {
+        code: 'ENTITY_SAVE_ERROR',
+        message:
+          'Error encountered while validating criteria: INVALID_FILTER_SHAPE: Invalid filter: LogicalComparison requires at least 2 filters, got: 1. Single condition must be emitted as leaf directly.',
+      },
+    ],
+  );
+  const paths = validationMessage(
+    [
+      'PATH_RELATIONSHIP_NOT_FOUND',
+      "Filter path ending at 'ssot__AccountContact__dlm.ssot__IndividualId__c' is not a valid RELATED path in the attribute library",
+    ],
+    ['VALUE_ECHO', 'Value alice@example.com is not allowed'],
+  );
+  assert.equal(
+    apiDiagnostic(400, [{ errorCode: 'ENTITY_SAVE_ERROR', message: paths }]).errors[0].message,
+    "Error encountered while validating criteria: PATH_RELATIONSHIP_NOT_FOUND: Filter path ending at 'ssot__AccountContact__dlm.ssot__IndividualId__c' is not a valid RELATED path in the attribute library; VALUE_ECHO",
+  );
+  // Any other bracketed text still falls back.
+  assert.equal(
+    apiDiagnostic(400, [
+      { errorCode: 'X', message: 'Errors: [class A {\n errorCode: B\n arguments: [c]\n}]' },
+    ]).errors[0].message,
+    undefined,
+  );
+});
+
 test('API display evidence is bounded, detached and never alters errors or JSON envelopes', () => {
   const body = [{ errorCode: 'INVALID_INPUT', message: 'Reduce the ruleset count to 10.' }];
   const diagnostic = apiDiagnostic(

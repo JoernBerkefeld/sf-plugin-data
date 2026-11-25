@@ -77,6 +77,34 @@ function safeMessage(value: unknown): string | undefined {
 }
 
 /**
+ * Salesforce's segment criteria validator answers with a serialized list of error blocks
+ * (`... Errors: [class DbtSqlValidationErrorBlock {\n errorCode: X\n arguments: [text]\n}]`),
+ * which safeMessage refuses for its brackets and line breaks. Keep the lead sentence and the code
+ * and text of each block (at most three); every text part passes safeMessage on its own, and a
+ * block whose text does not keeps its code alone.
+ * @param {unknown} value Structured API message leaf.
+ * @returns {string | undefined} The rewritten message, or undefined for any other shape.
+ */
+function validationBlocks(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 4000) return;
+  const start = value.indexOf(' Errors: [class ');
+  if (start === -1) return;
+  const lead = safeMessage(value.slice(0, start))?.replace(/\.$/u, '');
+  const blocks = [
+    ...value
+      .slice(start)
+      .matchAll(/\{\s*errorCode: ([A-Z][A-Z0-9_]{0,79})\s+arguments: \[([^\n]*)\]\s*\}/gu),
+  ]
+    .slice(0, 3)
+    .map(([, code, text]) => {
+      const safe = safeMessage(text);
+      return safe ? `${code}: ${safe}` : code;
+    });
+  while (blocks.length > 0 && `${lead}: ${blocks.join('; ')}`.length > 400) blocks.pop();
+  return lead && blocks.length > 0 ? `${lead}: ${blocks.join('; ')}` : undefined;
+}
+
+/**
  * Normalize only REST error records/arrays and their known data/errors containers.
  * No arbitrary keys, native Error.message, causes or raw objects are retained.
  * @param {unknown} candidate Parsed error data, or a bounded JSON error body.
@@ -119,7 +147,7 @@ function apiErrors(candidate: unknown): ConnectDiagnostic['errors'] {
     if (budget < 0) return;
     const code =
       typeof rawCode === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/u.test(rawCode) ? rawCode : undefined;
-    const message = safeMessage(rawMessage);
+    const message = safeMessage(rawMessage) ?? validationBlocks(rawMessage);
     const size = result.reduce(
       (total, entry) => total + (entry.code?.length ?? 0) + (entry.message?.length ?? 0) + 4,
       0,
