@@ -77,12 +77,22 @@ export default class ListDataSpace extends SfCommand<ListDataSpaceEnvelope> {
     try {
       connection = await this.resolveConnection(flags['target-org']);
     } catch {
-      envelope.diagnostics.errors.push({
-        code: 'TARGET_ORG_REQUIRED',
-        message:
-          'No usable target org: pass -o with an authenticated alias or username, or set target-org.',
-        retryable: false,
-      });
+      // A given --target-org that cannot be used is an authentication failure.
+      envelope.diagnostics.errors.push(
+        flags['target-org'] === undefined
+          ? {
+              code: 'TARGET_ORG_REQUIRED',
+              message:
+                'No usable target org: pass -o with an authenticated alias or username, or set target-org.',
+              retryable: false,
+            }
+          : {
+              code: 'AUTHENTICATION_FAILED',
+              message:
+                'The target org given with -o is unknown or not authenticated: log in to it with sf org login web, or pass another alias or username.',
+              retryable: false,
+            },
+      );
       return this.finish(envelope);
     }
     try {

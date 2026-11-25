@@ -45,7 +45,7 @@ import { verifyDataStreamInputDigest } from '../../artifacts/read-deploy-input.j
 import { DataStreamError } from '../../artifacts/data-stream-document.js';
 import type { DataStreamDeployInput } from '../../artifacts/read-deploy-input.js';
 import { dataStreamApiVersion } from '../../transport/api-version.js';
-import { ConnectClient } from '../../transport/connect-client.js';
+import { ConnectClient, ConnectError } from '../../transport/connect-client.js';
 import {
   createDataStreamClient,
   createDataStreamReferenceReader,
@@ -233,7 +233,9 @@ const resolveTargetOrg = async (
       },
     };
   } catch (error: unknown) {
-    if (aliasOrUsername) throw error;
+    // A given --target-org that cannot be used is an authentication failure (cause kept).
+    if (aliasOrUsername)
+      throw Object.assign(new ConnectError('AUTHENTICATION_FAILED'), { cause: error });
     return undefined;
   }
 };

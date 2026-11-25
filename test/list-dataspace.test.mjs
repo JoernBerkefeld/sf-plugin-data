@@ -57,6 +57,7 @@ const expired = () =>
  * @param {object} [options] Switches.
  * @param {boolean} [options.json] Run as with --json.
  * @param {boolean} [options.noOrg] The target org cannot be resolved.
+ * @param {boolean} [options.noTarget] Run without --target-org.
  * @returns {Promise<{envelope: object, logs: string[], exitCode: unknown, alias: unknown}>} Outcome.
  */
 const run = async (answer, t, options = {}) => {
@@ -65,7 +66,9 @@ const run = async (answer, t, options = {}) => {
   const command = Object.create(ListDataSpace.prototype);
   const logs = [];
   let alias;
-  command.parse = async () => ({ flags: { 'target-org': 'synthetic' } });
+  command.parse = async () => ({
+    flags: options.noTarget ? {} : { 'target-org': 'synthetic' },
+  });
   command.jsonEnabled = () => options.json === true;
   command.log = (line) => logs.push(line);
   command.resolveConnection = async (value) => {
@@ -215,9 +218,21 @@ test('list dataspace without a usable org is blocked with TARGET_ORG_REQUIRED, e
   const { envelope, exitCode } = await run(() => assert.fail('no read'), t, {
     json: true,
     noOrg: true,
+    noTarget: true,
   });
   assert.equal(envelope.status, 'blocked');
   assert.equal(exitCode, 1);
   assert.equal(envelope.diagnostics.errors[0].code, 'TARGET_ORG_REQUIRED');
+  assert.deepEqual(envelope.result.items, []);
+});
+
+test('list dataspace with an unusable --target-org is blocked with AUTHENTICATION_FAILED, exit 1', async (t) => {
+  const { envelope, exitCode } = await run(() => assert.fail('no read'), t, {
+    json: true,
+    noOrg: true,
+  });
+  assert.equal(envelope.status, 'blocked');
+  assert.equal(exitCode, 1);
+  assert.equal(envelope.diagnostics.errors[0].code, 'AUTHENTICATION_FAILED');
   assert.deepEqual(envelope.result.items, []);
 });

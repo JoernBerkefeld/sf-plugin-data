@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { Config } from '@oclif/core';
 
@@ -676,7 +677,82 @@ test('retrieve parser accepts repeatable exact, type and omitted selectors witho
       env: environment,
     },
   );
-  assert.equal(JSON.parse(invalid.stdout).result.diagnostics.errors[0].code, 'TARGET_ORG_REQUIRED');
+  assert.equal(
+    JSON.parse(invalid.stdout).result.diagnostics.errors[0].code,
+    'AUTHENTICATION_FAILED',
+  );
+});
+
+// One run per command: an unknown --target-org is AUTHENTICATION_FAILED; without --target-org and
+// with no configured default it is TARGET_ORG_REQUIRED. Both block before anything is written.
+test('an unknown --target-org is AUTHENTICATION_FAILED, a missing one TARGET_ORG_REQUIRED', async () => {
+  const { writeNativeCalculatedInsightDocument } =
+    await import('../lib/artifacts/write-native-calculated-insight.js');
+  const unconfigured = mkdtempSync(path.join(os.tmpdir(), 'data360-no-target-'));
+  const work = mkdtempSync(path.join(os.tmpdir(), 'data360-org-codes-'));
+  const table = 'ssot__DeviceApplicationEngagement__dlm';
+  const receipt = await writeNativeCalculatedInsightDocument(
+    {
+      apiName: 'SyntheticInsight__cio',
+      dataSpace: 'default',
+      definitionType: 'CALCULATED_METRIC',
+      // eslint-disable-next-line unicorn/no-null -- The file form keeps the wire null as returned.
+      description: null,
+      displayName: 'Synthetic insight',
+      expression: `SELECT APPROX_COUNT_DISTINCT(${table}.ssot__DeviceId__c) AS device_count__c FROM ${table}`,
+      publishScheduleInterval: 'SYSTEM_MANAGED',
+    },
+    work,
+    false,
+  );
+  const listing = () => readdirSync(work, { recursive: true }).map(String).toSorted();
+  const before = listing();
+  // The isolated sf state without SF_TARGET_ORG / SFDX_DEFAULTUSERNAME: nothing is configured.
+  const { SF_TARGET_ORG, SFDX_DEFAULTUSERNAME, ...rest } = environment;
+  assert.ok(SF_TARGET_ORG && SFDX_DEFAULTUSERNAME);
+  const noDefault = {
+    ...rest,
+    USERPROFILE: unconfigured,
+    HOME: unconfigured,
+    SF_STATE_FOLDER: path.join(unconfigured, 'sf'),
+    XDG_CACHE_HOME: path.join(unconfigured, 'cache'),
+    XDG_CONFIG_HOME: path.join(unconfigured, 'config'),
+    XDG_DATA_HOME: path.join(unconfigured, 'data'),
+  };
+  for (const command of [
+    ['retrieve', '-m', 'dlo'],
+    ['deploy', '--source-dir', receipt.path],
+    ['delete', '-m', 'calculated-insight:Synthetic__cio', '--no-prompt'],
+    ['publish', '-m', 'segment:Synthetic'],
+    ['list', 'dataspace'],
+    ['segment', 'members', 'export', '-m', 'segment:Synthetic'],
+  ])
+    for (const [extra, code] of [
+      [['-o', 'unknown-synthetic-alias'], 'AUTHENTICATION_FAILED'],
+      [[], 'TARGET_ORG_REQUIRED'],
+    ]) {
+      const label = [...command, ...extra].join(' ');
+      const result = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL('../bin/run.js', import.meta.url)),
+          'data360',
+          ...command,
+          ...extra,
+          '--json',
+        ],
+        { encoding: 'utf8', env: noDefault, cwd: work },
+      );
+      assert.equal(result.status, 1, `${label}: ${result.stderr}`);
+      const envelope = JSON.parse(result.stdout).result;
+      assert.equal(envelope.status, 'blocked', label);
+      assert.deepEqual(
+        envelope.diagnostics.errors.map((error) => error.code),
+        [code],
+        label,
+      );
+    }
+  assert.deepEqual(listing(), before);
 });
 
 test('retrieve has no overwrite flag: --overwrite and -x are flag errors', () => {

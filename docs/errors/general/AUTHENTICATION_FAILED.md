@@ -2,15 +2,15 @@
 
 > Salesforce rejected the session or the org could not be loaded. Check the org with sf org display, log in again with sf org login web if needed, then rerun.
 
-|              |                                                                                         |
-| ------------ | --------------------------------------------------------------------------------------- |
-| **Family**   | General                                                                                 |
-| **Commands** | `sf data360 retrieve`, `sf data360 segment members export`, `sf data360 list dataspace` |
-| **Outcome**  | `failed` — the affected component was not retrieved; the org was not changed            |
+|              |                                                                                                                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Family**   | General                                                                                                                                                                                                                                                                                    |
+| **Commands** | `sf data360 retrieve`, `sf data360 deploy`, `sf data360 delete`, `sf data360 publish`, `sf data360 segment members export`, `sf data360 list dataspace`                                                                                                                                    |
+| **Outcome**  | `blocked` when the org given with `--target-org` cannot be loaded — nothing was read, written or deleted; `failed` when Salesforce refuses the session during `retrieve`, `segment members export` or `list dataspace` — the affected component was not retrieved; the org was not changed |
 
 ## What it means
 
-The plugin could not use the authentication of the selected org. Either the Salesforce CLI could not load the org at all (unknown alias, missing or broken auth file), or Salesforce answered a request with HTTP 401 or an expired-session error.
+The plugin could not use the authentication of the selected org. Either the Salesforce CLI could not load the org given with `--target-org` at all (unknown alias or username, missing or broken auth file), or Salesforce answered a request with HTTP 401 or an expired-session error. When the org given with `--target-org` cannot be loaded, the command stops before it reads or changes anything. Without `--target-org`, an unusable configured default is [`TARGET_ORG_REQUIRED`](../general/TARGET_ORG_REQUIRED.md).
 
 The plugin never handles passwords or tokens itself; it uses the org you logged in to with the Salesforce CLI. No authentication response is printed.
 
@@ -36,6 +36,6 @@ Downloaded calculated-insight: 0
 
 ## Related codes
 
-- [`TARGET_ORG_REQUIRED`](../general/TARGET_ORG_REQUIRED.md) — no org was selected or configured at all.
+- [`TARGET_ORG_REQUIRED`](../general/TARGET_ORG_REQUIRED.md) — no `--target-org` was given and no usable default is configured.
 - [`REQUEST_FAILED`](../general/REQUEST_FAILED.md) — Salesforce rejected the request for another reason.
 - [`INVALID_REQUEST`](../general/INVALID_REQUEST.md) — the plugin refused to build the request before sending it.

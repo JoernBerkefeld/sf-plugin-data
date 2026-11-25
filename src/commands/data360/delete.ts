@@ -898,7 +898,8 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
   protected deleteCalculatedInsight = deleteCalculatedInsight;
   /** The org ID of the connection this run resolved (provenance only); unset before that. */
   private resolvedOrgId?: string;
-  // No configured or resolvable org is TARGET_ORG_REQUIRED, as in publish.
+  // Without --target-org an unusable org is TARGET_ORG_REQUIRED; a given one is
+  // AUTHENTICATION_FAILED, as in publish.
   protected resolveConnection = async (alias?: string): Promise<Connection> => {
     try {
       const aggregator = await ConfigAggregator.create();
@@ -911,7 +912,7 @@ export default class Delete extends SfCommand<DeleteEnvelope> {
         connectionOptions: { version: '68.0' },
       });
     } catch {
-      throw new DloError('TARGET_ORG_REQUIRED');
+      throw new DloError(alias === undefined ? 'TARGET_ORG_REQUIRED' : 'AUTHENTICATION_FAILED');
     }
   };
   /**

@@ -400,17 +400,21 @@ test('the removed graph selection code is no longer registered', () => {
   assert.equal(errorCodeInfo('NATIVE_GRAPH_SELECTION_UNSUPPORTED'), undefined);
 });
 
-test('single-family TARGET_ORG_REQUIRED and NATIVE_INVENTORY_FAILED envelopes are unchanged', async () => {
-  for (const code of ['TARGET_ORG_REQUIRED', 'NATIVE_INVENTORY_FAILED']) {
-    const { command, lines } = invocation(['dmo']);
+test('single-family org, authentication and NATIVE_INVENTORY_FAILED envelopes are unchanged', async () => {
+  for (const code of ['TARGET_ORG_REQUIRED', 'AUTHENTICATION_FAILED', 'NATIVE_INVENTORY_FAILED']) {
+    // Without --target-org an unresolvable org is TARGET_ORG_REQUIRED; a given one fails auth.
+    const { command, lines } = invocation(
+      ['dmo'],
+      code === 'TARGET_ORG_REQUIRED' ? { 'target-org': undefined } : {},
+    );
     command.jsonEnabled = () => false;
-    if (code === 'TARGET_ORG_REQUIRED')
-      command.resolveOrg = async () => {
-        throw new Error('no org');
-      };
-    else
+    if (code === 'NATIVE_INVENTORY_FAILED')
       command.listNativeNames = async () => {
         throw new Error('private-token');
+      };
+    else
+      command.resolveOrg = async () => {
+        throw new Error('no org');
       };
     const { result, exitCode } = await run(command);
     assert.equal(result.status, 'blocked');
@@ -419,7 +423,7 @@ test('single-family TARGET_ORG_REQUIRED and NATIVE_INVENTORY_FAILED envelopes ar
     assert.deepEqual(result.diagnostics.errors, [
       {
         code,
-        message: code === 'TARGET_ORG_REQUIRED' ? fallback : unconfirmed,
+        message: code === 'NATIVE_INVENTORY_FAILED' ? unconfirmed : fallback,
         retryable: false,
         hint: errorCodeInfo(code).hint,
         docs: errorCodeInfo(code).docs,
@@ -476,7 +480,7 @@ test('an org failure of one group beside others leaves the other groups retrieve
   );
   assert.deepEqual(
     result.diagnostics.errors.map(({ code, family }) => [code, family]),
-    [['TARGET_ORG_REQUIRED', 'data-transform']],
+    [['AUTHENTICATION_FAILED', 'data-transform']],
   );
   assert.equal(result.provenance.sourceOrgId, 'graph-org');
 });

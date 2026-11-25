@@ -936,7 +936,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         try {
           org = await this.resolveOrg(flags['target-org']);
         } catch {
-          return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
+          // A given --target-org that cannot be used is an authentication failure.
+          const code =
+            flags['target-org'] === undefined ? 'TARGET_ORG_REQUIRED' : 'AUTHENTICATION_FAILED';
+          return { status: 'blocked', selection: selectors, code };
         }
         const connection = org.getConnection('68.0');
         envelope.provenance.sourceOrgId ??= org.getOrgId();
@@ -1076,7 +1079,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         try {
           org = await this.resolveOrg(flags['target-org']);
         } catch {
-          return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
+          // A given --target-org that cannot be used is an authentication failure.
+          const code =
+            flags['target-org'] === undefined ? 'TARGET_ORG_REQUIRED' : 'AUTHENTICATION_FAILED';
+          return { status: 'blocked', selection: selectors, code };
         }
         const connection = org.getConnection(version);
         const target = flags['target-org'] ?? connection.getUsername();
@@ -1383,7 +1389,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         try {
           org = await this.resolveOrg(flags['target-org']);
         } catch {
-          return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
+          // A given --target-org that cannot be used is an authentication failure.
+          const code =
+            flags['target-org'] === undefined ? 'TARGET_ORG_REQUIRED' : 'AUTHENTICATION_FAILED';
+          return { status: 'blocked', selection: selectors, code };
         }
         const connection = org.getConnection(version);
         const target = flags['target-org'] ?? connection.getUsername();
@@ -1831,7 +1840,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         try {
           org = await this.resolveOrg(flags['target-org']);
         } catch {
-          return { status: 'blocked', selection: selectors, code: 'TARGET_ORG_REQUIRED' };
+          // A given --target-org that cannot be used is an authentication failure.
+          const code =
+            flags['target-org'] === undefined ? 'TARGET_ORG_REQUIRED' : 'AUTHENTICATION_FAILED';
+          return { status: 'blocked', selection: selectors, code };
         }
         let selection = selectors;
         const before = envelope.diagnostics.errors.length;
@@ -2625,7 +2637,10 @@ export default class Retrieve extends SfCommand<RetrieveEnvelope> {
         try {
           org = await this.resolveOrg(flags['target-org']);
         } catch {
-          throw new DataSpaceError('TARGET_ORG_REQUIRED');
+          // A given --target-org that cannot be used is an authentication failure.
+          throw new DataSpaceError(
+            flags['target-org'] === undefined ? 'TARGET_ORG_REQUIRED' : 'AUTHENTICATION_FAILED',
+          );
         }
         const connection = org.getConnection('68.0');
         return openBoundSsot(flags['target-org'] ?? '', '68.0', async () => connection);

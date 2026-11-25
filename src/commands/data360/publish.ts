@@ -177,7 +177,8 @@ export default class Publish extends SfCommand<PublishEnvelope> {
         await this.verifyCalculatedInsightInput(input);
       };
       await verifyInput();
-      code = 'TARGET_ORG_REQUIRED';
+      // A given --target-org that cannot be used is an authentication failure.
+      code = flags['target-org'] === undefined ? 'TARGET_ORG_REQUIRED' : 'AUTHENTICATION_FAILED';
       const connection = await this.resolveConnection(flags['target-org']);
       code = 'CI_ADMISSION_FAILED';
       const context = this.calculatedInsightContext(connection, dataSpace);
@@ -281,7 +282,8 @@ export default class Publish extends SfCommand<PublishEnvelope> {
         if (input) await this.verifySegmentInput(input);
       };
       await verifyInput();
-      code = 'TARGET_ORG_REQUIRED';
+      // A given --target-org that cannot be used is an authentication failure.
+      code = flags['target-org'] === undefined ? 'TARGET_ORG_REQUIRED' : 'AUTHENTICATION_FAILED';
       const connection = await this.resolveConnection(flags['target-org']);
       const result = await this.publishSegment(
         apiName,

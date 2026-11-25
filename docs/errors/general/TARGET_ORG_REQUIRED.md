@@ -10,7 +10,7 @@
 
 ## What it means
 
-The command needs an authenticated org, but none could be resolved: `--target-org` was not given and no default `target-org` is configured, the alias is unknown, or the org has no username stored.
+The command needs an authenticated org, but none could be resolved: `--target-org` was not given, and either no default `target-org` is configured or the configured default is not usable (an unknown alias, or an org with no stored login). An org given with `--target-org` that cannot be used is [`AUTHENTICATION_FAILED`](../general/AUTHENTICATION_FAILED.md) instead.
 
 The plugin checks the local selection first, so this code appears only after the selection itself is valid.
 
@@ -36,4 +36,4 @@ Docs: https://github.com/JoernBerkefeld/sf-plugin-data/blob/v0.1.0/docs/errors/g
 
 ## Related codes
 
-- [`AUTHENTICATION_FAILED`](../general/AUTHENTICATION_FAILED.md) — an org was found but its session could not be used.
+- [`AUTHENTICATION_FAILED`](../general/AUTHENTICATION_FAILED.md) — the org given with `--target-org` is unknown, or its session could not be used.

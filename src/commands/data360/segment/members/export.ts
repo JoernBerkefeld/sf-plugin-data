@@ -243,10 +243,16 @@ export default class SegmentMembersExport extends SfCommand<SegmentMembersEnvelo
     try {
       connection = await this.resolveConnection(flags['target-org']);
     } catch {
-      return fail(
-        'TARGET_ORG_REQUIRED',
-        'No usable target org: pass -o with an authenticated alias or username, or set target-org.',
-      );
+      // A given --target-org that cannot be used is an authentication failure.
+      return flags['target-org'] === undefined
+        ? fail(
+            'TARGET_ORG_REQUIRED',
+            'No usable target org: pass -o with an authenticated alias or username, or set target-org.',
+          )
+        : fail(
+            'AUTHENTICATION_FAILED',
+            'The target org given with -o is unknown or not authenticated: log in to it with sf org login web, or pass another alias or username.',
+          );
     }
     const sender = this.createSender
       ? this.createSender(connection, version)
