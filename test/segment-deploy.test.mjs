@@ -603,6 +603,9 @@ test('mixed DMO plus Segment update without acknowledgement blocks whole selecti
     result.result.items[1].preflight.diagnostics[0].code,
     'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
   );
+  // The reason that stopped the run is also on the execute item; the other item has none.
+  assert.equal(result.result.items[1].diagnostics[0].code, 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED');
+  assert.deepEqual(result.result.items[0].diagnostics, []);
 });
 test('a Segment deploy pinned to 65.0 is refused before any target read', async () => {
   const p = await pair();

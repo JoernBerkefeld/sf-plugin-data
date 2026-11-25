@@ -2189,6 +2189,8 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
         };
         let failed = false;
         let blocked = false;
+        // Items whose own preflight stopped the run: their reason is also the execute item's.
+        const stoppers = new Set<string>();
         for (const input of inputs) {
           // A parent created by an earlier stage of this preview does not exist yet: report the
           // item as planned instead of comparing it against a target that cannot hold it.
@@ -2258,6 +2260,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                     !effects.includes('generated-output-provisioning')))
               ) {
                 blocked = true;
+                stoppers.add(input.path);
                 (preview.diagnostics as Array<{ code: string; message: string }>).push({
                   code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
                   message:
@@ -2276,6 +2279,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                 (flags['allow-processing'] !== true || !effects?.includes('processing'))
               ) {
                 blocked = true;
+                stoppers.add(input.path);
                 (preview.diagnostics as Array<{ code: string; message: string }>).push({
                   code: 'PROCESSING_ACKNOWLEDGEMENT_REQUIRED',
                   message:
@@ -2290,10 +2294,13 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
               operation: 'preview',
               path: input.path,
             });
-            if (preview.outcome === 'blocked' || preview.outcome === 'blocked-changes')
+            if (preview.outcome === 'blocked' || preview.outcome === 'blocked-changes') {
               blocked = true;
+              stoppers.add(input.path);
+            }
           } catch (error) {
             failed = true;
+            stoppers.add(input.path);
             envelope.result.items.push({
               identity: reportedIdentity(input.document, effectiveScope),
               operation: 'preview',
@@ -2369,7 +2376,7 @@ export default class Deploy extends SfCommand<DeployEnvelope> {
                       .requiredEffects,
                   }
                 : {}),
-              diagnostics: [],
+              diagnostics: stoppers.has(input.path) ? [...diagnostics] : [],
             };
           });
           // Keep whole-selection evidence, but never mistake admission for attempted execution.

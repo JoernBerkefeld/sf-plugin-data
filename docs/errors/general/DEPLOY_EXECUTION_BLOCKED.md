@@ -12,7 +12,7 @@
 
 This is the summary code of a deploy that includes Segment, calculated insight, identity resolution or DMO inputs in one ordered batch. One item was blocked, either while the whole batch was checked before the first write, or when an item was checked again right before its own write.
 
-The item line and its own code (for example `PROCESSING_ACKNOWLEDGEMENT_REQUIRED` or `DEPLOY_FRESH_ADMISSION_BLOCKED`) name the real reason. Items written before the blocked one stay written.
+The item line and its own code (for example `PROCESSING_ACKNOWLEDGEMENT_REQUIRED` or `DEPLOY_FRESH_ADMISSION_BLOCKED`) name the real reason. In `--json` output that code is in the `diagnostics` of the item that stopped the batch (and in its `preflight.diagnostics` when the batch check found it). Items written before the blocked one stay written.
 
 ## Why the plugin stops
 
